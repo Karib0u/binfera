@@ -1,9 +1,9 @@
 <h1 align="center">
   <a href="#gh-dark-mode-only">
-    <img src="docs/images/logo-dark.png" alt="Binfera" width="440">
+    <img src="docs/images/logo-dark.png#gh-dark-mode-only" alt="Binfera" width="440">
   </a>
   <a href="#gh-light-mode-only">
-    <img src="docs/images/logo-light.png" alt="Binfera" width="440">
+    <img src="docs/images/logo-light.png#gh-light-mode-only" alt="Binfera" width="440">
   </a>
 </h1>
 
