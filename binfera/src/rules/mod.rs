@@ -74,7 +74,7 @@ pub struct RuleMeta {
     pub references: Vec<String>,
     pub examples: Vec<String>,
     /// the complete, original `meta:` mapping, verbatim.
-    pub raw: serde_yaml::Mapping,
+    pub raw: serde_norway::Mapping,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +113,9 @@ impl Rule {
     pub fn is_subscope_rule(&self) -> bool {
         self.meta
             .raw
-            .get(serde_yaml::Value::String("capa/subscope-rule".to_string()))
+            .get(serde_norway::Value::String(
+                "capa/subscope-rule".to_string(),
+            ))
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     }

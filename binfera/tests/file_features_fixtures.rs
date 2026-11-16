@@ -106,6 +106,9 @@ fn elf_import_locations_are_virtual_addresses() {
             .filter(|(_, feature)| *feature == binfera::features::Feature::Import(name.into()))
             .map(|(address, _)| *address)
             .collect();
-        assert_eq!(locations, vec![binfera::address::Address::Absolute(address)]);
+        assert_eq!(
+            locations,
+            vec![binfera::address::Address::Absolute(address)]
+        );
     }
 }

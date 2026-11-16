@@ -604,22 +604,22 @@ fn subscope_rule(name: String, scope: Scope, body: Node, parent: &str) -> Rule {
         }
     };
 
-    let mut raw = serde_yaml::Mapping::new();
+    let mut raw = serde_norway::Mapping::new();
     raw.insert(
-        serde_yaml::Value::String("name".to_string()),
-        serde_yaml::Value::String(name.clone()),
+        serde_norway::Value::String("name".to_string()),
+        serde_norway::Value::String(name.clone()),
     );
     raw.insert(
-        serde_yaml::Value::String("lib".to_string()),
-        serde_yaml::Value::Bool(true),
+        serde_norway::Value::String("lib".to_string()),
+        serde_norway::Value::Bool(true),
     );
     raw.insert(
-        serde_yaml::Value::String("capa/subscope-rule".to_string()),
-        serde_yaml::Value::Bool(true),
+        serde_norway::Value::String("capa/subscope-rule".to_string()),
+        serde_norway::Value::Bool(true),
     );
     raw.insert(
-        serde_yaml::Value::String("capa/parent".to_string()),
-        serde_yaml::Value::String(parent.to_string()),
+        serde_norway::Value::String("capa/parent".to_string()),
+        serde_norway::Value::String(parent.to_string()),
     );
 
     Rule {

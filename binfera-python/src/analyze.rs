@@ -24,10 +24,10 @@ use crate::rules::{rules_paths, ruleset, Rules};
 /// from the path extraction would treat raw sample bytes as a filesystem
 /// path made of those same bytes.
 pub(crate) fn read_input(data_or_path: &Bound<'_, PyAny>) -> PyResult<(Vec<u8>, String)> {
-    if let Ok(b) = data_or_path.downcast::<PyBytes>() {
+    if let Ok(b) = data_or_path.cast::<PyBytes>() {
         return Ok((b.as_bytes().to_vec(), String::new()));
     }
-    if let Ok(b) = data_or_path.downcast::<PyByteArray>() {
+    if let Ok(b) = data_or_path.cast::<PyByteArray>() {
         return Ok((b.to_vec(), String::new()));
     }
     let path: PathBuf = data_or_path.extract().map_err(|_| {
@@ -82,7 +82,7 @@ pub fn analyze(
     os: Option<String>,
     arch: Option<String>,
     file_only: bool,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (bytes, sample_path) = read_input(data_or_path)?;
     let jobs = parse_jobs(jobs)?;
     let format = parse_format(format.as_deref())?;
@@ -103,7 +103,7 @@ pub fn analyze(
     // `binfera::parallel`'s scoped-thread workers never touch a
     // Python object, so this is safe by construction, same as the roadmap's
     // "Errors and the GIL" task requires.
-    let json = py.allow_threads(move || -> Result<String, PyErr> {
+    let json = py.detach(move || -> Result<String, PyErr> {
         let input = api::Input {
             bytes: &bytes,
             sample_path,
@@ -122,10 +122,10 @@ pub fn analyze(
     })?;
 
     // Parsed via Python's own `json` module rather than a second Rust JSON
-    // -> PyObject converter: the object graph handed back to
+    // -> Py<PyAny> converter: the object graph handed back to
     // Python is built by CPython's own decoder, not a crate that could
     // disagree with it on an edge case.
-    let json_module = PyModule::import_bound(py, "json")?;
+    let json_module = PyModule::import(py, "json")?;
     let value = json_module.call_method1("loads", (json,))?;
     Ok(value.unbind())
 }
@@ -174,7 +174,7 @@ pub fn diff(
     format: Option<String>,
     arch: Option<String>,
     pair: Option<(u64, u64)>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let jobs = parse_jobs(jobs)?;
     let format = parse_format(format.as_deref())?;
     let detail = pair.is_some();
@@ -190,7 +190,7 @@ pub fn diff(
     };
     let matching = rules.map(|rules| (rules_paths(&rules), ruleset(&rules)));
 
-    let json = py.allow_threads(move || -> Result<String, PyErr> {
+    let json = py.detach(move || -> Result<String, PyErr> {
         let left = bdiff::fingerprint(&bytes_a, &print_a).map_err(diff_failure)?;
         let right = bdiff::fingerprint(&bytes_b, &print_b).map_err(diff_failure)?;
         let serialized = if let Some((at_a, at_b)) = pair {
@@ -223,14 +223,14 @@ pub fn diff(
         };
         serialized.map_err(|e| CapaError::new_err(format!("serializing diff document: {e}")))
     })?;
-    let json_module = PyModule::import_bound(py, "json")?;
+    let json_module = PyModule::import(py, "json")?;
     let value = json_module.call_method1("loads", (json,))?;
     Ok(value.unbind())
 }
 
 /// Hands a JSON document to Python's own decoder, so every result the binding returns is built by
 /// CPython's `json` module rather than a second converter.
-pub(crate) fn json_to_py(py: Python<'_>, json: String) -> PyResult<PyObject> {
-    let module = PyModule::import_bound(py, "json")?;
+pub(crate) fn json_to_py(py: Python<'_>, json: String) -> PyResult<Py<PyAny>> {
+    let module = PyModule::import(py, "json")?;
     Ok(module.call_method1("loads", (json,))?.unbind())
 }

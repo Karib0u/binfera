@@ -1,9 +1,17 @@
 # cargo-deny policy for the desktop app. It differs from the workspace policy
-# (../../deny.toml) only in the licences Tauri's dependency tree brings in.
+# (../../deny.toml) in the licences Tauri's dependency tree brings in and in two
+# ignored advisories from Tauri's Linux GTK3 stack.
 
 [advisories]
 unsound = "all"
 yanked = "deny"
+# Tauri 2 builds its Linux window on the GTK3 bindings (gtk-rs 0.18), which are no
+# longer maintained; only Tauri 3 moves off them.
+ignore = [
+    { id = "RUSTSEC-2024-0429", reason = "glib 0.18 is pinned by Tauri 2's GTK3 stack; this app never calls VariantStrIter" },
+    # A procedural-macro helper of glib-macros and gtk3-macros: build time only.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error runs only at build time, inside the gtk-rs 0.18 macros" },
+]
 
 [licenses]
 allow = [

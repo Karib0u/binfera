@@ -1732,7 +1732,6 @@ fn pointer_entry_boundary(image: &LoadedImage, target: u64) -> bool {
 /// Executable addresses named by aligned image-relative or absolute values in
 /// initialized data. Unwind and relocation directories are skipped: their
 /// RVAs name function starts and blocks that other sources already handle.
-#[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
 fn collect_data_pointer_targets(image: &LoadedImage) -> BTreeSet<u64> {
     let mut targets = BTreeSet::new();
     for section in &image.sections {
@@ -1749,11 +1748,8 @@ fn collect_data_pointer_targets(image: &LoadedImage) -> BTreeSet<u64> {
         let Some(bytes) = image.bytes_at(section.address, length) else {
             continue;
         };
-        for (index, chunk) in bytes.chunks_exact(4).enumerate() {
-            let Ok(value) = <[u8; 4]>::try_from(chunk) else {
-                continue;
-            };
-            let relative = u32::from_le_bytes(value);
+        for (index, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
+            let relative = u32::from_le_bytes(*chunk);
             if image.architecture == Architecture::X86 {
                 let target = u64::from(relative);
                 if is_executable(image, target) {
@@ -1802,7 +1798,6 @@ fn import_stub_starts(analysis: &Analysis) -> Vec<u64> {
 
 /// Sorted `(begin, end)` extents of the x64 `.pdata` unwind entries. Malformed
 /// or truncated entries are skipped; they only make the filter more permissive.
-#[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
 pub(crate) fn unwind_extents(image: &LoadedImage) -> Vec<(u64, u64)> {
     let mut extents = Vec::new();
     for section in image.sections.iter().filter(|s| s.name == ".pdata") {
@@ -1812,7 +1807,7 @@ pub(crate) fn unwind_extents(image: &LoadedImage) -> Vec<(u64, u64)> {
         else {
             continue;
         };
-        for entry in bytes.chunks_exact(12) {
+        for entry in bytes.as_chunks::<12>().0 {
             let word = |at: usize| {
                 entry
                     .get(at..at + 4)
@@ -2075,7 +2070,6 @@ fn should_isolate_overlapping_candidate(
 /// ASCII runs are left alone, since `push esi; push edi; push ebx; push 0` reads `VWSj\0`.
 /// Strings placed in code sections (`"http://"` decodes as `push 3a707474h; das; das`) are
 /// not entries, however plausible their first instructions.
-#[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
 fn terminated_text(bytes: &[u8]) -> bool {
     let printable = |b: u8| (0x20..0x7f).contains(&b) || matches!(b, b'\t' | b'\n' | b'\r');
     let narrow = bytes.iter().take_while(|&&b| printable(b)).count();
@@ -2083,7 +2077,9 @@ fn terminated_text(bytes: &[u8]) -> bool {
         return true;
     }
     let wide = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .take_while(|pair| pair[1] == 0 && printable(pair[0]))
         .count();
     wide >= 4 && bytes.get(2 * wide..2 * wide + 2) == Some(&[0, 0][..])

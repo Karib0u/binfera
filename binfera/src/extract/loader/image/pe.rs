@@ -474,7 +474,6 @@ fn xor_number(bytes: &[u8], offset: usize, size: usize, key: u8) -> Option<u64> 
     }))
 }
 
-#[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
 pub(super) fn carved_pe_size(bytes: &[u8], nt: usize, key: u8) -> Option<u64> {
     // PE structure offsets used by `PE.PE.parseSections`. That parser locates
     // sections using NumberOfRvaAndSizes rather than SizeOfOptionalHeader.
@@ -497,7 +496,7 @@ pub(super) fn carved_pe_size(bytes: &[u8], nt: usize, key: u8) -> Option<u64> {
         .checked_add(directories.checked_mul(8)?)?;
     let raw = bytes.get(table..table.checked_add(sections.checked_mul(40)?)?)?;
     let mut size = 0;
-    for section in raw.chunks_exact(40) {
+    for section in raw.as_chunks::<40>().0 {
         let offset = xor_number(section, 20, 4, key)?;
         let len = xor_number(section, 16, 4, key)?;
         size = size.max(offset.checked_add(len)?);

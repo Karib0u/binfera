@@ -776,8 +776,7 @@ impl Reader<'_> {
         };
         // Copy only the bounded directory, so the reader's work budget can mutate.
         let entries = entries.to_vec();
-        #[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
-        for row in entries.chunks_exact(12) {
+        for row in entries.as_chunks::<12>().0 {
             let field = |offset: usize| -> Option<u64> {
                 self.image
                     .image_base

@@ -722,14 +722,12 @@ mod tests {
     /// addresses starting at `base`. Returns `(words, recognized)` --
     /// reaching this line at all across a whole real `.text` section is
     /// itself most of the assertion: a panic anywhere aborts the test.
-    // `as_chunks` is not available on the crate's Rust 1.87 MSRV.
-    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn decode_all(base: u64, code: &[u8]) -> (usize, usize) {
         let mut words = 0usize;
         let mut recognized = 0usize;
-        for (index, chunk) in code.chunks_exact(4).enumerate() {
+        for (index, chunk) in code.as_chunks::<4>().0.iter().enumerate() {
             let address = base.wrapping_add((index * 4) as u64);
-            let word = u32::from_le_bytes(chunk.try_into().expect("chunks_exact(4)"));
+            let word = u32::from_le_bytes(*chunk);
             let insn = from_aarch64(address, chunk, word);
             assert_eq!(insn.address, address);
             assert_eq!(insn.next_address, address.wrapping_add(4));

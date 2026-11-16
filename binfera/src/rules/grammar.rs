@@ -3,7 +3,7 @@
 //! `parse_description`, `parse_bytes`, `parse_int`, `parse_range`,
 //! `pop_statement_description_entry`, `trim_dll_part`, `unique`.
 
-use serde_yaml::Value;
+use serde_norway::Value;
 
 use crate::features::{
     Access, ComKind, CompiledRegex, Feature, StringFeature, MAX_BYTES_FEATURE_SIZE,
@@ -65,7 +65,7 @@ enum RawScalar {
 /// entry point: build a `Node` from one list item of a rule's `features:`
 /// list (or a nested statement's children) -- a YAML mapping with 1-2 keys
 /// (the statement/feature key, and optionally a sibling `description`).
-pub fn build_statements(d: &serde_yaml::Mapping, scopes: Scopes) -> Result<Node, RuleError> {
+pub fn build_statements(d: &serde_norway::Mapping, scopes: Scopes) -> Result<Node, RuleError> {
     if d.len() > 2 {
         return Err(RuleError::invalid("too many statements"));
     }
@@ -402,7 +402,7 @@ fn parse_operand_index(key: &str, suffix: &str) -> Result<u8, RuleError> {
 fn build_operand(
     key: &str,
     suffix: &str,
-    d: &serde_yaml::Mapping,
+    d: &serde_norway::Mapping,
     scopes: Scopes,
     ctor: impl Fn(u8, i128) -> Result<Feature, RuleError>,
 ) -> Result<Node, RuleError> {
@@ -428,7 +428,7 @@ fn build_operand(
 /// namespace, property (bare, no access).
 fn build_default_leaf(
     key: &str,
-    d: &serde_yaml::Mapping,
+    d: &serde_norway::Mapping,
     scopes: Scopes,
 ) -> Result<Node, RuleError> {
     let raw_value = d
@@ -769,7 +769,7 @@ fn unique_nodes(nodes: Vec<Node>) -> Vec<Node> {
     out
 }
 
-fn as_feature_mapping(v: &Value) -> Result<serde_yaml::Mapping, RuleError> {
+fn as_feature_mapping(v: &Value) -> Result<serde_norway::Mapping, RuleError> {
     match v {
         Value::Mapping(m) => Ok(m.clone()),
         other => Err(RuleError::invalid(format!(
@@ -778,7 +778,7 @@ fn as_feature_mapping(v: &Value) -> Result<serde_yaml::Mapping, RuleError> {
     }
 }
 
-fn sibling_description(d: &serde_yaml::Mapping) -> Result<Option<String>, RuleError> {
+fn sibling_description(d: &serde_norway::Mapping) -> Result<Option<String>, RuleError> {
     match d.get("description") {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -1041,7 +1041,7 @@ mod tests {
     fn count_preserves_sibling_description() {
         for spec in ["2", "2 or more", "2 or fewer", "(1, 4)"] {
             let yaml = format!("count(mnemonic(mov)): {spec}\ndescription: count explanation");
-            let mapping: serde_yaml::Mapping = serde_yaml::from_str(&yaml).unwrap();
+            let mapping: serde_norway::Mapping = serde_norway::from_str(&yaml).unwrap();
             let node = build_statements(
                 &mapping,
                 Scopes {

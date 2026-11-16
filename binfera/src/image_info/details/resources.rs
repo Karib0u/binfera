@@ -147,7 +147,9 @@ impl Walk<'_> {
                 let units = usize::from(le16(self.bytes, at)?);
                 let raw = self.bytes.get(at + 2..at + 2 + units * 2)?;
                 let wide: Vec<u16> = raw
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| {
                         pair.iter()
                             .rev()
@@ -425,7 +427,9 @@ fn version_info(data: &[u8]) -> Vec<Property> {
                 // wValueLength counts UTF-16 units for text values.
                 let units: Vec<u16> = string
                     .value
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .take(if string.wide { string.value_length } else { 0 })
                     .map(|pair| {
                         pair.iter()

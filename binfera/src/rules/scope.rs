@@ -101,7 +101,7 @@ impl Scopes {
     }
 
     /// port of `Scopes.from_dict`
-    pub fn from_dict(map: &serde_yaml::Mapping) -> Result<Scopes, RuleError> {
+    pub fn from_dict(map: &serde_norway::Mapping) -> Result<Scopes, RuleError> {
         let keys: Vec<&str> = map.keys().filter_map(|k| k.as_str()).collect();
 
         if !keys.contains(&"static") {
@@ -171,12 +171,12 @@ impl Scopes {
     }
 }
 
-fn yaml_scalar_str(map: &serde_yaml::Mapping, key: &str) -> Result<String, RuleError> {
+fn yaml_scalar_str(map: &serde_norway::Mapping, key: &str) -> Result<String, RuleError> {
     let value = map
-        .get(serde_yaml::Value::String(key.to_string()))
+        .get(serde_norway::Value::String(key.to_string()))
         .ok_or_else(|| RuleError::invalid(format!("{key} scope must be provided")))?;
     match value {
-        serde_yaml::Value::String(s) => Ok(s.clone()),
+        serde_norway::Value::String(s) => Ok(s.clone()),
         other => Err(RuleError::invalid(format!(
             "{key} scope must be a string, got: {other:?}"
         ))),
@@ -787,8 +787,8 @@ mod tests {
     #[test]
     fn scopes_from_dict_rejects_legacy_and_unknown_shapes() {
         let mk = |yaml: &str| -> Result<Scopes, RuleError> {
-            let v: serde_yaml::Value = serde_yaml::from_str(yaml).expect("test yaml is valid");
-            let serde_yaml::Value::Mapping(m) = v else {
+            let v: serde_norway::Value = serde_norway::from_str(yaml).expect("test yaml is valid");
+            let serde_norway::Value::Mapping(m) = v else {
                 panic!("test yaml must be a mapping")
             };
             Scopes::from_dict(&m)

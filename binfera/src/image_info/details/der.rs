@@ -147,7 +147,9 @@ pub(super) fn text(item: Tlv<'_>) -> Option<String> {
 
 pub(super) fn utf16_be(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| pair.iter().fold(0u16, |acc, &b| (acc << 8) | u16::from(b)))
         .collect();
     String::from_utf16_lossy(&units)

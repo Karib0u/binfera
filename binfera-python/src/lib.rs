@@ -49,22 +49,22 @@ fn _binfera(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", binfera::version())?;
     m.add("RULES_PIN", binfera::RULES_PIN)?;
 
-    m.add("CapaError", m.py().get_type_bound::<error::CapaError>())?;
+    m.add("CapaError", m.py().get_type::<error::CapaError>())?;
     m.add(
         "InvalidRuleError",
-        m.py().get_type_bound::<error::InvalidRuleError>(),
+        m.py().get_type::<error::InvalidRuleError>(),
     )?;
     m.add(
         "UnsupportedFormatError",
-        m.py().get_type_bound::<error::UnsupportedFormatError>(),
+        m.py().get_type::<error::UnsupportedFormatError>(),
     )?;
     m.add(
         "InvalidSignatureError",
-        m.py().get_type_bound::<error::InvalidSignatureError>(),
+        m.py().get_type::<error::InvalidSignatureError>(),
     )?;
     m.add(
         "CorruptFileError",
-        m.py().get_type_bound::<error::CorruptFileError>(),
+        m.py().get_type::<error::CorruptFileError>(),
     )?;
 
     m.add_class::<rules::Rules>()?;
