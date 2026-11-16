@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 
-const source = ts.transpileModule(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const source = stripTypes(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8"));
 const { decodeShellcodeInput, shellcodePayload } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const bytes = s => new TextEncoder().encode(s).buffer;
 const expected = [0x31, 0xc0, 0xc3];

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 import createBinfera from "../src/wasm/binfera.js";
 
 async function run(bytes, args) {
@@ -23,13 +23,9 @@ async function run(bytes, args) {
   return output.join("\n");
 }
 
-const compiled = ts.transpileModule(await readFile(new URL("../src/engine/capa.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const compiled = stripTypes(await readFile(new URL("../src/engine/capa.ts", import.meta.url), "utf8"));
 const { summarizeCapa } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
-const inputModule = ts.transpileModule(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const inputModule = stripTypes(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8"));
 const { shellcodePayload } = await import(`data:text/javascript;base64,${Buffer.from(inputModule).toString("base64")}`);
 
 for (const [format, bytes] of [

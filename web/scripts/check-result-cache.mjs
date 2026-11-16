@@ -4,14 +4,12 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import { indexedDB, IDBKeyRange, IDBObjectStore } from "fake-indexeddb";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 Object.defineProperty(globalThis, "navigator", { value: { hardwareConcurrency: 4, userAgent: "test" }, configurable: true });
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-const compile = async path => ts.transpileModule(await readFile(new URL(path, import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const compile = async path => stripTypes(await readFile(new URL(path, import.meta.url), "utf8"));
 const cacheUrl = moduleUrl(await compile("../src/engine/resultCache.ts"));
 const { digest, readResults, writeResults, forgetResults } = await import(cacheUrl);
 // Exercise the real engine identity helper: one rules fetch and digest per page load.

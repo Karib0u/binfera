@@ -1,20 +1,16 @@
 // Verify asset selection and ownership without downloading the real engine or databases.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 import { gzipSync } from "node:zlib";
 
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-const resultCache = ts.transpileModule(await readFile(new URL("../src/engine/resultCache.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const resultCache = stripTypes(await readFile(new URL("../src/engine/resultCache.ts", import.meta.url), "utf8"));
 const source = (await readFile(new URL("../src/engine/assets.ts", import.meta.url), "utf8"))
   .replace('from "./resultCache"', `from "${moduleUrl(resultCache)}"`)
   .replace(/import wasmUrl from [^;]+;/, 'const wasmUrl = "/engine.wasm";')
   .replace("import.meta.env.BASE_URL", '"/"');
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const compiled = stripTypes(source);
 const requested = [];
 globalThis.fetch = async url => {
   requested.push(url);

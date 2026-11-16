@@ -2,12 +2,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { setImmediate, setTimeout as delay } from "node:timers/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 
 const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-const shellcodeModule = moduleUrl(ts.transpileModule(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText);
+const shellcodeModule = moduleUrl(stripTypes(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8")));
 const mocks = moduleUrl(`
   export const workers = [];
   export const requests = [];
@@ -35,9 +33,7 @@ const mocks = moduleUrl(`
   }
 `);
 const source = await readFile(new URL("../src/analyze.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText.replace('from "./engine/shellcode"', `from "${shellcodeModule}"`).replace(/from "\.\/engine\/[^\"]+"/g, `from "${mocks}"`);
+const compiled = stripTypes(source).replace('from "./engine/shellcode"', `from "${shellcodeModule}"`).replace(/from "\.\/engine\/[^\"]+"/g, `from "${mocks}"`);
 const { analyze } = await import(moduleUrl(compiled));
 const { workers, requests, metadata } = await import(mocks);
 Object.defineProperty(globalThis, "navigator", { value: { hardwareConcurrency: 4 }, configurable: true });
