@@ -41,12 +41,12 @@
     "@tauri-apps/api": "^2.12.4",
     "@zip.js/zip.js": "^2.24.0",
     "7z-wasm": "^1.2.0",
-    "react": "^18.3.1",
+    "react": "^19.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.3.0",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "fake-indexeddb": "^6.2.8",
