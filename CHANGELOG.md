@@ -28,4 +28,4 @@ First public release: a native Rust backend for unmodified upstream capa rules, 
 - Release archives for Linux (x86_64, arm64; glibc 2.35 or newer), macOS (arm64, x86_64) and Windows (x86_64), each carrying the pinned capa-rules.
 - Desktop installers for macOS (signed and notarised), Windows (unsigned) and Linux.
 - Declared `rust-version = "1.89"`, guarded by a CI job on exactly that toolchain.
-- Performance and parity measurements: [`docs/benchmarks.md`](docs/benchmarks.md).
+- Measurements: a function list a median of 23 times sooner than Ghidra's headless analyzer on 39 files across PE, ELF and Mach-O, and identical results to Python capa on 376 of 376 corpus files ([`docs/benchmarks.md`](docs/benchmarks.md)).

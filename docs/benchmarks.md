@@ -1,185 +1,130 @@
 # Benchmarks
 
-The only place measurements live. Unless a section states otherwise, measurements were taken on 2026-10-21 against binfera release build of `main` at `2d9862a` (plus comment-only changes), Python capa 10.0.0, and capa-rules v10.0.0. Results hold for this implementation, ruleset, corpus, and host. They are not universal claims. Re-run before quoting: commands are at the bottom.
+Two questions: how fast binfera finds the code in a file compared with Ghidra, and whether its capability results match Python capa. Results hold for these files, versions and this machine; they are not universal claims. Commands to reproduce them are at the end.
 
-## Accuracy
+## binfera and Ghidra: time to a function list
 
-**x86/x64 PE, ELF, and shellcode vs Python capa 10.0.0.** 377 corpus inputs; the reference rejects one malformed ELF, leaving 376 comparable.
+**binfera lists the functions of a file a median of 23 times sooner than Ghidra's headless analyzer** (geometric mean 31×, range 1.5× to 346×), on the 39 of 45 files where the two tools find comparable functions. On files of 1 MB and larger it is 20× on average: Hive (Go, 2.3 MB) in 2.8 s against 42 s, BlackCat (Rust, 1.2 MB) in 2.4 s against 56 s, and a 5.3 MB ARM32 ELF in 10 s against 3 min 7 s.
 
-| Metric | Result |
-|---|---:|
-| Rule-name agreement | 100.00% |
-| Reference rule/sample matches | 11,412 |
-| Missing / extra rules | 0 / 0 |
-| Samples with identical rule names | 376/376 |
-| Samples with identical rule names and match addresses (`full-exact`) | 376/376 |
-
-Evidence-tree identity and duplicate-match multiplicity are not compared.
-
-**Other backends.**
-
-| Backend | Oracle | Result |
-|---|---|---|
-| .NET / CLR | Python capa + `dnfile` | 8/8 samples identical (`full-exact`) |
-| AArch64 ELF | Ghidra BinExport2 | 29/29 rules, 3/3 samples identical |
-| Mach-O (x86_64, AArch64) | None (hand-built fixtures) | 30/30 fixture tests pass |
-| AArch64 PE | None (hand-built fixtures) | 15/15 fixture tests pass |
-
-## Performance
-
-Host: MacBook Pro, Apple M1 Max, 10 logical CPUs, macOS 27.0.1. Median of 5 runs after one warm-up, wall time including process start-up and output.
-
-### binfera vs Python capa
-
-`binfera --jobs 1` against Python capa 10.0.0 (single-threaded), producing identical results on each sample. Speedups are per sample, not a corpus average.
-
-| Sample | binfera `--jobs 1` | Python capa | Speedup |
+| Type | Files | Speed-up (geometric mean) | Range |
 |---|---:|---:|---:|
-| `Practical Malware Analysis Lab 18-03.exe_` | 0.835 s | 3.781 s | 4.5x |
-| `055da8e6…elf_` (ELF64, 22 KB) | 0.215 s | 1.949 s | 9.1x |
-| `a198216798…exe_` (PE32, 293 KB) | 0.867 s | 6.023 s | 6.9x |
-| `79cde1aa…exe_` (PE32, 77 KB) | 0.921 s | 13.217 s | 14.4x |
-| `03b236b2…dll_` (PE32+ DLL) | 2.236 s | 38.647 s | 17.3x |
+| PE32 x86 EXE | 6 | 13× | 7× to 23× |
+| PE32 x86 DLL | 3 | 17× | 15× to 21× |
+| PE32+ x64 EXE | 4 | 18× | 15× to 23× |
+| PE32+ x64 DLL | 3 | 16× | 9× to 27× |
+| PE32+ x64 driver | 1 | 13× | |
+| ELF x86 | 3 | 57× | 32× to 85× |
+| ELF x86-64 | 4 | 63× | 34× to 134× |
+| ELF ARM32 | 3 | 32× | 18× to 83× |
+| ELF AArch64 | 2 | 17× | 3× to 90× |
+| ELF MIPS32 | 2 | 14× | 2× to 122× |
+| Mach-O x86_64 | 4 | 136× | 106× to 209× |
+| Mach-O arm64 | 4 | 88× | 24× to 346× |
 
-Median speedup is 9.1x. binfera pays a fixed start-up cost (about 1 s to load the rules and signatures), which dominates on small files.
+The ratios on small files are high because each Ghidra run pays 5 to 10 s to start the JVM and create a project, which is most of its time on a 50 KB file. Windows files carry a fixed cost on binfera's side too: about 0.7 s to load the library signatures, which is why PE ratios are lower. The weakest results are a 1.5 MB MIPS ELF (20 s against 31 s) and a 0.7 MB AArch64 ELF (3.0 s against 9.2 s).
 
-### Parallel scaling
+### What it measures
 
-10 samples from `scripts/corpus-bench.txt`.
+- **binfera** is timed until `binfera FILE --decompile-all --jobs 1` prints its first record, the list of every recovered function.
+- **Ghidra** is timed for `analyzeHeadless -import FILE` with its default auto-analysis, JVM start-up and project creation included. Its analysis does more than find functions (data types, references, many analyzers), so this is the time to a fully analysed program, which is what Ghidra offers, not to a bare function list.
+- **Functions** compare binfera's count with Ghidra's functions excluding thunks: the import stubs (ELF PLT entries, Mach-O stubs) that Ghidra creates as functions. A file is comparable when the two counts agree within 25%.
+- The decompiler is Ghidra's C++ core in both tools, so decompiled output is the same kind of work. The difference measured here is in discovery.
+- Each file was run three times and the median kept; a file whose Ghidra run took more than 60 s was run once in Ghidra.
 
-| Jobs | Total | Speedup |
-|---:|---:|---:|
-| 1 | 30.7 s | 1.00x |
-| 2 | 27.2 s | 1.13x |
-| 4 | 26.1 s | 1.18x |
-| 10 (default) | 25.4 s | 1.21x |
+### Not comparable
 
-Median per-sample speedup at the default job count is 1.85x (best 3.12x, a small ELF). The total barely moves because one 9.6 MB PE takes 22 s, of which about 20 s is load and recovery, which is serial by design.
+Six files, where the function counts differ by more than 25%:
 
-Two results fall short of the project's own bar (median at least 1.5x with no sample below 0.91x):
+- **DarkGate** (Delphi, PE32, 0.24 MB): binfera 1,483, Ghidra 981.
+- **elf.chalubo** (MIPS32 ELF, 0.89 MB): binfera 2,506, Ghidra 1,888.
+- **Mirai** (x86 ELF, 0.05 MB): binfera 91, Ghidra 142.
+- **Stuxnet driver** (PE32, 0.02 MB): binfera 82, Ghidra 65.
+- Two PE32 files in which both tools find almost no code, one packed with Themida (1.6 MB) and one 2.6 MB DLL: binfera 12 and 10, Ghidra 3 each.
 
-- `03b236b2…dll_` slows down with more jobs: 2.41 s at 1 job, 2.86 s at the default (0.84x).
-- The largest PE reaches only 1.13x.
+### All files
 
-### Memory
+Families are from [Malpedia](https://malpedia.caad.fkie.fraunhofer.de/) and the demos on [binfera.io](https://binfera.io); hash prefixes are files from [capa-testfiles](https://github.com/mandiant/capa-testfiles). Functions are binfera / Ghidra without thunks; n/c is not comparable.
 
-Peak resident set size is about 660 MB for typical PE files, 63 MB for small ELF files, 770 MB for the PE32+ DLL, and 2.1 GB for the 9.6 MB PE. It does not change with job count.
+| File | Type | Size | binfera | Ghidra | Functions | Speed-up |
+|---|---|---:|---:|---:|---:|---:|
+| Industroyer2 (C/C++) | PE32 x86 EXE | 0.04 MB | 0.73 s | 10.2 s | 159 / 159 | 14× |
+| `009c2377…` | PE32 x86 EXE | 0.09 MB | 0.75 s | 10.7 s | 239 / 239 | 14× |
+| DarkGate (Delphi) | PE32 x86 EXE | 0.24 MB | 1.94 s | 18.8 s | 1,483 / 981 | n/c |
+| `02179f3b…` | PE32 x86 EXE | 0.27 MB | 0.97 s | 7.2 s | 6 / 7 | 7× |
+| BlackCat (Rust) | PE32 x86 EXE | 1.18 MB | 2.40 s | 55.9 s | 1,707 / 1,653 | 23× |
+| `2826b762…` | PE32 x86 EXE | 1.60 MB | 0.91 s | 7.0 s | 12 / 3 | n/c |
+| Hive (Go) | PE32 x86 EXE | 2.29 MB | 2.83 s | 41.8 s | 2,324 / 2,369 | 15× |
+| WannaCry (C/C++) | PE32 x86 EXE | 3.51 MB | 1.09 s | 8.9 s | 134 / 120 | 8× |
+| `09bf850b…` | PE32 x86 DLL | 0.12 MB | 1.07 s | 22.9 s | 591 / 491 | 21× |
+| NotPetya (C/C++) | PE32 x86 DLL | 0.36 MB | 0.80 s | 13.0 s | 172 / 171 | 16× |
+| `17264e31…` | PE32 x86 DLL | 0.54 MB | 1.99 s | 30.6 s | 1,609 / 1,704 | 15× |
+| `8a132663…` | PE32 x86 DLL | 2.58 MB | 1.24 s | 7.1 s | 10 / 3 | n/c |
+| Stuxnet (C/C++) | PE32 x86 driver | 0.02 MB | 0.67 s | 10.2 s | 82 / 65 | n/c |
+| `0a30182f…` | PE32+ x64 EXE | 0.09 MB | 0.74 s | 15.2 s | 102 / 101 | 20× |
+| `152d4c9f…` | PE32+ x64 EXE | 0.41 MB | 1.70 s | 24.7 s | 972 / 969 | 15× |
+| NimBlackout (Nim) | PE32+ x64 EXE | 0.50 MB | 0.99 s | 22.3 s | 541 / 540 | 23× |
+| `0da87fcc…` | PE32+ x64 EXE | 5.25 MB | 1.07 s | 16.7 s | 445 / 438 | 16× |
+| `0f33c2fe…` | PE32+ x64 DLL | 0.05 MB | 1.64 s | 15.2 s | 163 / 165 | 9× |
+| `03b236b2…` | PE32+ x64 DLL | 0.58 MB | 2.28 s | 62.4 s | 1,769 / 1,696 | 27× |
+| `7cd03db8…` | PE32+ x64 DLL | 1.72 MB | 1.06 s | 16.9 s | 589 / 570 | 16× |
+| `3e528207…` | PE32+ x64 driver | 0.04 MB | 0.74 s | 9.8 s | 43 / 40 | 13× |
+| Mirai (C/C++) | ELF x86 | 0.05 MB | 0.10 s | 6.7 s | 91 / 142 | n/c |
+| elf.torii | ELF x86 | 0.07 MB | 0.06 s | 5.4 s | 49 / 43 | 85× |
+| elf.xagent | ELF x86 | 0.18 MB | 0.19 s | 13.1 s | 406 / 406 | 67× |
+| elf.clop | ELF x86 | 1.25 MB | 1.56 s | 50.0 s | 3,331 / 3,131 | 32× |
+| elf.hideandseek | ELF x86-64 | 0.07 MB | 0.18 s | 7.9 s | 328 / 292 | 44× |
+| elf.boldmove | ELF x86-64 | 0.29 MB | 0.39 s | 13.3 s | 886 / 901 | 34× |
+| Cloud Snooper (C/C++) | ELF x86-64 | 0.31 MB | 0.16 s | 12.7 s | 468 / 442 | 81× |
+| elf.nextcry | ELF x86-64 | 5.38 MB | 0.07 s | 9.1 s | 81 / 78 | 134× |
+| elf.owari | ELF ARM32 | 0.13 MB | 0.15 s | 12.1 s | 268 / 255 | 83× |
+| elf.vpnfilter | ELF ARM32 | 0.28 MB | 0.66 s | 13.8 s | 863 / 838 | 21× |
+| elf.r2r2 | ELF ARM32 | 5.29 MB | 10.36 s | 186.5 s | 4,911 / 4,920 | 18× |
+| `687e79cd…` | ELF AArch64 | 0.07 MB | 0.07 s | 6.1 s | 52 / 51 | 90× |
+| elf.peer_time | ELF AArch64 | 0.71 MB | 3.03 s | 9.2 s | 267 / 258 | 3× |
+| elf.jenx | ELF MIPS32 | 0.05 MB | 0.10 s | 11.9 s | 94 / 108 | 122× |
+| elf.chalubo | ELF MIPS32 | 0.89 MB | 1.50 s | 47.9 s | 2,506 / 1,888 | n/c |
+| elf.sshdoor | ELF MIPS32 | 1.47 MB | 20.28 s | 30.6 s | 909 / 909 | 2× |
+| 3CX (C/C++) | Mach-O x86_64 | 0.04 MB | 0.05 s | 6.2 s | 11 / 11 | 122× |
+| osx.retefe | Mach-O x86_64 | 0.10 MB | 0.07 s | 13.9 s | 53 / 53 | 209× |
+| osx.proton_rat | Mach-O x86_64 | 0.72 MB | 0.34 s | 36.3 s | 1,425 / 1,416 | 106× |
+| osx.komplex | Mach-O x86_64 | 1.77 MB | 0.07 s | 8.4 s | 63 / 63 | 126× |
+| osx.amodaltea | Mach-O arm64 | 0.04 MB | 0.05 s | 4.9 s | 13 / 13 | 107× |
+| RustBucket (Swift) | Mach-O arm64 | 0.11 MB | 0.05 s | 18.4 s | 77 / 75 | 346× |
+| osx.lockbit | Mach-O arm64 | 0.41 MB | 0.18 s | 12.4 s | 373 / 343 | 67× |
+| osx.insidiousgh0st | Mach-O arm64 | 5.67 MB | 2.98 s | 70.6 s | 5,136 / 5,136 | 24× |
 
-### Phase times
+Measured on 2026-11-16 on an Apple M1 Max (10 cores, 64 GB), macOS 27.2, with binfera 1.0.0 (release build with the decompiler) and Ghidra 12.1.4 on Temurin JDK 27.0.1, warm disk cache.
 
-Sum over the 10-sample corpus, in seconds.
+## Agreement with capa
 
-| Phase | `--jobs 1` | `--jobs 2` | `--jobs 4` | default |
-|---|---:|---:|---:|---:|
-| rules | 2.62 | 1.71 | 1.22 | 1.00 |
-| load and recovery | 25.07 | 23.08 | 23.05 | 22.92 |
-| extraction | 0.49 | 0.34 | 0.20 | 0.12 |
-| matching | 2.19 | 1.66 | 1.14 | 0.91 |
-| result | 0.03 | 0.03 | 0.03 | 0.03 |
-| total | 30.71 | 27.24 | 26.08 | 25.41 |
+binfera runs the unmodified capa rules, and its results are compared file by file with pinned Python capa 10.0.0 and capa-rules v10.0.0.
+
+- **x86 and x64 PE, ELF and shellcode:** 376 of 376 comparable corpus files give identical rule names and identical match addresses (11,412 rule matches, none missing or extra). The reference rejects one further malformed ELF.
+- Evidence trees and duplicate-match counts are not compared.
+
+| Other backend | Reference | Result |
+|---|---|---|
+| .NET | Python capa with `dnfile` | 8 of 8 files identical |
+| AArch64 ELF | Ghidra BinExport2 | 29 of 29 rules, 3 of 3 files identical |
+| Mach-O (x86_64, arm64) | None (hand-built fixtures) | 30 of 30 fixture tests pass |
+| AArch64 PE | None (hand-built fixtures) | 15 of 15 fixture tests pass |
+
+Measured on 2026-10-21; the capability backend has not changed since.
 
 ## Reproduce
 
 ```bash
-scripts/setup_dev.sh && cargo build --release
+cargo build --release -p binfera-cli --features decompiler
 
-# accuracy (rule names, then rule names plus addresses)
-python3 scripts/difftest.py --mode full \
-  --samples scripts/corpus-full-static.txt --capa-cli target/release/binfera \
-  --no-rust-cache --no-expected
-python3 scripts/difftest.py --mode full-exact \
-  --samples scripts/corpus-full-static.txt --capa-cli target/release/binfera \
-  --no-rust-cache --no-expected
+# binfera and Ghidra (prints one JSON line per file, then the tables above)
+scripts/bench/bench_vs_ghidra.py target/release/binfera /path/to/ghidra_12.1.4_PUBLIC FILE...
 
-# other backends
+# agreement with capa (needs scripts/setup_dev.sh)
+python3 scripts/difftest.py --mode full-exact --samples scripts/corpus-full-static.txt \
+  --capa-cli target/release/binfera --no-rust-cache --no-expected
 python3 scripts/difftest.py --mode full-exact --samples scripts/corpus-dotnet.txt \
   --capa-cli target/release/binfera --no-rust-cache --no-expected
-python3 scripts/difftest.py --profile aarch64-binexport --mode full \
-  --samples scripts/corpus-aarch64.txt --capa-cli target/release/binfera \
-  --no-rust-cache --no-expected
+python3 scripts/difftest.py --profile aarch64-binexport --mode full --samples scripts/corpus-aarch64.txt \
+  --capa-cli target/release/binfera --no-rust-cache --no-expected
 cargo test --release -p binfera --test macho_features --test aarch64_pe_features
-
-# determinism across job counts
-python3 scripts/determinism.py \
-  --samples scripts/corpus-jobs.txt --capa-cli target/release/binfera
-
-# performance
-python3 scripts/bench.py --samples scripts/corpus-bench.txt \
-  --capa-cli target/release/binfera --jobs 1,2,4,default --runs 5 --markdown
-python3 scripts/bench.py --samples <samples.txt> --capa-cli target/release/binfera \
-  --jobs 1 --runs 5 --python .venv/bin/capa --markdown
-```
-
-Older reports, per-sample tables, and the divergence catalogue were removed from the tree; they remain in git history before the docs restructure.
-
-## Optional native decompiler
-
-Measured on 2026-10-21 with the release build on Apple M1 Max, 64 GiB RAM, macOS arm64, Rust 1.96.0. Each process reuses one session across seven compiled source fixtures, with no supplied prototypes. Raw outputs, process RSS, and executable/source hashes are in [tests/decompiler/measurements](https://github.com/Karib0u/binfera/tree/main/tests/decompiler/measurements/).
-
-| Requests | Cold session setup | Highest function warm p95 | Peak RSS |
-|---|---:|---:|---:|
-| 700 | 52.482 ms | 3.104 ms | 36.250 MiB |
-| 7,000 | 31.803 ms | 3.016 ms | 36.031 MiB |
-
-Cold setup includes recovery and runtime recognition. The highest p95 is for the switch fixture, which also analyzes supporting callees. These local observations meet fixture regression targets of cold setup below 100 ms, warm p95 below 5 ms, peak RSS below 64 MiB, and less than 8 MiB growth between 700 and 7,000 requests. They do not establish limits for large corpus functions or prove leak freedom. Background machine activity and filesystem caches were not controlled.
-
-Reproduce with:
-
-```sh
-cargo build --release -p binfera --features decompiler --example decompiler_bench
-/usr/bin/time -l target/release/examples/decompiler_bench 100
-/usr/bin/time -l target/release/examples/decompiler_bench 1000
-```
-
-Use `/usr/bin/time -v` on Linux. See [the decompiler guide](decompiler.md) for scope, cooperative resource limits, and native-engine ownership.
-
-
-## Local analysis optimization check, 2026-11-03
-
-Compared the release CLI at `ad9d6f87bcddbe86585b3198dc6e2b6e7a17cb81` with the following changes on macOS arm64, Rust 1.99.1 and Emscripten 6.0.13:
-
-- Share the parsed MSVC runtime signature database between native and compatibility recovery. Database order, matching rules and custom-file reload behavior stay intact. Mounted bundled bytes must match the compiled database before sharing its cache.
-- Read the deadline clock on the first checkpoint and then every 64 checkpoints. Work limits still charge every checkpoint; the existing deadline test passes.
-- Stop recursive child inference when an unresolved direct call cannot be repaired by those children. Keep inference invalidation for temporary return and calling-convention hints.
-- Clear inference when the instruction limit changes, so a smaller retry cannot reuse evidence completed under a larger instruction limit.
-- For non-PE browser inputs, omit the three unused FLIRT assets: 14.476 MiB of downloads and per-worker buffer copies. No asset is removed from PE analysis.
-
-Other analysis jobs were active on this host. These wall times are provisional, not an isolated performance guarantee. The small native cases use three alternating before/after process pairs; BlackCat uses one full run per version. All use `--decompile-all --shard 0/1`, including recovery, initialization and JSON output. Samples are the IDs in `web/demo/samples.json`.
-
-| Native sample | Functions | Before | After | Peak RSS before / after |
-|---|---:|---:|---:|---:|
-| Stuxnet | 83 | 2.209 s | 1.722 s | 793.8 / 648.5 MiB |
-| Mirai | 142 | 11.023 s | 10.902 s | 82.5 / 82.5 MiB |
-| 3CX | 11 | 0.485 s | 0.546 s | 61.5 / 61.0 MiB |
-| BlackCat | 1,742 | 278.390 s | 282.432 s | 1,065.7 / 921.2 MiB |
-
-There is no demonstrated BlackCat time improvement. Its memory saving is about 145 MiB per native process. The small native 3CX case regressed by about 62 ms in this run; the patch does not establish a universal speedup. Mirai body-analysis passes fell from 1,543 to 1,491; BlackCat passes increased from 5,048 to 5,073 while preserving the final outputs.
-
-The actual WebAssembly engine was also run in Node, with a fresh instance and an already compiled module. This excludes downloads, module compilation, UI work and browser worker contention. Its before version already shares the parsed signature database, so this comparison measures the subsequent Ghidra and non-PE asset changes. Two alternating process pairs per sample, reporting medians:
-
-| WebAssembly sample | Functions | Before | After |
-|---|---:|---:|---:|
-| Stuxnet | 83 | 2.939 s | 2.715 s |
-| Mirai | 142 | 16.920 s | 13.513 s |
-| 3CX | 11 | 1.305 s | 1.236 s |
-
-Heap capacity did not increase in these WebAssembly pairs. The final module has one copy of the runtime signature bytes, matching the previous module's approximately 24.66 MB size.
-
-Validation:
-
-- All 1,978 distinct native function records matched, across the four samples and every repeat. Compare all fields except `ms` and `timings`, including C text, warnings, errors, incomplete markers and retries. Start inventories and final warnings matched as well.
-- All WebAssembly function records and batch metadata matched in all six pairs. The final non-PE runs mounted no FLIRT assets, matching the browser's asset selection.
-- Full capability JSON matched on all four samples, removing only `meta.timestamp`.
-- Rust library and CLI suite: 856 passed, 6 ignored. Native Ghidra suite: 59 passed; the deadline and CLI checks also passed. The final signature-sharing test group passed all 10 tests after consolidating the embedded byte storage.
-- Browser build, `test:assets`, `test:analyze`, `test:image` and `test:macho` passed.
-
-A more aggressive inference-cache experiment was rejected. Restoring cached prototypes across temporary hints changed two BlackCat function records, including a 64-bit return narrowed to 32 bits. Ghidra retains ABI state beyond explicit prototype lock flags. Keeping that cache would violate output parity. An alternative WebAssembly allocator was also rejected after mixed timing results and a larger module.
-
-For larger gains, investigate the long tail of the browser's round-robin function shards and repeated whole-file recovery across workers. The native and compatibility recovery passes find different functions, and data-symbol reanalysis changes types. Removing those passes outright would need coverage and typing evidence that this experiment does not establish.
-
-To repeat the native check, build each revision separately and run the same sample and flags:
-
-```bash
-cargo build --release -p binfera-cli --features decompiler
-/usr/bin/time -l target/release/binfera <sample> --decompile-all --shard 0/1
 ```

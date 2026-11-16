@@ -230,7 +230,6 @@ Imports keep the Win32 archive and the convention it records for each, since a D
 
 One engine detail matters here. A callee prototype inferred as `void` is locked, and a locked void result tells the engine the call leaves the return register alone unless the model kills it. The Windows and System V models kill it; Delphi's and Borland's leave its effect unknown, so a caller that uses the result would print the value from before the call. Such an inferred void result stays unlocked (`apply` in `native/bridge.cc`), so the callers' uses decide, as in Ghidra.
 
-
 ## ELF (System V)
 
 `from_elf` decompiles x86-64 (`x86-64-gcc.cspec`, `calling_convention` `system_v_x64`) and i386 (`x86gcc.cspec`, `system_v_x86`: `__cdecl` by default, with the `__regparm` variants defined) ELF images. Function names come from `.symtab` and `.dynsym`, so a stripped file has none; there is no library recognition for ELF yet.
@@ -241,7 +240,7 @@ One engine detail matters here. A callee prototype inferred as `void` is locked,
 - **Linux system calls.** Native x64 `syscall` and i386 `int 0x80` are printed as `linux_write`, `linux_mmap`, etc., when Ghidra's SSA analysis resolves the accumulator to one constant. A temporary p-code probe exposes the number and models register and memory effects; the final pass replaces resolved instructions with calls using the compiler specification's `syscall` model (including x64 `R10` and i386 `EBX` through `EBP`). The call does not pop the stack. Compatible C archive parameters and explicit raw kernel signatures type common calls; return values are signed machine words, including negative kernel error codes. `exit` and `exit_group` do not return. Names use Linux v6.12's tables (452 i386 and 375 native x64 entries), since Ghidra's i386 table stops at 190. Unknown numbers, conflicting branch values, `sysenter`, and long-mode `int 0x80` keep their original SLEIGH translation. A named call without a known signature stays marked as an unknown prototype. This also applies to Linux Go binaries. Windows and explicitly identified non-Linux ELF images are excluded; unbranded System V ELF is assumed to be Linux. Native recovery follows i386 kernel traps through returning wrappers instead of falsely marking those wrappers as non-returning; capability compatibility recovery keeps its reference behavior.
 - **Memory.** A segment whose memory size exceeds its file bytes (`.bss`) is zero-filled, capped at 16 MiB.
 
-Units are refused for ELF. 
+Units are refused for ELF.
 
 ## Go
 
@@ -358,8 +357,6 @@ cargo build --release -p binfera --features decompiler --example decompiler_benc
 ```
 
 On Linux use `/usr/bin/time -v` instead of `-l`. The resulting process maximum RSS includes loading, recovery and all requests. Timings are observations of the current binary, not cached acceptance numbers. Fixture-scale targets are established from the measurements collected by the benchmark; large real functions can hit limits and need separate evaluation.
-
-See [fresh fixture measurements and regression targets](benchmarks.md#optional-native-decompiler).
 
 ## Validation
 

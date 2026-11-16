@@ -41,7 +41,7 @@ export default function LandingTour() {
         <div><h3>Library code named</h3><p>FLIRT signatures and Function ID packs label what isn't worth reading.</p></div>
         <div><h3>Your work stays</h3><p>The desktop app keeps renames, comments and recent files, and browses whole folders of samples. <a href={`${REPO}/releases`} target="_blank" rel="noreferrer">Download</a></p></div>
         <div><h3>Function emulation</h3><p>From the command line or MCP, run a function on emulated memory. Sample code never executes on your CPU.</p></div>
-        <div><h3>Fast first look</h3><p>A function list 8 to 21 times faster than Ghidra's headless analyzer on Windows executables up to 4 MB. <a href={`${REPO}/blob/main/docs/benchmarks-ghidra.md`} target="_blank" rel="noreferrer">Caveats</a></p></div>
+        <div><h3>Fast first look</h3><p>A function list a median of 23 times sooner than Ghidra's headless analyzer, on PE, ELF and Mach-O files. <a href={`${REPO}/blob/main/docs/benchmarks.md`} target="_blank" rel="noreferrer">Caveats</a></p></div>
         <div><h3>Scripts and CI</h3><p><code>binfera diff</code> checks builds in a pipeline, and Python bindings expose inspection and decompilation.</p></div>
       </div>
     </section>
