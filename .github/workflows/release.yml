@@ -233,8 +233,8 @@ jobs:
             echo "## Install"
             echo
             echo '```sh'
-            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.sh | sh   # macOS, Linux"
-            echo "irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.ps1 | iex       # Windows, PowerShell"
+            echo "curl -fsSL https://binfera.io/install.sh | sh     # macOS, Linux"
+            echo "irm https://binfera.io/install.ps1 | iex   # Windows, PowerShell"
             echo '```'
             echo
             echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads. \`SHA256SUMS\` lists every file."

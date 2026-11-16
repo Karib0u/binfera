@@ -1,6 +1,6 @@
 [package]
 name = "binfera-desktop"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Binfera desktop app: the web UI on a native binfera engine"

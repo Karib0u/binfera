@@ -83,7 +83,9 @@ fn engine_version(program: &Path) -> String {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_default();
             // "binfera 1.0.0 (...)": the name is not part of the version.
-            let text = text.strip_prefix("binfera").map_or(text.as_str(), str::trim);
+            let text = text
+                .strip_prefix("binfera")
+                .map_or(text.as_str(), str::trim);
             safe(if text.is_empty() {
                 env!("CARGO_PKG_VERSION")
             } else {
