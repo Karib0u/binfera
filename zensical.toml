@@ -28,7 +28,6 @@ nav = [
         { "Decompiler scope and limits" = "decompiler.md" },
         { "Compatibility with capa" = "compatibility.md" },
         { "Benchmarks" = "benchmarks.md" },
-        { "Binfera and Ghidra" = "benchmarks-ghidra.md" },
     ] },
 
     { "Help" = [

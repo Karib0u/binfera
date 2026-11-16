@@ -14,7 +14,7 @@ Binfera includes an independent Rust implementation of [Mandiant capa](https://g
 
 ## How does it relate to Ghidra?
 
-The decompiler is Ghidra's own C++ decompiler core and SLEIGH processor specifications, embedded without the JVM. Loading, function discovery and everything around the decompiler are Binfera's own Rust code. Binfera is not affiliated with or endorsed by the NSA. See [Binfera and Ghidra](benchmarks-ghidra.md) for a measured comparison and [Decompiler scope and limits](decompiler.md) for what is supported.
+The decompiler is Ghidra's own C++ decompiler core and SLEIGH processor specifications, embedded without the JVM. Loading, function discovery and everything around the decompiler are Binfera's own Rust code. Binfera is not affiliated with or endorsed by the NSA. See [Binfera and Ghidra](benchmarks.md#binfera-and-ghidra-time-to-a-function-list) for a measured comparison and [Decompiler scope and limits](decompiler.md) for what is supported.
 
 ## Which files can it read?
 

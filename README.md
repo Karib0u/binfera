@@ -44,7 +44,7 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 
 binfera is built for the first hours with an unknown file (what is it, what does it do, what changed), not as a replacement for a full reverse-engineering suite. Next to Ghidra and radare2:
 
-- **Fast discovery.** It is written in Rust, and reaches a function list 8 to 21 times faster than Ghidra's headless analyzer on Windows executables up to 4 MB ([measurements and caveats](docs/benchmarks-ghidra.md)). The decompiler core is Ghidra's own, so decompiled output is the same kind of work; the gain is in discovery.
+- **Fast discovery.** It is written in Rust, and lists a file's functions a median of 23 times sooner than Ghidra's headless analyzer, across PE, ELF and Mach-O on x86, x64, ARM and MIPS ([measurements and caveats](docs/benchmarks.md)). The decompiler core is Ghidra's own, so decompiled output is the same kind of work; the gain is in discovery.
 - **Capabilities on the code.** Every function carries the behaviours it implements, with ATT&CK ids.
 - **Nothing to install, nothing uploaded.** It runs in a browser tab, and the command-line tool is one file.
 - **Built for AI agents.** An MCP server with saved notes, undoable runs and reports whose evidence is checked.

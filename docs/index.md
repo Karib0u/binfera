@@ -32,4 +32,4 @@ Binfera is built for the first hours with an unknown file, not as a replacement 
 
 - [Installation](installation.md): the desktop app, the command-line tool, or a build from source.
 - [Quickstart](getting-started.md): a first analysis in each interface.
-- [Benchmarks](benchmarks.md): measured accuracy against capa and speed, with the commands to reproduce them.
+- [Benchmarks](benchmarks.md): speed against Ghidra and agreement with capa, with the commands to reproduce them.
