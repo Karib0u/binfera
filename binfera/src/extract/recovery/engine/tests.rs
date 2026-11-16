@@ -2278,6 +2278,17 @@ fn native_sweeps_unclaimed_i686_entries_after_existing_flow() {
 /// Native recovery of a hand-built x64 PE: `.text` at 0x1000 (also the
 /// image base and entry), `.rdata` at 0x2000 and `.pdata` at 0x3000.
 fn native_x64(text: &[u8], rdata: &[u8], pdata: &[u8]) -> Analysis {
+    native_x64_declaring(text, rdata, pdata, None)
+}
+
+/// As [`native_x64`], with an exception directory declaring `declared` bytes at `.pdata`
+/// although the file holds only `pdata` of them, as in a truncated download.
+fn native_x64_declaring(
+    text: &[u8],
+    rdata: &[u8],
+    pdata: &[u8],
+    declared: Option<u32>,
+) -> Analysis {
     let section =
         |name: &str, address: u64, offset: usize, data: &[u8], execute: bool| MappedSection {
             name: name.to_string(),
@@ -2296,18 +2307,23 @@ fn native_x64(text: &[u8], rdata: &[u8], pdata: &[u8]) -> Analysis {
     bytes.extend_from_slice(rdata);
     let pdata_offset = bytes.len();
     bytes.extend_from_slice(pdata);
-    let image = LoadedImage::for_test(
+    let mut pdata_section = section(".pdata", 0x3000, pdata_offset, pdata, false);
+    if let Some(declared) = declared {
+        pdata_section.virtual_size = u64::from(declared);
+    }
+    let mut image = LoadedImage::for_test(
         ImageFormat::Pe,
         Architecture::X64,
         0x1000,
         vec![
             section(".text", 0x1000, 0, text, true),
             section(".rdata", 0x2000, rdata_offset, rdata, false),
-            section(".pdata", 0x3000, pdata_offset, pdata, false),
+            pdata_section,
         ],
         BTreeMap::new(),
         bytes,
     );
+    image.pe_exception_directory = declared.map(|declared| (0x3000, declared));
     analyze_seeded_image(
         image,
         RecoveryBackend::Native,
@@ -2343,6 +2359,49 @@ fn native_admits_data_named_code_that_follows_a_function_end() {
     // Without any (a UEFI driver), the late sweep finds it after the padding.
     let unwindless = native_x64(&entry_then_leaf(), &[], &[]);
     assert!(unwindless.functions.contains_key(&0x1010));
+}
+
+#[test]
+fn native_sweeps_when_the_declared_exception_directory_is_not_in_the_file() {
+    // A truncated PE declares `.pdata` but holds none of it, so no function has unwind data
+    // and nothing else seeds it: the sweep must still run, and keeps its x86 padding rule.
+    let declared = 0x14244;
+    let absent = native_x64_declaring(&entry_then_leaf(), &[], &[], Some(declared));
+    assert!(absent.functions.contains_key(&0x1010));
+    assert!(absent.seeds[&0x1010].contains(&SeedKind::Unclaimed));
+    // Less than one whole row is not a RUNTIME_FUNCTION either.
+    let partial = native_x64_declaring(&entry_then_leaf(), &[], &[0; 11], Some(declared));
+    assert!(partial.functions.contains_key(&0x1010));
+    // Truncation is not licence for the relaxed unwindless sweep: code after a bare `ret`
+    // with no padding is not a boundary, as in the data tables of a half-present image.
+    let mut unpadded = vec![0xc3];
+    unpadded.resize(0x10, 0xc3);
+    unpadded.extend_from_slice(&[0x33, 0xc0, 0xc3]);
+    assert!(!native_x64_declaring(&unpadded, &[], &[], Some(declared))
+        .functions
+        .contains_key(&0x1010));
+    assert!(native_x64(&unpadded, &[], &[])
+        .functions
+        .contains_key(&0x1010));
+    // Nor is a `ret imm16`, which x64 never emits, even after padding.
+    let mut table = vec![0xc3];
+    table.resize(0x10, 0xcc);
+    table.extend_from_slice(&[0xc2, 0x28, 0x39, 0x00, 0, 0, 0, 0]);
+    assert!(!native_x64_declaring(&table, &[], &[], Some(declared))
+        .functions
+        .contains_key(&0x1010));
+}
+
+#[test]
+fn native_keeps_unwind_rows_that_fit_in_a_truncated_exception_directory() {
+    // One whole row survives truncation, and still bounds the entry function.
+    let mut entry = Vec::new();
+    for value in [0u32, 0x13, 0x4000] {
+        entry.extend_from_slice(&value.to_le_bytes());
+    }
+    let analysis = native_x64_declaring(&entry_then_leaf(), &[], &entry, Some(0x14244));
+    assert!(analysis.functions.contains_key(&0x1000));
+    assert!(!analysis.functions.contains_key(&0x1010));
 }
 
 #[test]

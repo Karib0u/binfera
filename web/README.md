@@ -33,6 +33,10 @@ All outputs are generated and git-ignored.
 
 ## Delivery
 
+`npm run build` prerenders the existing landing page into `dist/index.html`, including its headings, feature descriptions and documentation links. This uses Vite and React at build time; hosting still needs only static files. React mounts the interactive app over that HTML in the browser, preserving browser-specific themes and URL hashes. Development and desktop builds keep their existing client rendering.
+
+After building, run `npx playwright install chromium` once and `npm run test:prerender` to check the HTML-only page and the interactive themes, links, tabs and file analysis. CI runs this check against the production build in the `web-engine` job.
+
 ZIP support loads only when a ZIP archive is opened. In the phase 3 production build, the main JavaScript chunk is 471.95 kB (155.29 kB gzip), down from 589.61 kB (209.37 kB gzip); the ZIP reader is a separate 129.91 kB chunk. Tour screenshots are 1600-pixel WebP images at quality 80, each below 150 kB.
 
 `worker.js` handles `/assets/*` before the static asset binding. Successful hashed assets remain immutable for one year; missing assets and other errors use `Cache-Control: no-store`. Route selection is configured in `wrangler.jsonc`. The `_headers` rule also covers static hosts. Deploy the browser build:

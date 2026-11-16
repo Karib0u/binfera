@@ -2097,6 +2097,19 @@ fn branched_to(analysis: &Analysis, address: u64) -> bool {
     })
 }
 
+/// Number of whole x64 `RUNTIME_FUNCTION` rows of the PE exception directory that the file
+/// actually holds. A truncated file can declare a directory far larger than what is present,
+/// and the loader zero-fills the rest of the section, so `bytes_at` would count phantom rows.
+fn exception_directory_entries(image: &LoadedImage) -> usize {
+    let Some((address, size)) = image.pe_exception_directory else {
+        return 0;
+    };
+    let declared = usize::try_from(size).unwrap_or(usize::MAX);
+    image
+        .file_backed_at(address, declared)
+        .map_or(0, |bytes| bytes.len() / 12)
+}
+
 /// Last-resort entry sweep. Existing instructions and unwind extents always win.
 fn unclaimed_entries(analysis: &Analysis, function_starts: &BTreeSet<u64>) -> Vec<u64> {
     let image = &analysis.image;
@@ -2123,9 +2136,15 @@ fn unclaimed_entries(analysis: &Analysis, function_starts: &BTreeSet<u64>) -> Ve
             && image
                 .pe_exception_directory
                 .is_none_or(|(_, size)| size == 0);
+        // A truncated file can declare `.pdata` yet hold none of it. Its unwind data existed and
+        // was lost, so it gets the padding-only sweep of x86 rather than the relaxed one above.
+        let truncated_x64 = image.architecture == Architecture::X64
+            && unwound.is_empty()
+            && !unwindless_x64
+            && exception_directory_entries(image) == 0;
         if !(relocatable
             || image.format == ImageFormat::Pe
-                && (image.architecture == Architecture::X86 || unwindless_x64))
+                && (image.architecture == Architecture::X86 || unwindless_x64 || truncated_x64))
         {
             continue;
         }
@@ -2173,6 +2192,9 @@ fn unclaimed_entries(analysis: &Analysis, function_starts: &BTreeSet<u64>) -> Ve
                 || ((relocatable || unwindless_x64)
                     && (previous_end || super::prologues::boundary(&bytes[..offset]))))
                 && !terminated_text(&bytes[offset..])
+                // The x64 convention has the caller clean the stack, so a `ret imm16` is
+                // a table value, not code; only a truncated image has nothing to rule it out.
+                && !(truncated_x64 && bytes[offset] == 0xc2)
                 && super::prologues::raw_entry(image, address)
                 && super::prologues::valid_code(image, address, 1)
             {

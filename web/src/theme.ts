@@ -25,7 +25,7 @@ export function chooseTheme(theme: Theme) {
 
 /** The theme in effect, and a way to flip it between light and dark. */
 export function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => storedTheme() ?? system());
+  const [theme, setTheme] = useState<Theme>(() => import.meta.env.SSR ? "light" : storedTheme() ?? system());
   useEffect(() => {
     const sync = () => setTheme(storedTheme() ?? system());
     window.addEventListener("binfera-theme", sync);
