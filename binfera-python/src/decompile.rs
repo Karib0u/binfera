@@ -198,8 +198,7 @@ mod enabled {
 
     fn disabled() -> PyErr {
         CapaError::new_err(
-            "native decompilation is not in this build; install a wheel built with the decompiler \
-             or rebuild with --features decompiler",
+            "native decompilation is not in this build; rebuild with --features decompiler",
         )
     }
 

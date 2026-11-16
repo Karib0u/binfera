@@ -21,7 +21,7 @@ First public release: a native Rust backend for unmodified upstream capa rules, 
 - **MCP server:** `binfera mcp` lets an agent open binaries, read decompiled code and save reversible work ([`docs/mcp.md`](docs/mcp.md)).
 - **Desktop and web apps:** the same UI in the browser (WebAssembly) and as a Tauri app with saved projects, analyst comments, starred functions and session undo.
 - **Archives:** ZIP and 7z inputs are opened in the app, with limits on input size, expanded size and entry count.
-- **Python:** `abi3` wheels for CPython 3.9 and later, with `Rules.from_directory`, `analyze`, `inspect`, `Decompiler` and `decompile_all`; the wheels include the decompiler.
+- **Python:** a binding for CPython 3.9 and later, installed from source, with `Rules.from_directory`, `analyze`, `inspect`, `Decompiler` and `decompile_all`; it includes the decompiler.
 
 ### Distribution
 
