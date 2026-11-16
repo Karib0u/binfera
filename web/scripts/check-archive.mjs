@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import SevenZip from "7z-wasm";
 import { Worker as NodeWorker } from "node:worker_threads";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 import { ZipWriter, Uint8ArrayReader, Uint8ArrayWriter } from "@zip.js/zip.js";
 
 const temp = await mkdtemp(join(tmpdir(), "binfera-archive-"));
@@ -21,23 +21,17 @@ globalThis.Worker = class {
   terminate() { this.worker.terminate(); }
 };
 const source = await readFile(new URL("../src/archive.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText
+const compiled = stripTypes(source)
   .replace('"./archive.worker.ts"', '"./archive.worker.mjs"')
   .replace('import("./archive.zip")', 'import("./archive.zip.mjs")')
   .replaceAll('"7z-wasm"', JSON.stringify(import.meta.resolve("7z-wasm")))
   .replace('import("7z-wasm/7zz.wasm?url")',
     `Promise.resolve(${JSON.stringify({ default: fileURLToPath(import.meta.resolve("7z-wasm/7zz.wasm")) })})`);
-const zip = ts.transpileModule(await readFile(new URL("../src/archive.zip.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText.replaceAll('"@zip.js/zip.js"', JSON.stringify(import.meta.resolve("@zip.js/zip.js")))
+const zip = stripTypes(await readFile(new URL("../src/archive.zip.ts", import.meta.url), "utf8")).replaceAll('"@zip.js/zip.js"', JSON.stringify(import.meta.resolve("@zip.js/zip.js")))
   .replace('from "./archive"', 'from "./archive.mjs"');
 await writeFile(join(temp, "archive.mjs"), compiled);
 await writeFile(join(temp, "archive.zip.mjs"), zip);
-const worker = ts.transpileModule(await readFile(new URL("../src/archive.worker.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText.replace('"7z-wasm"', JSON.stringify(import.meta.resolve("7z-wasm")))
+const worker = stripTypes(await readFile(new URL("../src/archive.worker.ts", import.meta.url), "utf8")).replace('"7z-wasm"', JSON.stringify(import.meta.resolve("7z-wasm")))
   .replace('import wasm from "7z-wasm/7zz.wasm?url";', `const wasm = ${JSON.stringify(fileURLToPath(import.meta.resolve("7z-wasm/7zz.wasm")))};`);
 await writeFile(join(temp, "archive.worker.mjs"), `import { parentPort } from "node:worker_threads";
 globalThis.self = { postMessage: (data, transfer) => parentPort.postMessage(data, transfer) };

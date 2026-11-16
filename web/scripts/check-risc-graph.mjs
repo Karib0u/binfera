@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 const source = await fs.readFile(new URL("../src/graph.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const compiled = stripTypes(source);
 const { rowFlow, buildCfg } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 const flow = (text, arch = "arm") => rowFlow([0x1000, "00000000", text], arch);
 assert.equal(flow("mov r0, pc").kind, "none");

@@ -15,7 +15,7 @@ export default function Composer({ text, onText, onSend, onInterrupt, busy, disa
   text: string; onText: (t: string) => void; onSend: (t: string) => void; onInterrupt: () => void;
   busy: boolean; disabled: boolean; placeholder: string; chips: ReactNode;
   queue: string[]; onUnqueue: (i: number) => void;
-  symbols: () => SymbolRef[]; slash: SlashItem[]; bar: ReactNode; inputRef: RefObject<HTMLTextAreaElement>;
+  symbols: () => SymbolRef[]; slash: SlashItem[]; bar: ReactNode; inputRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);

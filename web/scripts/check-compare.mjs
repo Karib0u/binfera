@@ -1,10 +1,10 @@
 // What a comparison says first decides what a reader looks at, so its wording and order are pinned here.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 
 const source = await readFile(new URL("../src/compareModel.ts", import.meta.url), "utf8");
-const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const js = stripTypes(source);
 const m = await import(`data:text/javascript;base64,${Buffer.from(js).toString("base64")}`);
 
 const evidence = (extra = {}) => ({ same_instructions: false, same_cfg: true, blocks: [1, 1], edges: [0, 0], ...extra });

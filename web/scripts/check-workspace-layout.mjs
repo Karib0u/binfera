@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import ts from "typescript";
+import { stripTypes } from "./strip-types.mjs";
 
 const source = await readFile(new URL("../src/workspace/location.ts", import.meta.url), "utf8");
-const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const js = stripTypes(source);
 const { panesOf, parseHash, hashOf, locOf } = await import(`data:text/javascript;base64,${Buffer.from(js).toString("base64")}`);
 
 for (const layout of ["c+asm", "c+asm+graph", "c+asm+graph+hex", "c+asm+graph+hex+calls", "c+asm+graph+hex+calls+listing+strings+imports", "c+c+hex"]) {
@@ -21,7 +21,7 @@ assert.equal(parseHash("#fn=0x401000&view=c%2Bhex%2Bstrings").layout, "c+hex+str
 console.log("Multiple panes, duplicate views, shared links, and legacy layouts: passed");
 
 const treeSource = await readFile(new URL("../src/workspace/paneTree.ts", import.meta.url), "utf8");
-const treeJs = ts.transpileModule(treeSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const treeJs = stripTypes(treeSource);
 const { treeOf, panesIn, splitPane, movePane, withoutPane, dropSideAt } = await import(`data:text/javascript;base64,${Buffer.from(treeJs).toString("base64")}`);
 const leaves = ["c", "asm", "graph", "hex", "strings"].map((view, id) => ({ id, view, place: id === 1 ? { address: 0x401000, cursor: 0x401004 } : null }));
 const tree = treeOf(leaves);

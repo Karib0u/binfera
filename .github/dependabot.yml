@@ -9,8 +9,9 @@ updates:
     labels:
       - dependencies
     groups:
-      patch-updates:
+      minor-and-patch:
         update-types:
+          - minor
           - patch
     cooldown:
       default-days: 7
@@ -25,8 +26,9 @@ updates:
     labels:
       - dependencies
     groups:
-      patch-updates:
+      minor-and-patch:
         update-types:
+          - minor
           - patch
     cooldown:
       default-days: 7
@@ -40,8 +42,16 @@ updates:
     labels:
       - dependencies
     groups:
-      patch-updates:
+      # react and react-dom must move together, majors included.
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      minor-and-patch:
         update-types:
+          - minor
           - patch
     cooldown:
       default-days: 7
@@ -54,5 +64,9 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - ci
+    groups:
+      actions:
+        patterns:
+          - "*"
     cooldown:
       default-days: 7
