@@ -432,7 +432,9 @@ fn debug_data_end(
             .map_or(0, |raw| u64::from(u32::from_le_bytes(raw)))
     };
     table
-        .chunks_exact(ENTRY)
+        .as_chunks::<ENTRY>()
+        .0
+        .iter()
         .map(|entry| field(entry, 24).saturating_add(field(entry, 16)))
         .filter(|&end| end <= bytes.len() as u64)
         .max()

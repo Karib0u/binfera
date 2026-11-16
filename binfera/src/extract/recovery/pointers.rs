@@ -179,7 +179,6 @@ impl Discovery {
         insert_location(&mut self.code_barriers, start, size);
     }
 
-    #[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
     pub(super) fn seh3_scope_table(
         &mut self,
         analysis: &Analysis,
@@ -201,16 +200,14 @@ impl Discovery {
             });
         };
         self.mark_noncode(address, 12);
-        for field in bytes.chunks_exact(4).skip(1) {
-            if let Ok(raw) = <[u8; 4]>::try_from(field) {
-                // makeStructure adds REF_PTR references. generic.emucode
-                // evaluates these targets later, without a signature bypass.
-                self.add(
-                    analysis,
-                    u64::from(u32::from_le_bytes(raw)),
-                    SeedKind::Emulated,
-                );
-            }
+        for raw in bytes.as_chunks::<4>().0.iter().skip(1) {
+            // makeStructure adds REF_PTR references. generic.emucode
+            // evaluates these targets later, without a signature bypass.
+            self.add(
+                analysis,
+                u64::from(u32::from_le_bytes(*raw)),
+                SeedKind::Emulated,
+            );
         }
         None
     }
@@ -700,7 +697,6 @@ impl Discovery {
     }
 }
 
-#[allow(clippy::chunks_exact_to_as_chunks)] // Keep the Rust 1.87 MSRV.
 fn string_size(analysis: &Analysis, address: u64, data_locations: &[(u64, u64)]) -> Option<usize> {
     // `VivWorkspace.analyzePointer` checks strings before code. Keep this
     // bounded and require the same printable ASCII and NUL terminator.
@@ -746,7 +742,7 @@ fn string_size(analysis: &Analysis, address: u64, data_locations: &[(u64, u64)])
         }
     }
     let &charset = bytes.get(1)?;
-    for (index, pair) in bytes.chunks_exact(2).enumerate() {
+    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
         if blocked(index * 2) {
             return None;
         }

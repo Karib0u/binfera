@@ -12,7 +12,7 @@ build-backend = "maturin"
 name = "binfera"
 description = "In-process Python binding for binfera: detect capabilities in PE/ELF/shellcode/.NET/Mach-O programs."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "binfera contributors" }]
 classifiers = [

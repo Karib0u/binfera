@@ -228,8 +228,8 @@ fn rebase(pe: &[u8], delta: u64) -> Result<Vec<u8>, Box<dyn std::error::Error>> 
         if length < 8 {
             break;
         }
-        for entry in pe[at + 8..at + length].chunks_exact(2) {
-            let word = u16::from_le_bytes(entry.try_into()?);
+        for entry in pe[at + 8..at + length].as_chunks::<2>().0 {
+            let word = u16::from_le_bytes(*entry);
             let va = base + u64::from(page) + u64::from(word & 0xfff);
             match word >> 12 {
                 10 => {

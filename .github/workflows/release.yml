@@ -9,8 +9,7 @@ on:
         description: "tag to build (dry run; no release is published)"
         required: true
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   archive:
@@ -39,9 +38,12 @@ jobs:
             os: windows-latest
             features: "--features decompiler"
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The archive ships the rules, so this one submodule is required.
           # reference/capa and tests/testfiles are parity-only and stay out.
           submodules: false
@@ -57,17 +59,18 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build
         run: cargo build --release --locked -p binfera-cli ${{ matrix.features }} --target ${{ matrix.target }}
 
       - name: Stage archive
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.tag }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_TAG}"
           else
             version="${GITHUB_REF_NAME}"
           fi
@@ -204,9 +207,12 @@ jobs:
           - os: windows-latest
             cibw-archs: AMD64
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The wheel's own `CIBW_TEST_COMMAND` scans a sample, which needs
           # both `rules/` (the same one submodule `archive` fetches) and one
           # small `tests/testfiles/` sample.
@@ -217,7 +223,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build wheels
         uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
@@ -225,10 +230,10 @@ jobs:
           package-dir: binfera-python
           output-dir: wheelhouse
         env:
-          # abi3-py38 (binfera-python/Cargo.toml): one wheel covers every
-          # CPython >= 3.8, so building only against cp38's ABI is correct,
+          # abi3-py39 (binfera-python/Cargo.toml): one wheel covers every
+          # CPython >= 3.9, so building only against cp39's ABI is correct,
           # not a narrowing.
-          CIBW_BUILD: "cp38-*"
+          CIBW_BUILD: "cp39-*"
           CIBW_SKIP: "*-musllinux*"
           CIBW_ARCHS: ${{ matrix.cibw-archs }}
           # A smoke test, not a measurement (docs/benchmarks.md "Binding
@@ -253,8 +258,7 @@ jobs:
             print('decompiled', len(session.functions), 'functions')"
           # Linux wheels build inside manylinux containers, which cannot see
           # the host runner's Rust toolchain. Install Rust in each container
-          # so maturin does not request puccinialin, which has no Python 3.8
-          # distribution for the cp38 abi3 build.
+          # so maturin does not fall back to fetching one through puccinialin.
           # The wheel includes the native decompiler, so the container also needs a C++ compiler
           # and zlib headers.
           CIBW_BEFORE_ALL_LINUX: >
@@ -262,7 +266,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
           CIBW_ENVIRONMENT_LINUX: "PATH=$HOME/.cargo/bin:$PATH"
           # The decompiler's C++17 sources need macOS 10.15 (std::filesystem); cibuildwheel
-          # defaults CPython 3.8 macOS wheels to 10.9.
+          # defaults CPython 3.9 macOS wheels to 10.9.
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.15
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -271,11 +275,15 @@ jobs:
           path: wheelhouse/*.whl
 
   publish:
+    permissions:
+      contents: write # create the draft release
     needs: [archive, wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Verify tag matches workspace version
         shell: bash
@@ -326,13 +334,12 @@ jobs:
 
       # A draft: check the assets and notes, then publish it from the Releases page.
       - name: Create draft release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          draft: true
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/**/*.whl
-            dist/SHA256SUMS
-          body_path: notes.md
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s failglob # a missing asset fails here
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md dist/*.tar.gz dist/*.zip dist/*.whl dist/SHA256SUMS

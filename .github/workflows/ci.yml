@@ -16,6 +16,9 @@ on:
     - cron: "0 7 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read # checkout
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -28,6 +31,8 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -91,6 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           submodules: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -147,6 +153,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
         # Submodules are not checked out by default here: reference/capa is
         # only needed by the Python-driven difftest harness. rules/ is needed
         # by the rule corpus tests, and the extractor parity tests use pinned
@@ -226,6 +234,8 @@ jobs:
     # raise fail instead of shipping.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Fetch test submodules
         run: git submodule update --init --depth 1 rules tests/testfiles
@@ -279,6 +289,8 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Init test submodules
         run: git submodule update --init --depth 1 rules tests/testfiles
@@ -341,6 +353,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           submodules: true
 
       - name: Install Rust
@@ -370,7 +383,7 @@ jobs:
     name: native decompiler (${{ matrix.os }})
     if: github.event_name != 'schedule' && github.event.action != 'labeled'
     env:
-      RUSTUP_TOOLCHAIN: "1.87.0"
+      RUSTUP_TOOLCHAIN: "1.89.0"
     strategy:
       fail-fast: false
       matrix:
@@ -381,8 +394,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           submodules: true
-      - uses: dtolnay/rust-toolchain@4b54d2ecfeb0fc349341b7929a580d09d9e2479b # 1.87.0
+      - uses: dtolnay/rust-toolchain@d92bbbb03544f480ed5c7ba4b54020e4ed2c4f65 # 1.89.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install native dependencies
         if: runner.os == 'Linux'

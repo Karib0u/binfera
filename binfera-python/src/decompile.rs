@@ -111,7 +111,7 @@ mod enabled {
         /// `calling_convention`, `warnings`, `notes`, `incomplete`, `unknown_callees`, `lines`
         /// (the instruction addresses behind each line of `text`), `frame` (stack symbols),
         /// `timings` and `file_warnings`.
-        fn decompile(&mut self, py: Python<'_>, address: u64) -> PyResult<PyObject> {
+        fn decompile(&mut self, py: Python<'_>, address: u64) -> PyResult<Py<PyAny>> {
             let result = self.session.decompile_function(address).map_err(error)?;
             let mut json = serialize(&result)?;
             json["lines"] = serde_json::json!(result.line_addresses);
@@ -123,7 +123,7 @@ mod enabled {
         /// Decompile functions into one self-contained C translation unit and return a `dict`
         /// with `text`, `functions`, `guesses` and `unresolved_types`. A function that fails
         /// fails the unit.
-        fn unit(&mut self, py: Python<'_>, addresses: Vec<u64>) -> PyResult<PyObject> {
+        fn unit(&mut self, py: Python<'_>, addresses: Vec<u64>) -> PyResult<Py<PyAny>> {
             let unit = self.session.decompile_unit(&addresses).map_err(error)?;
             let mut json = serialize(&unit)?;
             json["file_warnings"] = serde_json::json!(self.session.warnings());
@@ -150,12 +150,12 @@ mod enabled {
         arch: Option<String>,
         os: Option<String>,
         shard: Option<(usize, usize)>,
-        on_event: Option<PyObject>,
-    ) -> PyResult<Option<PyObject>> {
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
         let (bytes, _) = read_input(data_or_path)?;
         let options = options(format.as_deref(), arch, os, shard)?;
         let streaming = on_event.is_some();
-        let outcome = py.allow_threads(move || {
+        let outcome = py.detach(move || {
             let mut collected: Vec<String> = Vec::new();
             let mut failure: Option<PyErr> = None;
             let result = run_all(&bytes, &options, |event: BatchEvent| {
@@ -165,7 +165,7 @@ mod enabled {
                     collected.push(json);
                     return Ok(());
                 };
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let call = json_to_py(py, json)
                         .and_then(|value| callback.call1(py, (value,)).map(|_| ()));
                     let call = call.and_then(|()| py.check_signals());
@@ -230,8 +230,8 @@ mod enabled {
         arch: Option<String>,
         os: Option<String>,
         shard: Option<(usize, usize)>,
-        on_event: Option<PyObject>,
-    ) -> PyResult<Option<PyObject>> {
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
         let _ = (data_or_path, format, arch, os, shard, on_event);
         Err(disabled())
     }

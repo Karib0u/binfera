@@ -2,13 +2,13 @@
 //! `capa.rules.Rule.from_yaml` / `Rule.from_dict` and the meta fields
 //! `capa/render/result_document.py::RuleMetadata` requires.
 
-use serde_yaml::Value;
+use serde_norway::Value;
 
 use crate::rules::grammar::build_statements;
 use crate::rules::{Rule, RuleError, RuleMeta, Scopes};
 
 pub fn rule_from_yaml(s: &str) -> Result<Rule, RuleError> {
-    let doc: Value = serde_yaml::from_str(s).map_err(|e| RuleError::Yaml(e.to_string()))?;
+    let doc: Value = serde_norway::from_str(s).map_err(|e| RuleError::Yaml(e.to_string()))?;
 
     let Value::Mapping(doc_map) = &doc else {
         return Err(RuleError::invalid("empty or invalid YAML document"));
@@ -107,7 +107,7 @@ pub fn rule_from_yaml(s: &str) -> Result<Rule, RuleError> {
     })
 }
 
-fn string_field(map: &serde_yaml::Mapping, key: &str) -> Result<Option<String>, RuleError> {
+fn string_field(map: &serde_norway::Mapping, key: &str) -> Result<Option<String>, RuleError> {
     match map.get(key) {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -120,7 +120,7 @@ fn string_field(map: &serde_yaml::Mapping, key: &str) -> Result<Option<String>, 
 /// mirrors `if not isinstance(meta.get(key, []), list): raise InvalidRule(msg)`,
 /// then converts every element to a string.
 fn list_of_strings_or_empty(
-    map: &serde_yaml::Mapping,
+    map: &serde_norway::Mapping,
     key: &str,
     type_error_msg: &str,
 ) -> Result<Vec<String>, RuleError> {

@@ -33,3 +33,7 @@ jobs:
           persist-credentials: false
 
       - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          # Code scanning is free on public repositories only; a private one prints the
+          # findings and fails on them instead of uploading SARIF.
+          advanced-security: ${{ !github.event.repository.private }}

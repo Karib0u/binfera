@@ -173,7 +173,9 @@ impl Image {
             });
         }
         let wide: Vec<u16> = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .take_while(|c| (0x20..0x7f).contains(c))
             .collect();
@@ -212,12 +214,16 @@ impl Image {
                     continue;
                 }
                 let wide_run = data[i..]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .take_while(|c| c[1] == 0 && (0x20..0x7f).contains(&c[0]))
                     .count();
                 if wide_run >= 5 {
                     let value: String = data[i..i + wide_run.min(400) * 2]
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|c| c[0] as char)
                         .collect();
                     out.push(StringEntry {

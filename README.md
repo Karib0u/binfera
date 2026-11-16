@@ -107,7 +107,7 @@ cd binfera
 git submodule update --init                      # capa rules and the decompiler sources
 ```
 
-**Command line** (add `--features decompiler` for decompiled code; Rust 1.87+ and a C++ compiler: zlib on macOS and Linux, Visual Studio Build Tools on Windows):
+**Command line** (add `--features decompiler` for decompiled code; Rust 1.89+ and a C++ compiler: zlib on macOS and Linux, Visual Studio Build Tools on Windows):
 
 ```sh
 cargo build --release -p binfera-cli --features decompiler
