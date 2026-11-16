@@ -292,6 +292,14 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const [compactRail, setCompactRail] = useState(false);
   // The inspector starts closed: it is opened from the header or its edge tab, and the choice is remembered.
   const [focus, setFocus] = useState(false);
+  // The agent panel mounts only once the analyst opens it for this file. Mounting it starts their
+  // Claude Code or Codex to list models, which contacts the provider; opening a file must not.
+  // Once mounted it stays mounted, so a conversation survives hiding the panel.
+  const [agentMountedFor, setAgentMountedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (agentSha && ((agentOpen && !focus) || agentView)) setAgentMountedFor(agentSha);
+  }, [agentSha, agentOpen, agentView, focus]);
+  const agentMounted = agentSha !== null && agentMountedFor === agentSha;
   const railOpen = compact ? compactRail : (railPref ?? false) && !focus;
   const [onlyChanged, setOnlyChanged] = useState(false);
   const listShownWidth = compact ? Math.min(listWidth, 190) : tight ? Math.min(listWidth, 230) : listWidth;
@@ -1005,7 +1013,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
         )}
         <ShellcodeNotice a={a} onChange={onShellcodeChange} />
                 <div className="m-main" role={!agentView && detail ? "main" : undefined}>
-          {agent && project && agentSha && (
+          {agent && project && agentSha && agentMounted && (
             // Kept mounted while another tab shows, so a conversation and a run in progress survive it.
             <div className="m-agent" hidden={!agentView}>
               <AgentDock key={agentSha} notes={notes} tick={tick} symbols={() => a.order.map((ad) => ({ address: ad, name: label(ad) }))} onBusy={setAgentBusy} onClose={() => setAgentView(false)}
@@ -1160,7 +1168,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
             <main className="pane">{mode === "overview" ? overview : mode === "data" ? dataBody : fnView ? <>{fnNote}{fnView}</> : <p className="empty">No functions to show.</p>}</main>
           </div>
         </div>
-        {agent && project && agentSha && (
+        {agent && project && agentSha && agentMounted && (
           // Kept mounted while closed, so the conversation and a run in progress survive hiding the panel.
           <aside className={"agent-dock" + (overlayDock ? " overlay" : "")} hidden={!agentOpen || focus} style={{ width: Math.min(agentWidth, overlayDock ? 520 : 720) }} aria-label="Agent">
             <Splitter label="Resize the agent panel" value={agentWidth} min={300} max={720} invert onChange={setAgentWidth} style={{ left: 0 }} />
