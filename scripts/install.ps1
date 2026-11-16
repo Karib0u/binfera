@@ -20,7 +20,9 @@ if (-not $version) {
   # Not GitHub's "latest release": the desktop app is released under desktop-v* tags, can become
   # the latest, and carries no command-line archives. Take the newest release tagged v<number>.
   $api = if ($env:BINFERA_API_URL) { $env:BINFERA_API_URL } else { "https://api.github.com/repos/$repo/releases?per_page=50" }
-  $release = Invoke-RestMethod -Uri $api | Where-Object { $_.tag_name -match '^v\d' -and -not $_.draft } | Select-Object -First 1
+  # Parentheses make Windows PowerShell 5.1 pass the releases one by one; without them it passes
+  # the whole array as one object and no release matches.
+  $release = (Invoke-RestMethod -Uri $api) | Where-Object { $_.tag_name -match '^v\d' -and -not $_.draft } | Select-Object -First 1
   if (-not $release) { throw "could not find a command-line release of binfera" }
   $version = $release.tag_name
 }

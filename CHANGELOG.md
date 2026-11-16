@@ -4,6 +4,11 @@ Notable changes to binfera. Format follows [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows installer:** `install.ps1` found no release under Windows PowerShell 5.1, the version built into Windows, because it passes the whole release list down the pipeline as one object.
+- **Desktop 1.0.1:** the Linux AppImage aborted at start-up on recent Wayland desktops such as Ubuntu 26.04. Its bundled GTK now runs through XWayland. The `.deb` and `.rpm` packages were not affected.
+
 ## [1.0.0]
 
 First public release: a native Rust backend for unmodified upstream capa rules, with a decompiler, a desktop and browser app, a command-line tool, an MCP server and Python bindings.
