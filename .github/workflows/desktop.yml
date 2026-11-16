@@ -1,6 +1,7 @@
 name: Desktop
 
 # The Tauri app (web/src-tauri): the web UI on a native binfera engine, one installer per OS.
+# Release builds start from no cache, so a poisoned cache cannot reach a shipped installer.
 # Manual or tag-triggered only -- never on push or pull request -- so it costs CI minutes only
 # when a desktop build is wanted. A manual run uploads the installers as workflow artifacts; a
 # `desktop-v*` tag also attaches them to a draft GitHub release.
@@ -9,8 +10,7 @@ on:
   push:
     tags: ["desktop-v*"]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   bundle:
@@ -34,9 +34,12 @@ jobs:
             os: windows-latest
             bundles: nsis,msi
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           submodules: false
 
       - name: Fetch pinned rules
@@ -47,14 +50,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          workspaces: |
-            . -> target
-            web/src-tauri -> target
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -145,6 +141,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/desktop-v')
     needs: bundle
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft release
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

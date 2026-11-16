@@ -9,8 +9,7 @@ on:
         description: "tag to build (dry run; no release is published)"
         required: true
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   archive:
@@ -39,9 +38,12 @@ jobs:
             os: windows-latest
             features: "--features decompiler"
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The archive ships the rules, so this one submodule is required.
           # reference/capa and tests/testfiles are parity-only and stay out.
           submodules: false
@@ -57,17 +59,18 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build
         run: cargo build --release --locked -p binfera-cli ${{ matrix.features }} --target ${{ matrix.target }}
 
       - name: Stage archive
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.tag }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_TAG}"
           else
             version="${GITHUB_REF_NAME}"
           fi
@@ -204,9 +207,12 @@ jobs:
           - os: windows-latest
             cibw-archs: AMD64
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # The wheel's own `CIBW_TEST_COMMAND` scans a sample, which needs
           # both `rules/` (the same one submodule `archive` fetches) and one
           # small `tests/testfiles/` sample.
@@ -217,7 +223,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build wheels
         uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
@@ -270,11 +275,15 @@ jobs:
           path: wheelhouse/*.whl
 
   publish:
+    permissions:
+      contents: write # create the draft release
     needs: [archive, wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Verify tag matches workspace version
         shell: bash
