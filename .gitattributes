@@ -1,0 +1,11 @@
+# Preserve pinned sources and raw reference output byte for byte.
+third_party/ghidra/cpp/** -text -whitespace
+third_party/ghidra/specs/** -text -whitespace
+# The checksum list is read by sha256sum, which does not accept CRLF line endings.
+third_party/ghidra/SHA256SUMS -text
+# Hashed by SHA256SUMS: no CRLF conversion on Windows checkouts.
+third_party/ghidra/LICENSE -text
+third_party/ghidra/data/* -text
+*.sh text eol=lf
+tests/decompiler/reference/*.c -text -whitespace
+binfera-ghidra/data/*.pack -text -diff

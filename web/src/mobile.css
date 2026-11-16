@@ -1,0 +1,69 @@
+/* Phone rework: bottom sheets, a calmer function page, a lean function list.
+   Loaded after styles.css; everything is scoped to .app.mobile or the sheet classes. */
+
+/* ---- bottom sheet ---- */
+.sheet-back { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; background: rgb(0 0 0 / .42); animation: sheet-fade .18s ease-out; }
+.sheet { width: 100%; max-height: min(78dvh, 640px); display: flex; flex-direction: column; background: var(--panel); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 40px rgb(0 0 0 / .3); padding-bottom: env(safe-area-inset-bottom); transition: transform .2s ease-out; animation: sheet-rise .22s cubic-bezier(.2, .8, .2, 1); }
+.sheet-grab { flex: none; display: grid; place-items: center; height: 28px; touch-action: none; cursor: grab; }
+.sheet-grab i { width: 38px; height: 4px; border-radius: 99px; background: var(--line); }
+.sheet-title { margin: 0; padding: 0 20px 8px; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.sheet-body { overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 12px; }
+.sheet-menu { display: flex; flex-direction: column; }
+.sheet-menu button { min-height: 52px; padding: 0 14px; border-radius: 12px; font-size: 16px; text-align: left; }
+.sheet-menu button:active:not(:disabled) { background: var(--hover); }
+.sheet-menu button:disabled { opacity: .35; }
+.sheet-form { display: flex; flex-direction: column; gap: 4px; padding: 0 8px; }
+.sheet-form label { display: flex; align-items: center; gap: 12px; min-height: 52px; font-size: 16px; }
+.sheet-form input[type=checkbox] { width: 20px; height: 20px; }
+.sheet-seg { display: flex; margin: 8px 0 12px; padding: 3px; border-radius: 11px; background: var(--soft); border: 1px solid var(--line); }
+.sheet-seg button { flex: 1; min-height: 40px; border-radius: 8px; font-size: 14px; color: var(--muted); }
+.sheet-seg button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .14); }
+.sheet-done { min-height: 48px; border-radius: 12px; background: var(--text); color: var(--bg); font-size: 15px; font-weight: 600; }
+.sheet .m-strip { border: 0; background: none; padding-bottom: 12px; }
+.sheet .nav.compact { height: 40px; }
+@keyframes sheet-rise { from { transform: translateY(100%); } }
+@keyframes sheet-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sheet, .sheet-back { animation: none; } }
+
+/* ---- code list: one search field, filters behind a button ---- */
+.m-search { display: flex; gap: 8px; padding: 10px 12px; background: var(--bg); border-bottom: 1px solid var(--line); flex: none; }
+.m-search input { flex: 1; min-width: 0; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: inherit; font: inherit; font-size: 16px; }
+.m-filter { position: relative; flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.m-filter svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.m-filter.on { border-color: var(--text); }
+.m-filter em { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; background: var(--text); color: var(--bg); font: 600 11px/18px var(--sans); font-style: normal; text-align: center; }
+.m-list .item { min-height: 52px; padding: 8px 12px; border-radius: 0; border-bottom: 1px solid var(--line); }
+.m-list .list { padding: 0 0 12px; }
+.m-list .fn code { font-size: 14px; }
+
+/* ---- function page: tabs fill the width, chips scroll with the code, tab bar slides away ---- */
+.cockpit.m .m-seg button { flex: 1 1 0; padding: 0 2px; font-size: 14px; }
+.cockpit.m .m-seg em { margin-left: 4px; font-size: 11px; }
+.cockpit.m .m-caps { padding: 0 0 12px; margin: 0 -16px; padding-inline: 16px; }
+.cockpit.m .m-bar { padding-bottom: 4px; border-bottom: 0; }
+.app.mobile .tabbar { transition: transform .22s ease, margin-bottom .22s ease; }
+.app.mobile.chrome-hidden .tabbar { transform: translateY(100%); margin-bottom: calc(-58px - env(safe-area-inset-bottom)); }
+@media (prefers-reduced-motion: reduce) { .app.mobile .tabbar { transition: none; } }
+
+/* ---- hex view: eight bytes a row, section pills, a two-line inspector ---- */
+.hex.m { grid-template-rows: auto minmax(0, 1fr); }
+.hex.m .hex-secs { display: flex; gap: 8px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none; border-right: 0; border-bottom: 1px solid var(--line); flex: none; }
+.hex.m .hex-secs::-webkit-scrollbar { display: none; }
+.hex.m .hex-secs h3, .hex.m .hsec code, .hex.m .hsec .ent, .hex.m .hsec small:not(.packed-tag) { display: none; }
+.hex.m .hsec { display: flex; align-items: center; gap: 6px; flex: none; width: auto; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); }
+.hex.m .hsec.on { background: var(--on); border-color: var(--text); }
+.hex.m .hsec b { font-size: 13px; }
+.hex.m .hex-scroll { font-size: 12.5px; line-height: 30px; }
+.hex.m .hrow { gap: 10px; padding: 0 12px; align-items: center; }
+.hex.m .hb { width: 3ch; }
+.hex.m .hb:nth-child(8) { margin-right: 0; }
+.hex.m .hb:nth-child(4) { margin-right: .8ch; }
+.hex.m .hc { width: 1ch; text-align: center; }
+.hex.m .hex-foot { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom) * 0); }
+.hex.m .hf-info { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; font-size: 13px; max-height: 3.2em; overflow: hidden; }
+.hex.m .hf-actions { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+.hex.m .hf-actions .ghost { flex: none; white-space: nowrap; min-height: 40px; border-radius: 99px; }
+.hex.m .hsec { min-width: 0; }
+.hex.m .hrow { font-size: 12.5px; gap: 10px; padding: 0 12px; }
+.hex.m .hchars { display: flex; }
+.hex.m .hc { cursor: pointer; }

@@ -1,0 +1,17 @@
+[package]
+name = "binfera-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "binfera: local Model Context Protocol server over stdio"
+
+[lints]
+workspace = true
+
+[dependencies]
+binfera-project = { path = "../binfera-project" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"

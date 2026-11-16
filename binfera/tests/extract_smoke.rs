@@ -1,0 +1,226 @@
+//! File-scope smoke tests: run the PE/ELF extractors against a couple of real
+//! corpus samples and sanity-check the shapes of what comes out. The
+//! quantitative parity check against Python capa is
+//! `scripts/difftest.py --mode file-features` (a full corpus run, not a
+//! unit test); this just guards against gross breakage (panics, empty
+//! output) on `cargo test`.
+
+use std::path::{Path, PathBuf};
+
+use binfera::extract::{elf::extract_elf, pe::extract_pe};
+use binfera::features::Feature;
+
+fn testfiles_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tests")
+        .join("testfiles")
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn extract_pe_on_real_sample() {
+    let path = testfiles_dir().join("Practical Malware Analysis Lab 01-01.exe_");
+    let buf = std::fs::read(&path).expect("sample present (capa-testfiles submodule checked out?)");
+
+    let sf = extract_pe(&buf).expect("valid PE");
+
+    assert!(sf
+        .global_features
+        .contains(&Feature::Os("windows".to_string())));
+    assert!(sf
+        .global_features
+        .iter()
+        .any(|f| matches!(f, Feature::Arch(_))));
+    assert!(sf
+        .file_features
+        .iter()
+        .any(|(_, f)| matches!(f, Feature::Import(_))));
+    assert!(sf
+        .file_features
+        .iter()
+        .any(|(_, f)| matches!(f, Feature::Section(_))));
+    assert!(sf
+        .file_features
+        .iter()
+        .any(|(_, f)| matches!(f, Feature::String(_))));
+    assert!(sf
+        .global_features
+        .contains(&Feature::Format("pe".to_string())));
+    assert!(sf.functions.is_empty());
+    assert_eq!(sf.sample_hashes.md5.len(), 32);
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn full_pe_sections_follow_workspace_names_while_file_only_follows_pefile() {
+    use binfera::api::{load_input, PhaseTimings};
+    use binfera::freeze::Freeze;
+    use binfera::parallel::AnalysisOptions;
+
+    let path = testfiles_dir()
+        .join("2826b762b9c268601a44974ef469a671b441e798a6c3cbb40070450c6c030ba2.exe_");
+    let bytes = std::fs::read(path).expect("sample present");
+    for file_only in [false, true] {
+        let options = AnalysisOptions {
+            file_only,
+            ..AnalysisOptions::SERIAL
+        };
+        let (input, _) =
+            load_input(&bytes, &options, &mut PhaseTimings::default()).expect("valid PE");
+        let Freeze::Static(features) = input.freeze else {
+            panic!("PE extraction is static");
+        };
+        let sections: Vec<_> = features
+            .file_features
+            .iter()
+            .filter_map(|(_, feature)| match feature {
+                Feature::Section(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sections.contains(&"PE_Header"), !file_only);
+        assert_eq!(sections.contains(&"   \0    "), !file_only);
+        assert_eq!(sections.contains(&"   "), file_only);
+        assert!(sections.contains(&"        "));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn format_scope_follows_the_selected_extractor() {
+    use binfera::address::Address;
+    use binfera::api::{load_input, PhaseTimings};
+    use binfera::freeze::Freeze;
+    use binfera::parallel::AnalysisOptions;
+
+    for (name, format) in [
+        ("Practical Malware Analysis Lab 01-01.exe_", "pe"),
+        ("microsocks.elf_", "elf"),
+    ] {
+        let bytes = std::fs::read(testfiles_dir().join(name)).expect("sample present");
+        for file_only in [false, true] {
+            let options = AnalysisOptions {
+                file_only,
+                ..AnalysisOptions::SERIAL
+            };
+            let (input, _) =
+                load_input(&bytes, &options, &mut PhaseTimings::default()).expect("valid sample");
+            let Freeze::Static(features) = input.freeze else {
+                panic!("PE/ELF extraction is static");
+            };
+            let feature = Feature::Format(format.to_string());
+            assert_eq!(features.global_features.contains(&feature), !file_only);
+            assert_eq!(
+                features
+                    .file_features
+                    .contains(&(Address::NoAddress, feature)),
+                file_only
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn extract_elf_on_real_sample() {
+    let path = testfiles_dir().join("e17e6a79ed614f5468d0eed758629697.elf_");
+    let buf = std::fs::read(&path).expect("sample present (capa-testfiles submodule checked out?)");
+
+    let sf = extract_elf(&buf).expect("valid ELF");
+
+    assert!(sf
+        .global_features
+        .iter()
+        .any(|f| matches!(f, Feature::Os(_))));
+    assert!(sf
+        .global_features
+        .iter()
+        .any(|f| matches!(f, Feature::Arch(_))));
+    assert!(sf
+        .global_features
+        .contains(&Feature::Format("elf".to_string())));
+    assert!(sf
+        .file_features
+        .iter()
+        .any(|(_, f)| matches!(f, Feature::String(_))));
+    assert!(sf.functions.is_empty());
+    assert_eq!(sf.sample_hashes.sha256.len(), 64);
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn extract_pe_tolerates_damage_in_unneeded_directories() {
+    let path = testfiles_dir().join("068a76d4823419b376d418cf03215d5c.exe_");
+    let buf = std::fs::read(&path).expect("sample present");
+    let sf = extract_pe(&buf).expect("file-only extraction ignores malformed TLS data");
+    assert!(sf
+        .file_features
+        .iter()
+        .any(|(_, feature)| matches!(feature, Feature::Import(_))));
+}
+
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn extract_pe_resolves_import_names_stored_in_headers() {
+    let path = testfiles_dir().join("9d98f8519d9fee8219caca5b31eef0bd.exe_");
+    let buf = std::fs::read(&path).expect("sample present");
+    let sf = extract_pe(&buf).expect("packed PE remains parseable");
+    assert!(sf.file_features.contains(&(
+        binfera::address::Address::Absolute(4_375_599),
+        Feature::Import("kernel32.LoadLibraryA".to_string()),
+    )));
+}
+
+/// Item 40 of the IDA audit: an ELF of a CPU recovery cannot decode keeps its file-level
+/// features instead of being refused, and its packing evidence is read from the headers.
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn an_elf_of_an_undecodable_cpu_keeps_its_file_features() {
+    use binfera::api::{load_input, PhaseTimings};
+    use binfera::features::Feature;
+    use binfera::freeze::Freeze;
+    use binfera::parallel::AnalysisOptions;
+
+    let path = testfiles_dir()
+        .join("fb5cf3df103336ca6b84a5d0f314bdd394ce7465adac3cf1914d390d62884582.elf_");
+    let arm = std::fs::read(path).expect("ARM sample present");
+    // ARM32 and MIPS now have decoders. Keep testing the fallback with CPUs
+    // that are still available only as file metadata.
+    for machine in [20u16, 2u16] {
+        let mut bytes = arm.clone();
+        bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+        let (input, format) = load_input(
+            &bytes,
+            &AnalysisOptions::SERIAL,
+            &mut PhaseTimings::default(),
+        )
+        .expect("a CPU binfera cannot decode is not an error");
+        assert_eq!(format, "elf");
+        let Freeze::Static(features) = input.freeze else {
+            panic!("ELF extraction is static");
+        };
+        assert!(features
+            .file_features
+            .iter()
+            .any(|(_, f)| matches!(f, Feature::String(_))));
+        assert!(features
+            .file_features
+            .iter()
+            .any(|(_, f)| matches!(f, Feature::Section(_))));
+        assert!(features.functions.is_empty());
+        assert_eq!(binfera::packing::detect_elf(&bytes), None);
+    }
+}
+
+#[test]
+fn packing_is_read_from_the_headers_of_any_elf() -> Result<(), Box<dyn std::error::Error>> {
+    let path = testfiles_dir()
+        .join("fb5cf3df103336ca6b84a5d0f314bdd394ce7465adac3cf1914d390d62884582.elf_");
+    let mut bytes = std::fs::read(path)?;
+    // UPX writes its marker among the first headers of the file, whatever the CPU.
+    bytes[0x40..0x44].copy_from_slice(b"UPX!");
+    let packing = binfera::packing::detect_elf(&bytes).ok_or("UPX marker is evidence")?;
+    assert_eq!(packing.packer.as_deref(), Some("UPX"));
+    Ok(())
+}

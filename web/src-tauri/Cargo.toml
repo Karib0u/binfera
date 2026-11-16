@@ -1,0 +1,34 @@
+[package]
+name = "binfera-desktop"
+version = "1.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Binfera desktop app: the web UI on a native binfera engine"
+publish = false
+
+# Deliberately not a member of the repository workspace (see `exclude` in the root Cargo.toml):
+# Tauri's dependency tree must not influence the engine's feature resolution or lockfile.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+binfera-project = { path = "../../binfera-project" }
+# Content-type detection for the folder browser (lists real zip/7z archives, not docx or jar).
+# Keep the classifier on the runtime with Intel macOS and Ubuntu 22.04 binaries.
+# Magika 1.1 pins ort rc.12, whose prebuilt libraries do not support that matrix.
+magika = "=1.0.0"
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["download-binaries", "ndarray", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

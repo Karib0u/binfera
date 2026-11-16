@@ -1,0 +1,35 @@
+name: Workflow Security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/zizmor.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/zizmor.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    name: Audit Workflows
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to code scanning
+      contents: read # checkout
+      actions: read # online audits need workflow metadata
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1

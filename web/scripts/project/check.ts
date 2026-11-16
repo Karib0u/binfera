@@ -1,0 +1,111 @@
+import { Notes } from "../../src/names";
+import { agent, calls, library, pauseLoads } from "./fake-client";
+const store = new Map<string, string>();
+(globalThis as any).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
+(globalThis as any).document = { hidden: false };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const ok = (c: boolean, m: string) => { if (!c) { console.error("FAIL", m); process.exit(1); } console.log("ok", m); };
+
+// Notes saved by the browser-era app, before the database existed.
+store.set("binfera:abc", JSON.stringify({ names: { "4198400": "old_name" }, vars: { "4198400:param_1": "len" } }));
+const n = new Notes(); n.load("abc");
+let changes = 0;
+const resume = pauseLoads();
+const stop = n.attach("abc", "f.exe", 10, () => changes++);
+await sleep(0);
+ok(!n.isAttached("abc") && calls.length === 0, "project readers wait for registration and the notes import");
+resume();
+await sleep(100);
+ok(n.isAttached("abc") && !n.isAttached("other") && changes > 0, "readers become ready for this project after the initial sync");
+ok(calls.includes("apply:2"), "localStorage notes imported once as analyst edits");
+ok(n.renamed(0x401000) === "old_name", "rename survives the import");
+n.rename(0x401010, "mine"); await sleep(50);
+ok(calls.includes("apply:1"), "a rename is written through to the database");
+library("0x401030", "libm_error_support"); agent("rename_function", "0x401020", "agent_name"); agent("add_comment", "0x401020", "decodes config");
+await sleep(1700);
+ok(n.renamed(0x401020) === "agent_name", "agent rename appears via polling");
+ok(n.comments(0x401020)[0]?.source === "ai", "agent comment appears with provenance");
+ok(n.aiName(0x401020) === "likely" && n.aiName(0x401000) === undefined, "agent names are marked, analyst names are not");
+ok(n.renamed(0x401030) === "libm_error_support" && n.aiName(0x401030) === undefined, "signature-matched library names are not marked as AI");
+n.rename(0x401020, "mine_now"); ok(n.aiName(0x401020) === undefined, "renaming an agent name by hand removes the mark");
+ok(changes >= 2, "UI was notified");
+n.rename(0x401010, ""); await sleep(50);
+ok(calls.includes("remove"), "clearing a name removes it from the database");
+stop();
+ok(!n.isAttached("abc"), "detaching prevents readers from using the previous project");
+// Reopen: a fresh Notes (a restart) recovers everything from the database, without re-importing.
+const n2 = new Notes(); n2.load("abc"); const before = calls.length;
+const stop2 = n2.attach("abc", "f.exe", 10, () => {}); await sleep(100);
+ok(n2.renamed(0x401000) === "old_name" && n2.varName(0x401000, "param_1") === "len", "restart recovers names and variables");
+ok(calls.length === before, "no second import");
+stop2();
+// Closing a workspace before registration completes must not make its readers ready later.
+const resumeClosed = pauseLoads();
+const closed = new Notes(); closed.load("closed");
+let lateChanges = 0;
+const stopClosed = closed.attach("closed", "closed.exe", 10, () => lateChanges++);
+stopClosed();
+resumeClosed();
+await sleep(0);
+ok(!closed.isAttached("closed") && lateChanges === 0, "a late registration cannot reactivate a closed workspace");
+
+// Comments and stars share the write-through path and survive a fresh workspace.
+const edits = new Notes(); edits.load("abc");
+const stopEdits = edits.attach("abc", "f.exe", 10, () => {}); await sleep(50);
+ok(!edits.canUndo(), "undo starts empty for each workspace");
+edits.setComment(0x401001, "reads the configuration");
+edits.setComment(0x401001, "reads the configuration");
+edits.toggleStar(0x401000);
+edits.renameVar(0x401000, "param_1", "size");
+edits.rename(0x401000, "new_name");
+await edits.refreshNow!();
+ok(edits.comments(0x401001)[0]?.source === "human", "analyst comment has You provenance");
+ok(edits.isStarred(0x401000), "star survives a database refresh");
+edits.undo(); edits.undo(); edits.undo(); edits.undo();
+await edits.refreshNow!();
+ok(edits.renamed(0x401000) === "old_name" && edits.varName(0x401000, "param_1") === "len", "undo restores names and variables");
+ok(!edits.isStarred(0x401000) && !edits.commentAt(0x401001) && !edits.canUndo(), "undo removes new comments and stars, and ignores no-op edits");
+edits.setComment(0x401001, "first"); edits.setComment(0x401001, "second"); edits.setComment(0x401001, "");
+edits.undo();
+ok(edits.commentAt(0x401001) === "second", "undo restores a deleted comment");
+edits.undo();
+ok(edits.commentAt(0x401001) === "first", "undo restores an edited comment");
+edits.toggleStar(0x401000);
+await edits.refreshNow!();
+stopEdits();
+const reopened = new Notes(); reopened.load("abc");
+const stopReopened = reopened.attach("abc", "f.exe", 10, () => {}); await sleep(50);
+ok(reopened.commentAt(0x401001) === "first" && reopened.isStarred(0x401000), "comments and stars survive restart");
+reopened.setComment(0x401001, ""); reopened.toggleStar(0x401000);
+await reopened.refreshNow!();
+ok(!reopened.commentAt(0x401001) && !reopened.isStarred(0x401000), "empty comments and unstars remove database annotations");
+reopened.setComment(0x401002, "human draft"); await reopened.refreshNow!();
+agent("add_comment", "0x401002", "later external edit"); await reopened.refreshNow!();
+reopened.undo();
+ok(reopened.commentAt(0x401002) === "later external edit", "undo leaves a later external edit alone");
+stopReopened();
+
+// Projects whose names were already imported still need their legacy stars imported once.
+store.set("binfera:imported:abc", "1"); store.delete("binfera:marks-imported:abc");
+store.set("binfera:abc", JSON.stringify({ stars: [0x401040], comments: { [0x401041]: "legacy comment" } }));
+const legacy = new Notes(); legacy.load("abc");
+const stopLegacy = legacy.attach("abc", "f.exe", 10, () => {}); await sleep(50);
+ok(legacy.isStarred(0x401040) && legacy.commentAt(0x401041) === "legacy comment", "old projects import local stars and comments");
+legacy.toggleStar(0x401040); await legacy.refreshNow!(); stopLegacy();
+const legacyAgain = new Notes(); legacyAgain.load("abc");
+const imports = calls.length;
+const stopLegacyAgain = legacyAgain.attach("abc", "f.exe", 10, () => {}); await sleep(50);
+ok(calls.length === imports && !legacyAgain.isStarred(0x401040), "removed legacy stars are not imported again");
+stopLegacyAgain();
+
+// Edits made while registration is in flight must not be overwritten by the initial pull.
+const resumeEdits = pauseLoads();
+const registering = new Notes(); registering.load("abc");
+const stopRegistering = registering.attach("abc", "f.exe", 10, () => {});
+registering.setComment(0x401080, "typed during registration");
+registering.toggleStar(0x401080);
+resumeEdits(); await sleep(50);
+await registering.refreshNow!();
+ok(registering.commentAt(0x401080) === "typed during registration" && registering.isStarred(0x401080), "registration preserves edits made before the initial sync");
+ok(registering.commentAt(0x401080, true) === "You: typed during registration", "inline comments identify their author");
+stopRegistering();

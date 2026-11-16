@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "binfera",
+  "routes": [{ "pattern": "binfera.io", "custom_domain": true }],
+  "compatibility_date": "2026-10-23",
+  // Analysis runs in the browser. Only hashed asset requests need Worker middleware.
+  "main": "./worker.js",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/assets/*"]
+  },
+  "observability": { "enabled": true, "traces": { "enabled": true } }
+}

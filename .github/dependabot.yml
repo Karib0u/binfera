@@ -1,0 +1,58 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      patch-updates:
+        update-types:
+          - patch
+    cooldown:
+      default-days: 7
+
+  # The desktop app is its own Cargo workspace (excluded from the root one).
+  - package-ecosystem: cargo
+    directory: /web/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      patch-updates:
+        update-types:
+          - patch
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      patch-updates:
+        update-types:
+          - patch
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - ci
+    cooldown:
+      default-days: 7

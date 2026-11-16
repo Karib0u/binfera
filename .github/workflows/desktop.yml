@@ -1,0 +1,156 @@
+name: Desktop
+
+# The Tauri app (web/src-tauri): the web UI on a native binfera engine, one installer per OS.
+# Manual or tag-triggered only -- never on push or pull request -- so it costs CI minutes only
+# when a desktop build is wanted. A manual run uploads the installers as workflow artifacts; a
+# `desktop-v*` tag also attaches them to a draft GitHub release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-latest
+            bundles: app,dmg
+          # An Intel runner, not a cross build: binfera-ghidra/build.rs builds the native decompiler
+          # only when host and target match.
+          - name: macOS x64
+            os: macos-15-intel
+            bundles: app,dmg
+          - name: Linux x64
+            os: ubuntu-22.04
+            bundles: deb,rpm,appimage
+          - name: Windows x64
+            os: windows-latest
+            bundles: nsis,msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: false
+
+      - name: Fetch pinned rules
+        run: git submodule update --init --depth 1 rules
+
+      - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            . -> target
+            web/src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ zlib1g-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev patchelf xvfb
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build the engine sidecar and bundle the rules
+        working-directory: web
+        shell: bash
+        run: npm run prepare-desktop
+
+      - name: Smoke test the engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine=$(ls web/src-tauri/binaries/binfera-* | head -1)
+          "$engine" web/public/demo.exe --image-info | grep -q '"format":"pe"'
+          "$engine" web/public/demo.exe --json --rules web/src-tauri/resources/rules > /dev/null
+          lines=$("$engine" web/public/demo.exe --decompile-all --jobs 2 | wc -l)
+          test "$lines" -gt 2
+          echo "engine ok"
+
+      - name: Test the Tauri shell
+        working-directory: web/src-tauri
+        run: cargo test --locked
+
+      # On macOS, Tauri signs with the Developer ID certificate and notarises the app when these
+      # are set. Without the secrets (forks, dry runs) the installers are unsigned. Windows
+      # installers are not signed.
+      - name: Build installers
+        working-directory: web
+        shell: bash
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            if [[ -n "$MACOS_CERT_P12_BASE64" ]]; then
+              export APPLE_CERTIFICATE="$MACOS_CERT_P12_BASE64"
+              export APPLE_CERTIFICATE_PASSWORD="$MACOS_CERT_PASSWORD"
+              export APPLE_SIGNING_IDENTITY="$MACOS_SIGN_IDENTITY"
+              export APPLE_ID="$MACOS_NOTARY_APPLE_ID"
+              export APPLE_TEAM_ID="$MACOS_NOTARY_TEAM_ID"
+              export APPLE_PASSWORD="$MACOS_NOTARY_PASSWORD"
+            else
+              echo "::warning::macOS signing secrets are not set; these installers are unsigned"
+            fi
+          fi
+          npx tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Install package and smoke-test first launch
+        working-directory: web
+        run: python scripts/smoke-desktop.py
+
+      - name: Upload first-launch log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binfera-desktop-smoke-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: web/src-tauri/target/desktop-smoke.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binfera-desktop-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            web/src-tauri/target/release/bundle/dmg/*.dmg
+            web/src-tauri/target/release/bundle/deb/*.deb
+            web/src-tauri/target/release/bundle/rpm/*.rpm
+            web/src-tauri/target/release/bundle/appimage/*.AppImage
+            web/src-tauri/target/release/bundle/nsis/*.exe
+            web/src-tauri/target/release/bundle/msi/*.msi
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          files: installers/*

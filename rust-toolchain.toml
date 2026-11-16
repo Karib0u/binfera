@@ -1,0 +1,7 @@
+# Keep normal CI and release workflow pins in sync with this channel.
+# Compatibility jobs continue to check the Rust 1.87 minimum.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-emscripten"]

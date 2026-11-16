@@ -1,0 +1,88 @@
+# Zensical site configuration: https://zensical.org/docs/setup/basics/
+
+[project]
+site_name = "Binfera"
+site_description = "See what a binary does: decompiled C, capabilities mapped onto the code, and diffs for PE, ELF and Mach-O. Runs locally in a browser, a desktop app, the command line or your AI agent."
+site_author = "The Binfera Project"
+site_url = "https://docs.binfera.io/"
+repo_url = "https://github.com/Karib0u/binfera"
+edit_uri = "edit/main/docs/"
+copyright = "Copyright &copy; 2026 the Binfera authors"
+
+nav = [
+    { "Home" = "index.md" },
+
+    { "Get started" = [
+        { "Installation" = "installation.md" },
+        { "Quickstart" = "getting-started.md" },
+    ] },
+
+    { "Guides" = [
+        { "Command line" = "cli.md" },
+        { "Compare two binaries" = "comparison.md" },
+        { "Connect an AI agent (MCP)" = "mcp.md" },
+        { "Emulate a function" = "emulation.md" },
+    ] },
+
+    { "Reference" = [
+        { "Decompiler scope and limits" = "decompiler.md" },
+        { "Compatibility with capa" = "compatibility.md" },
+        { "Benchmarks" = "benchmarks.md" },
+        { "Binfera and Ghidra" = "benchmarks-ghidra.md" },
+    ] },
+
+    { "Help" = [
+        { "FAQ" = "faq.md" },
+    ] },
+
+    { "Contributing" = [
+        { "Development" = "development.md" },
+        { "Architecture" = "architecture.md" },
+        { "Decompiler design" = "decompiler-design.md" },
+    ] },
+]
+
+[project.theme]
+language = "en"
+logo = "images/mark.png"
+favicon = "images/mark.png"
+features = [
+    "content.action.edit",
+    "content.action.view",
+    "content.code.copy",
+    "content.code.select",
+    "content.footnote.tooltips",
+    "content.tabs.link",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.sections",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+    "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "deep orange"
+accent = "deep orange"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "deep orange"
+accent = "deep orange"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.extra.social]]
+icon = "lucide/globe"
+link = "https://binfera.io/"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/Karib0u/binfera"

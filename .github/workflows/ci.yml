@@ -1,0 +1,399 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # difftest job only; see its `if:` condition below.
+    #
+    # Weekly, not nightly: the difftest is a slow-moving regression guard
+    # against a pinned corpus and a pinned reference, so a week is a fine
+    # granularity for it, and each run checks out multi-gigabyte submodules.
+    # Push a `difftest` label on a PR, or use workflow_dispatch, when you
+    # want it sooner.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    concurrency:
+      group: ${{ github.workflow }}-web-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # This must work without the generated src/wasm directory.
+      - run: npx tsc --noEmit
+      - name: Web checks without the engine
+        run: |
+          npm run test:layout
+          npm run test:textdiff
+          npm run test:entropy
+          npm run test:report
+          npm run test:delivery
+          npm run test:project
+          npm run test:cache
+          node scripts/check-risc-graph.mjs
+
+  web-changes:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    permissions:
+      pull-requests: read
+    outputs:
+      engine: ${{ steps.changes.outputs.engine }}
+    steps:
+      # PR files come from the API, including fork PRs; no checkout is needed.
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        if: github.event_name == 'pull_request'
+        id: changes
+        with:
+          filters: |
+            engine:
+              - 'web/**'
+              - 'binfera/**'
+              - 'binfera-cli/**'
+              - 'binfera-ghidra/**'
+              - '.cargo/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'third_party/**'
+              - 'rules'
+              - '.gitmodules'
+              - '.github/workflows/ci.yml'
+
+  web-engine:
+    runs-on: ubuntu-latest
+    needs: web-changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+       needs.web-changes.outputs.engine == 'true')
+    concurrency:
+      group: ${{ github.workflow }}-web-engine-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+        with:
+          targets: wasm32-unknown-emscripten
+      # Homebrew's local emcc reports 7.0.0-git (the 7.0.0 release package).
+      - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: "7.0.0"
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-directories: target/wasm32-unknown-emscripten
+          cache-workspace-crates: true
+          key: web-emscripten-7.0.0
+      - name: Verify pinned source contents
+        working-directory: third_party/ghidra
+        run: tr -d '\r' < SHA256SUMS | sha256sum -c -
+      - run: emcc --version
+      - run: npm ci
+      - run: npm run prepare-assets
+      - run: npm run build
+      - name: Web engine checks
+        run: |
+          npm run test:analyze
+          npm run test:compare
+          npm run test:shellcode
+          npm run test:archive
+          npm run test:assets
+          npm run test:image
+          npm run test:macho
+          npm run test:risc
+
+  build:
+    name: build (${{ matrix.os }})
+    # Schedules and label events are for difftest only.
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    # Keep cancellation at job level: a label event must not cancel builds.
+    # Non-PR runs use unique groups so pushes and manual runs never queue.
+    concurrency:
+      group: ${{ github.workflow }}-build-${{ matrix.os }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        # Submodules are not checked out by default here: reference/capa is
+        # only needed by the Python-driven difftest harness. rules/ is needed
+        # by the rule corpus tests, and the extractor parity tests use pinned
+        # samples from tests/testfiles/.
+
+      - name: Init test submodules
+        run: git submodule update --init --depth 1 rules tests/testfiles
+
+      # `cargo build`/`cargo test --workspace` includes `binfera-python`, which
+      # (outside the `python-extension` feature) links pyo3
+      # in its ordinary embedding mode, against a real, discovered
+      # `libpython`. Runner images don't reliably ship one linkable without
+      # this: Ubuntu's preinstalled `python3` has no `-dev`/shared-library
+      # package by default. `actions/setup-python`'s interpreters are built
+      # with a shared library on all three OSes, which is the whole reason
+      # for this step -- nothing here otherwise needs a specific Python
+      # version.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Differential harness tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # `--include-ignored`: the slow acceptance/robustness gates
+      # (cross_product_matrix, aarch64_elf_fuzz, dotnet_dnfile_fuzz -- ~383 s
+      # of the suite's ~402 s) are `#[ignore]`d so a local `cargo test` stays
+      # a ~20 s inner loop. CI is where they must actually run, so it opts
+      # back in. Dropping this flag silently removes them from coverage.
+      - name: cargo test
+        run: cargo test --workspace -- --include-ignored
+
+      # Gate J2 (docs/benchmarks.md): `--jobs N` output must be byte-identical to
+      # `--jobs 1`. `cargo test` above already runs the library-level half
+      # (binfera/tests/jobs_determinism.rs); this is the CLI half, which
+      # additionally covers argument handling and the rendered JSON.
+      #
+      # Ubuntu only, and five samples: the property is a property of the join,
+      # not of a platform or a corpus. The full 200-sample comparison is a
+      # pre-merge run, not a CI job. Two sample workers bound resource use
+      # while preserving every job-count comparison and repetition.
+      - name: determinism (--jobs 1 vs 2 vs 4)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo build --release -p binfera-cli
+          python3 scripts/determinism.py \
+            --samples scripts/corpus-jobs.txt \
+            --capa-cli target/release/binfera \
+            --jobs 2,4 --repeat 3 --workers 2
+
+  msrv:
+    name: msrv (rust-version in Cargo.toml)
+    runs-on: ubuntu-latest
+    # Same reasoning as `build`: the schedule is for the difftest job only.
+    # The MSRV cannot change without a commit, so a timer cannot catch
+    # anything a push does not.
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    concurrency:
+      group: ${{ github.workflow }}-msrv-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    # A declared `rust-version` is only a claim until something builds on it.
+    # This pins the exact floor rather than a range: raising the MSRV is a
+    # deliberate edit to Cargo.toml, and this job is what makes an accidental
+    # raise fail instead of shipping.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Fetch test submodules
+        run: git submodule update --init --depth 1 rules tests/testfiles
+
+      # See the same step in the `build` job above: `cargo test --workspace`
+      # needs a linkable `libpython` for `binfera-python`'s non-extension-module
+      # build.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          set -euo pipefail
+          version="$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [[ -z "$version" ]]; then
+            echo "error: no rust-version in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The development pin must not override the compatibility toolchain.
+          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      # Build and test, not just check: `cargo check` would miss anything that
+      # only fails at codegen or link time.
+      # Deliberately without `--include-ignored`, unlike the `build` job: this
+      # job asks "does the workspace still compile and pass on the MSRV", and
+      # the ignored gates are still *compiled* here (that is the codegen/link
+      # coverage MSRV cares about). Re-running ~383 s of acceptance matrix on
+      # a second runner would not test anything about the Rust version.
+      - name: cargo test on the declared MSRV
+        run: cargo test --workspace --locked
+
+  # The per-push check for binfera-python, distinct from the full cibuildwheel
+  # matrix in release.yml, which is tag/manual-dispatch only. Ubuntu only and
+  # a 5-sample corpus: this proves the binding still builds and still agrees
+  # with the CLI on every push, without a cross-platform wheel matrix.
+  python-binding:
+    name: python binding (J14)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    concurrency:
+      group: ${{ github.workflow }}-python-binding-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Init test submodules
+        run: git submodule update --init --depth 1 rules tests/testfiles
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+
+      # The wheel includes the native decompiler (C++ core).
+      - name: Install C++ build dependencies
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+
+      - name: Set up pinned Python capa reference
+        run: |
+          pinned="$(grep -m1 'flare-capa' PINNED.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          uv venv .venv
+          uv pip install --python .venv/bin/python "flare-capa==${pinned}" maturin pytest
+
+      - name: Build binfera-cli (debug)
+        run: cargo build -p binfera-cli
+
+      - name: Build and install the binfera-python wheel
+        run: |
+          .venv/bin/maturin build --interpreter .venv/bin/python3 -m binfera-python/Cargo.toml --out dist
+          .venv/bin/python3 -m pip install --no-deps --force-reinstall dist/*.whl
+
+      - name: pytest (binfera-python/tests/)
+        run: .venv/bin/python3 -m pytest binfera-python/tests/ -v
+
+      - name: J14 (binding vs CLI rule names, ResultDocument validation)
+        run: |
+          python3 scripts/difftest.py --mode binding \
+            --samples scripts/corpus-jobs.txt \
+            --capa-cli target/debug/binfera --no-expected --jobs 2
+
+  difftest:
+    name: difftest (freeze corpus)
+    runs-on: ubuntu-latest
+    # Weekly, or on demand for a PR that wants difftest feedback before
+    # merge (label it "difftest") or a manual run. Not on every push/PR:
+    # it needs the full tests/testfiles + reference/capa submodules (large)
+    # and runs the pinned Python capa reference over the whole corpus.
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'difftest') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'difftest'))
+    concurrency:
+      group: ${{ github.workflow }}-difftest-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Build binfera-cli
+        run: cargo build -p binfera-cli
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+
+      - name: Set up pinned Python capa reference
+        run: |
+          pinned="$(grep -m1 'flare-capa' PINNED.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          uv venv .venv
+          uv pip install --python .venv/bin/python "flare-capa==${pinned}"
+
+      - name: scripts/check_env.sh
+        run: scripts/check_env.sh
+
+      - name: Run difftest corpus
+        run: python3 scripts/difftest.py --mode freeze --samples scripts/corpus-freeze.txt --jobs 2
+
+  decompiler:
+    name: native decompiler (${{ matrix.os }})
+    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    env:
+      RUSTUP_TOOLCHAIN: "1.87.0"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows (MSVC) is new: it reports without blocking until its first runs are green.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@4b54d2ecfeb0fc349341b7929a580d09d9e2479b # 1.87.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
+      - name: Verify pinned source contents
+        working-directory: third_party/ghidra
+        shell: bash
+        run: |
+          # tr: tolerate CRLF line endings, which a Windows checkout can add to the list.
+          if command -v sha256sum >/dev/null 2>&1; then tr -d '\r' < SHA256SUMS | sha256sum -c -; else tr -d '\r' < SHA256SUMS | shasum -a 256 -c -; fi
+      - name: Native fixture and resource-limit tests
+        run: cargo test --release -p binfera --features decompiler --lib --tests
+      - name: Native boundary robustness tests
+        run: cargo test --release -p binfera-ghidra --features native
+      - name: Optional CLI and deterministic JSON tests
+        run: cargo test --release -p binfera-cli --features decompiler --test decompiler

@@ -1,0 +1,30 @@
+[package]
+name = "binfera-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "binfera: detect capabilities in executable files"
+
+[[bin]]
+name = "binfera"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+decompiler = ["binfera/decompiler"]
+
+[dependencies]
+binfera = { path = "../binfera" }
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tempfile = "3"
+binfera-mcp = { path = "../binfera-mcp" }
+binfera-project = { path = "../binfera-project" }

@@ -1,0 +1,50 @@
+name: Supply Chain
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/deny.toml"
+      - web/package-lock.json
+      - .github/workflows/supply-chain.yml
+  pull_request:
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/deny.toml"
+      - web/package-lock.json
+      - .github/workflows/supply-chain.yml
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Dependency checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check workspace dependencies
+        run: cargo deny --locked check
+      - name: Check desktop app dependencies
+        if: ${{ !cancelled() }}
+        working-directory: web/src-tauri
+        run: cargo deny --locked check
+      - name: Audit web dependencies
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high

@@ -1,0 +1,77 @@
+# Command line
+
+`binfera` is a plain command-line tool: no server, no network. Output is JSON with `-j`, and the exit status says what happened, so it fits a shell script or a CI job. For the AI agent server, see [Binfera MCP server](mcp.md).
+
+## Recipes
+
+```sh
+# What can this file do? One capability per line.
+binfera sample.exe -j -q | jq -r '.rules | keys[]'
+
+# Fail the build if a binary gains a capability you do not expect.
+binfera build/app.exe -j -q | jq -e '.rules | has("create service") | not' >/dev/null
+
+# What changed between two builds? Exits 1 when they differ, 0 when they do not.
+binfera diff old.exe new.exe -j > diff.json
+jq '{verdict, similarity: .similarity.overall, added: [.capability_delta.added[].name]}' diff.json
+
+# Keep a small baseline instead of the old binary, and compare against it later.
+binfera fingerprint release-1.0.exe > release-1.0.fp
+binfera diff release-1.0.fp new.exe
+
+# Decompile one function as JSON (needs a build with the decompiler).
+binfera sample.exe --decompile-function 0x140001000 --json
+
+# Decompile every function, one JSON object per line, using four worker processes.
+binfera sample.exe --decompile-all --jobs 4
+```
+
+## Input formats
+
+PE and ELF inputs use recovered code scopes with FLIRT library-function exclusion. Raw x86/x64 shellcode (`-f sc32` or `-f sc64`) uses the [shellcode base address](https://github.com/Karib0u/binfera/blob/main/binfera/src/extract/image.rs) and no FLIRT signatures. Freeze files are also accepted.
+
+Managed PE inputs are automatically routed to `dotnet` before native PE detection. They use CIL decoding without FLIRT. Mixed-mode assemblies expose only their managed methods; there is no cross-runtime call graph into the native code. Use `-f pe` to force native extraction. Native PE supports x86/x64 and ARM64 (plus the ARM32/Thumb subset described in [decompiler.md](decompiler.md)).
+
+Mach-O is supported through automatic detection or `-f macho`, for thin or universal x86_64, arm64 and arm64e files. Use `--arch` to select a universal slice.
+
+## Exit status
+
+| Status | Meaning |
+|---|---|
+| `0` | Done (for `diff`: nothing differs) |
+| `1` | `diff` only: the two inputs differ |
+| `11` | Input file does not exist |
+| `12` | Invalid rule |
+| `13` | Corrupt or unreadable file |
+| `14` | File refused as too large (see `--max-instructions`) |
+
+## Useful flags
+
+| Flag | What it does |
+|---|---|
+| `-j`, `--json` | JSON instead of text |
+| `-q`, `--quiet` | Errors only |
+| `-r`, `--rules <DIR>` | Rules to use. Default: `BINFERA_RULES_DIR`, then `./rules`, then `rules/` beside the executable, then the rules built into the binary |
+| `-t`, `--tag <TAG>` | Filter rules by a meta field value |
+| `-f`, `--format <FORMAT>` | `auto`, `pe`, `elf`, `macho`, `dotnet`, `sc32`, `sc64` (raw shellcode), `freeze` |
+| `--os <OS>`, `--arch <ARCH>` | Override detection |
+| `--jobs <N>` | Threads for rules and matching; with `--decompile-all`, worker processes |
+| `--max-instructions <N>` | Refuse a file once recovery has decoded N instructions (exit status 14) |
+| `--timing` | Per-phase timings on stderr and `timings` in decompiler JSON |
+| `--no-resource-retry` | With `--decompile-all`, emit resource-limited records without automatically retrying them |
+| `--resource-retry` | With `--decompile-function`, use the longer retry limits |
+
+`binfera --help` and `binfera diff --help` list the rest. Python users can call the same engine (capability analysis, diff, image inspection and decompilation) through [`binfera-python`](https://github.com/Karib0u/binfera/tree/main/binfera-python/). The decompiler's API, limits and current gaps are in [decompiler.md](decompiler.md).
+
+## Decompilation stream
+
+`--decompile-all` emits NDJSON in this order:
+
+1. `start`: sorted `functions`, optional `names` (decimal address keys to supplied names), architecture, packing and warnings.
+2. `function`: text when available, assembly, graph, calls and data references. A resource-limited attempt retains its name and supporting data and sets `retry_pending: true`.
+3. `settled`: all ordinary attempts have finished. Consumers can build indexes and enable reports now.
+4. Deferred retry results, followed by `done`. A later record replaces an earlier record for the same address. Retries can discover additional callees after `settled`.
+
+The default retry policy is deferred, capped at 16 resource retries per image. With `--jobs N`, ordinary workers finish first, then up to N retry processes run concurrently using the same recovery snapshot. The longer limits are 60 seconds per phase (at most 120 seconds overall), 100,000 instructions and 200,000,000 work units. `--no-resource-retry` leaves the pending records in the completed stream. An explicit `--decompile-function ADDRESS --resource-retry --json` retries one function with these limits and includes line mappings and stack symbols.
+
+The library exposes `RetryPolicy::{Deferred, Skip, Only(Vec<u64>)}` through `BatchOptions.retry`; `BatchOptions.limits` can tighten the ordinary-attempt budget. The hidden, repeatable `--decompile-retry ADDRESS` selects the retry stage directly for native workers. Python's `decompile_all` passes through `names`, `retry_pending`, `settled` and replacement records. Existing fields and events remain available; `timings` in CLI records requires `--timing`, while `ms` remains available by default. Older completed streams without `settled` can use `done` as the readiness signal.

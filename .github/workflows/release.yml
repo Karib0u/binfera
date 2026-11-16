@@ -1,0 +1,338 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag to build (dry run; no release is published)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every archive includes the native decompiler. Its C++ core needs a compiler (Visual C++
+          # on Windows, which builds its own zlib) and builds only when host and target match
+          # (binfera-ghidra/build.rs), so each target builds on a runner of its own kind: no cross
+          # builds, and gnu rather than musl on Linux (ubuntu-22.04 keeps the glibc requirement at 2.35).
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            features: "--features decompiler"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            features: "--features decompiler"
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            features: "--features decompiler"
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            features: "--features decompiler"
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            features: "--features decompiler"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The archive ships the rules, so this one submodule is required.
+          # reference/capa and tests/testfiles are parity-only and stay out.
+          submodules: false
+
+      - name: Fetch pinned rules
+        run: git submodule update --init --depth 1 rules
+
+      - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Build
+        run: cargo build --release --locked -p binfera-cli ${{ matrix.features }} --target ${{ matrix.target }}
+
+      - name: Stage archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.tag }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          stage="binfera-${version}-${{ matrix.target }}"
+          mkdir -p "dist/${stage}"
+
+          binary="target/${{ matrix.target }}/release/binfera"
+          if [[ -f "${binary}.exe" ]]; then
+            binary="${binary}.exe"
+          fi
+          cp "$binary" "dist/${stage}/"
+
+          # The binary embeds its FLIRT signatures but not the rules, and
+          # `binfera` with no --rules falls back to `rules/` beside the
+          # executable -- so this layout runs from any working directory.
+          cp -R rules "dist/${stage}/rules"
+          rm -rf "dist/${stage}/rules/.git"
+          cp LICENSE NOTICE README.md PINNED.md "dist/${stage}/"
+
+          echo "STAGE=${stage}" >> "$GITHUB_ENV"
+
+      - name: Smoke-test the staged archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="${GITHUB_WORKSPACE}/dist/${STAGE}/binfera"
+          if [[ -f "${bin}.exe" ]]; then
+            bin="${bin}.exe"
+          fi
+
+          # Run from a directory that is NOT the archive's own, so a broken
+          # rules fallback fails here rather than in a user's hands.
+          workdir="${RUNNER_TEMP}/elsewhere"
+          mkdir -p "$workdir"
+          cd "$workdir"
+
+          "$bin" --version
+
+          # Analysing raw shellcode is the one input format supported on every
+          # runner (the binary itself is Mach-O on macOS, which binfera does
+          # not read). Rules must load for this to exit 0, which is the point:
+          # a missing or unfound rules/ directory exits non-zero and fails here.
+          printf '\x31\xc0\x40\xc3' > tiny.bin
+          "$bin" -f sc32 tiny.bin > /dev/null
+          echo "ok: ran from $workdir with rules resolved beside the executable"
+
+          # The binary also carries its rules, so it works with the rules folder removed.
+          mv "$(dirname "$bin")/rules" "$(dirname "$bin")/rules.off"
+          "$bin" -f sc32 tiny.bin > /dev/null
+          mv "$(dirname "$bin")/rules.off" "$(dirname "$bin")/rules"
+          echo "ok: ran with only the rules built into the binary"
+
+      # Developer ID signing and notarisation. Skipped when the signing secrets are absent
+      # (forks, dry runs without them), so the archive is then unsigned.
+      - name: Sign and notarise (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CERT_P12_BASE64" ]]; then
+            echo "::warning::macOS signing secrets are not set; this archive is unsigned"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/binfera-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          bin="dist/${STAGE}/binfera"
+          codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$bin"
+          codesign --verify --strict --verbose=2 "$bin"
+
+          # A bare executable cannot be stapled; notarisation is recorded by Apple and checked online.
+          ditto -c -k "$bin" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD" --wait
+          "$bin" --version
+
+      - name: Pack (tar.gz)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist && tar -czf "${STAGE}.tar.gz" "${STAGE}"
+
+      - name: Pack (zip)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/$env:STAGE" -DestinationPath "dist/$env:STAGE.zip"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binfera-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  # J15 (docs/benchmarks.md): abi3 wheels for the published target matrix,
+  # each one built, imported, and used to scan a sample. Tag/manual-dispatch
+  # only -- a five-platform wheel matrix is not a per-push cost, and every
+  # push already gets a linux-only build plus the binding-parity check
+  # (`.github/workflows/ci.yml`'s `python-binding` job).
+  wheels:
+    name: wheels (${{ matrix.os }} / ${{ matrix.cibw-archs }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cibw-archs: x86_64
+          # Build and test ARM64 wheels natively, without QEMU.
+          - os: ubuntu-24.04-arm
+            cibw-archs: aarch64
+          # Each macOS wheel builds on a runner of its own architecture: the wheel contains the
+          # native decompiler, whose C++ core builds only when host and target match.
+          - os: macos-15-intel
+            cibw-archs: x86_64
+          - os: macos-latest
+            cibw-archs: arm64
+          - os: windows-latest
+            cibw-archs: AMD64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The wheel's own `CIBW_TEST_COMMAND` scans a sample, which needs
+          # both `rules/` (the same one submodule `archive` fetches) and one
+          # small `tests/testfiles/` sample.
+          submodules: false
+
+      - name: Fetch test submodules
+        run: git submodule update --init --depth 1 rules tests/testfiles
+
+      - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
+        with:
+          package-dir: binfera-python
+          output-dir: wheelhouse
+        env:
+          # abi3-py38 (binfera-python/Cargo.toml): one wheel covers every
+          # CPython >= 3.8, so building only against cp38's ABI is correct,
+          # not a narrowing.
+          CIBW_BUILD: "cp38-*"
+          CIBW_SKIP: "*-musllinux*"
+          CIBW_ARCHS: ${{ matrix.cibw-archs }}
+          # A smoke test, not a measurement (docs/benchmarks.md "Binding
+          # corpus"): install, import, scan one sample. `{project}` is
+          # cibuildwheel's placeholder for this job's checkout root, which
+          # is why `rules`/`tests/testfiles` are fetched above rather than
+          # left to `fetch_rules` -- a release smoke test must not touch the
+          # network.
+          CIBW_TEST_COMMAND: >
+            python -c "from pathlib import Path; import binfera;
+            root = Path(r'{project}');
+            rules = binfera.Rules.from_directory(root / 'rules');
+            doc = binfera.analyze(root / 'tests' / 'testfiles' / 'c335a9d41185a32ad918c5389ee54235.exe_', rules, jobs=1);
+            assert doc['rules'];
+            print('scanned', len(doc['rules']), 'matched rules');
+            assert binfera.HAS_DECOMPILER;
+            dll = root / 'tests' / 'decompiler' / 'fixtures.dll';
+            session = binfera.Decompiler(dll);
+            text = session.decompile(session.functions[0])['text'];
+            assert 'arithmetic' in text;
+            assert binfera.inspect(dll)['format'] == 'pe';
+            print('decompiled', len(session.functions), 'functions')"
+          # Linux wheels build inside manylinux containers, which cannot see
+          # the host runner's Rust toolchain. Install Rust in each container
+          # so maturin does not request puccinialin, which has no Python 3.8
+          # distribution for the cp38 abi3 build.
+          # The wheel includes the native decompiler, so the container also needs a C++ compiler
+          # and zlib headers.
+          CIBW_BEFORE_ALL_LINUX: >
+            yum install -y gcc-c++ zlib-devel &&
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
+          CIBW_ENVIRONMENT_LINUX: "PATH=$HOME/.cargo/bin:$PATH"
+          # The decompiler's C++17 sources need macOS 10.15 (std::filesystem); cibuildwheel
+          # defaults CPython 3.8 macOS wheels to 10.9.
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.15
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: binfera-python-wheels-${{ matrix.os }}-${{ matrix.cibw-archs }}
+          path: wheelhouse/*.whl
+
+  publish:
+    needs: [archive, wheels]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify tag matches workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          expected="v${version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected}" ]]; then
+            echo "error: tag ${GITHUB_REF_NAME} does not match workspace version ${expected}" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.tar.gz *.zip *.whl > SHA256SUMS
+
+      # The notes are this version's CHANGELOG section plus the install steps.
+      - name: Release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '/^## \[/ { on = index($0, "[" v "]") > 0; next } on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "error: CHANGELOG.md has no section for $version" >&2; exit 1; }
+          # The changelog links files by relative path; a release page needs absolute links.
+          sed -E -i "s#\]\((\.\./)?([A-Za-z][A-Za-z0-9_./-]*)#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/\2#g; s#\]\(https://github.com/[^/]+/[^/]+/blob/[^/]+/(https?:)#](\1#g" notes.md
+          {
+            echo
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.sh | sh   # macOS, Linux"
+            echo "irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.ps1 | iex       # Windows, PowerShell"
+            echo '```'
+            echo
+            echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads. The Python wheels (\`pip install <wheel>\`) include the decompiler. \`SHA256SUMS\` lists every file."
+            echo
+            echo "binfera is an independent project, not affiliated with or endorsed by Google LLC or Mandiant, Inc."
+          } >> notes.md
+
+      # A draft: check the assets and notes, then publish it from the Releases page.
+      - name: Create draft release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/**/*.whl
+            dist/SHA256SUMS
+          body_path: notes.md
+          fail_on_unmatched_files: true

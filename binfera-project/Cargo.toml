@@ -1,0 +1,18 @@
+[package]
+name = "binfera-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "binfera: persistent analysis projects (annotations, change journal, reports)"
+
+[lints]
+workspace = true
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.0"
+tempfile = "3"
