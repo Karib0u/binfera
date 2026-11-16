@@ -36,4 +36,18 @@ rm -rf web/src-tauri/resources/rules
 mkdir -p web/src-tauri/resources
 cp -R "$rules" web/src-tauri/resources/rules
 rm -rf web/src-tauri/resources/rules/.git
+# ASCII file names only. A macOS app is signed on APFS, but its DMG stores names in another Unicode
+# form, so a name such as `use-process-doppelgänging.yml` breaks the app's signature seal. Rules are
+# identified by their contents, not their file names.
+node -e '
+const fs = require("fs"), path = require("path");
+const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+  const from = path.join(dir, e.name);
+  const ascii = e.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, "_");
+  const to = path.join(dir, ascii);
+  if (ascii !== e.name) { if (fs.existsSync(to)) throw new Error("name clash: " + to); fs.renameSync(from, to); }
+  if (e.isDirectory()) walk(to);
+});
+walk(process.argv[1]);
+' web/src-tauri/resources/rules
 echo "sidecar: web/src-tauri/binaries/binfera-$triple$ext; rules from $rules"
