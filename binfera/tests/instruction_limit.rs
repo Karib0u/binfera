@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use binfera::extract::recovery::{analyze, instruction_limit, set_instruction_limit, RecoveryError};
+use binfera::extract::recovery::{
+    analyze, instruction_limit, set_instruction_limit, RecoveryError,
+};
 
 #[test]
 fn recovery_refuses_an_image_past_the_instruction_limit() {

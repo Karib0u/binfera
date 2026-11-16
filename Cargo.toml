@@ -10,11 +10,11 @@ exclude = ["third_party/dnfile", "web/src-tauri"]
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
-# Measured, not guessed: `cargo msrv find -- cargo check --workspace
-# --all-targets` bisects to 1.87.0, and 1.86 fails on `is_multiple_of`
-# (`unsigned_is_multiple_of`, stabilized in 1.87). CI's `msrv` job builds and
-# tests on exactly this version so the floor cannot drift unnoticed.
-rust-version = "1.87"
+# Set by the bundled SQLite: every rusqlite with the fixed libsqlite3-sys (0.39+,
+# RUSTSEC-2026-0459) needs 1.89. The code itself last bisected to 1.87 (1.86 fails
+# on `is_multiple_of`). CI's `msrv` job builds and tests on exactly this version
+# so the floor cannot drift unnoticed.
+rust-version = "1.89"
 license = "Apache-2.0"
 repository = "https://github.com/Karib0u/binfera"
 

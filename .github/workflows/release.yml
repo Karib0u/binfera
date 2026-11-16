@@ -225,10 +225,10 @@ jobs:
           package-dir: binfera-python
           output-dir: wheelhouse
         env:
-          # abi3-py38 (binfera-python/Cargo.toml): one wheel covers every
-          # CPython >= 3.8, so building only against cp38's ABI is correct,
+          # abi3-py39 (binfera-python/Cargo.toml): one wheel covers every
+          # CPython >= 3.9, so building only against cp39's ABI is correct,
           # not a narrowing.
-          CIBW_BUILD: "cp38-*"
+          CIBW_BUILD: "cp39-*"
           CIBW_SKIP: "*-musllinux*"
           CIBW_ARCHS: ${{ matrix.cibw-archs }}
           # A smoke test, not a measurement (docs/benchmarks.md "Binding
@@ -253,8 +253,7 @@ jobs:
             print('decompiled', len(session.functions), 'functions')"
           # Linux wheels build inside manylinux containers, which cannot see
           # the host runner's Rust toolchain. Install Rust in each container
-          # so maturin does not request puccinialin, which has no Python 3.8
-          # distribution for the cp38 abi3 build.
+          # so maturin does not fall back to fetching one through puccinialin.
           # The wheel includes the native decompiler, so the container also needs a C++ compiler
           # and zlib headers.
           CIBW_BEFORE_ALL_LINUX: >
@@ -262,7 +261,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
           CIBW_ENVIRONMENT_LINUX: "PATH=$HOME/.cargo/bin:$PATH"
           # The decompiler's C++17 sources need macOS 10.15 (std::filesystem); cibuildwheel
-          # defaults CPython 3.8 macOS wheels to 10.9.
+          # defaults CPython 3.9 macOS wheels to 10.9.
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.15
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

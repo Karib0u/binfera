@@ -220,9 +220,7 @@ pub(super) fn collect_macho_function_starts(
     }
 }
 
-// `as_chunks` is not available on the crate's Rust 1.87 MSRV, and these
-// exact-size iterators intentionally leave malformed trailing bytes out.
-#[allow(clippy::chunks_exact_to_as_chunks)]
+// The fixed-size chunk iterators intentionally leave malformed trailing bytes out.
 pub(super) fn collect_pe_seeds(
     bytes: &[u8],
     image: &LoadedImage,
@@ -330,7 +328,7 @@ pub(super) fn collect_pe_seeds(
             // cannot read. Native recovery keeps going: every non-chained
             // `BeginAddress` is a function start whatever its neighbours hold.
             let bail = backend == RecoveryBackend::VivisectCompat;
-            for entry in raw.chunks_exact(12) {
+            for entry in raw.as_chunks::<12>().0 {
                 let (Some(begin), Some(unwind_info_rva)) = (
                     entry
                         .get(..4)
@@ -390,7 +388,7 @@ pub(super) fn collect_pe_seeds(
             // none of the AMD64 branch's `UNW_FLAG_CHAININFO`/version-bail
             // logic: every entry's `BeginAddress` is an authoritative
             // function start, full stop.
-            for entry in raw.chunks_exact(8) {
+            for entry in raw.as_chunks::<8>().0 {
                 let Some(begin) = entry
                     .get(..4)
                     .and_then(|value| <[u8; 4]>::try_from(value).ok())

@@ -36,7 +36,7 @@ impl Rules {
     #[staticmethod]
     fn from_directory(py: Python<'_>, path: PathBuf) -> PyResult<Rules> {
         let source_path = path.to_string_lossy().into_owned();
-        py.allow_threads(move || {
+        py.detach(move || {
             // Rule *parsing* parallelizes over available cores (the same
             // seam the CLI uses;
             // validation/subscope-extraction/topological ordering inside
@@ -64,7 +64,7 @@ impl Rules {
 #[pyfunction]
 #[pyo3(signature = (directory, r#ref=None))]
 pub fn fetch_rules(py: Python<'_>, directory: PathBuf, r#ref: Option<String>) -> PyResult<()> {
-    py.allow_threads(move || {
+    py.detach(move || {
         const RULES_REPO: &str = "https://github.com/mandiant/capa-rules.git";
         let reference = r#ref.as_deref().unwrap_or(binfera::RULES_PIN);
 

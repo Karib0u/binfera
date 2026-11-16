@@ -20,7 +20,7 @@ pub fn inspect(
     format: Option<String>,
     arch: Option<String>,
     guess_shellcode: bool,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let (bytes, _) = read_input(data_or_path)?;
     let format = parse_format(format.as_deref())?;
     if matches!(format, Format::Freeze | Format::Dotnet) {
@@ -28,7 +28,7 @@ pub fn inspect(
             "inspect reads PE, ELF and Mach-O headers or raw shellcode (format sc32/sc64)",
         ));
     }
-    let json = py.allow_threads(move || -> PyResult<String> {
+    let json = py.detach(move || -> PyResult<String> {
         let bytes = binfera::extract::elf::without_corrupt_section_headers(&bytes).unwrap_or(bytes);
         let arch = arch.as_deref().unwrap_or("auto");
         let info = match format {

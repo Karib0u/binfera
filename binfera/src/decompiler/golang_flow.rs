@@ -297,10 +297,12 @@ pub(super) fn duff_helper<'a>(
                     .bytes_at(f.entry, 63 * 4 * body.len())
                     .is_some_and(|bytes| {
                         bytes.len() == 63 * 4 * body.len()
-                            && bytes.chunks_exact(4).enumerate().all(|(i, word)| {
-                                u32::from_le_bytes([word[0], word[1], word[2], word[3]])
-                                    == body[i % body.len()]
-                            })
+                            && bytes
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .enumerate()
+                                .all(|(i, word)| u32::from_le_bytes(*word) == body[i % body.len()])
                     })
             });
         }

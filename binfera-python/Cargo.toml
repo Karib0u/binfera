@@ -34,7 +34,7 @@ doctest = false
 
 [dependencies]
 binfera = { path = "../binfera" }
-# `abi3-py38`: one wheel per platform instead of one per CPython minor
+# `abi3-py39`: one wheel per platform instead of one per CPython minor
 # version (J15's compatibility matrix).
 #
 # `extension-module` is a local feature, not unconditional on this
@@ -50,7 +50,7 @@ binfera = { path = "../binfera" }
 # (non-extension-module) mode -- against a real, found `libpython`, exactly
 # like any other embedding use of pyo3 -- while the actual wheel maturin
 # ships is still built with the real ABI3 extension-module ABI.
-pyo3 = { version = "0.22", features = ["abi3-py38"] }
+pyo3 = { version = "0.30", features = ["abi3-py39"] }
 # Already a workspace dependency (`binfera`, `binfera-cli`); needed again
 # here only to serialize `rd::ResultDocument` the same way `capa -j` does
 # (see `analyze.rs`) before handing the JSON string to Python's own `json`

@@ -6,7 +6,7 @@ Distributed as **`binfera`** wheels, importable as **`binfera`** -- deliberately
 
 ## Install
 
-binfera does not publish to PyPI. Prebuilt `abi3` wheels (one per platform, covering every CPython >= 3.8) are attached to each [GitHub release](https://github.com/Karib0u/binfera/releases); download the one matching your platform and install it directly:
+binfera does not publish to PyPI. Prebuilt `abi3` wheels (one per platform, covering every CPython >= 3.9) are attached to each [GitHub release](https://github.com/Karib0u/binfera/releases); download the one matching your platform and install it directly:
 
 ```bash
 pip install binfera-<version>-cp38-abi3-<platform>.whl

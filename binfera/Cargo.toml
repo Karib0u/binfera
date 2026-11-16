@@ -29,9 +29,9 @@ serde_json = "1"
 bincode = { version = "=2.0.1", default-features = false, features = ["std", "serde"], optional = true }
 thiserror = "1"
 # YAML parsing for rule ingestion. Chosen over yaml-rust2 because its
-# serde_yaml::Value gives us a ready-made generic value tree (mapping/sequence/
+# serde_norway::Value (a maintained fork of serde_yaml 0.9) gives us a ready-made generic value tree (mapping/sequence/
 # scalar) to walk by hand, matching how build_statements() walks Python dicts.
-serde_yaml = "0.9"
+serde_norway = "0.9"
 # Regex compilation for `string: /.../ ` rule features.
 regex = "1"
 # Fallback for the handful of corpus regexes using lookaround (unsupported by
@@ -55,7 +55,7 @@ goblin = "0.10.7"
 iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info", "masm"] }
 # FLIRT parsing and matching. The recovery engine remains in-tree; only
 # lancelot's standalone signature crate is used.
-lancelot-flirt = "0.10.0"
+lancelot-flirt = "0.10.2"
 # Required to populate the existing freeze/result sample metadata directly
 # from raw file-scope inputs without invoking an external runtime.
 md-5 = "0.11.0"

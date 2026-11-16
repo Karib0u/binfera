@@ -70,9 +70,6 @@ pub fn extract_ascii_strings(buf: &[u8], n: usize) -> Vec<ExtractedString> {
 /// `(ascii_byte, 0x00)` pair per character, matches allowed to start at any
 /// byte offset (not just even ones) -- a match can immediately follow a
 /// shorter-than-`n` run that started one byte earlier.
-// `as_chunks` would satisfy newer Clippy, but it is unstable on the crate's
-// Rust 1.87 MSRV. Keep the exact-size iterator until the MSRV can move.
-#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn extract_unicode_strings(buf: &[u8], n: usize) -> Vec<ExtractedString> {
     let mut out = Vec::new();
     if buf.is_empty() || n < 1 {
@@ -99,7 +96,9 @@ pub fn extract_unicode_strings(buf: &[u8], n: usize) -> Vec<ExtractedString> {
             // against (that guard exists for lone surrogates, which can't
             // occur when every high byte is 0).
             let s: String = buf[i..j]
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| pair[0] as char)
                 .collect();
             out.push(ExtractedString { s, offset: i });
@@ -179,8 +178,6 @@ fn detect_string(buf: &[u8]) -> Option<String> {
 /// `detectUnicode`: "simple" UTF-16LE -- every code unit's high byte must
 /// equal the *first* one's (`charset = bytes[offset + 1]`, virtually always
 /// `0`), the low bytes must be printable, and a `0x00` low byte terminates.
-// `as_chunks` is not available on the crate's Rust 1.87 MSRV.
-#[allow(clippy::chunks_exact_to_as_chunks)]
 fn detect_unicode(buf: &[u8]) -> Option<String> {
     let charset = *buf.get(1)?;
     let mut count = 0usize;
@@ -194,7 +191,9 @@ fn detect_unicode(buf: &[u8]) -> Option<String> {
                 return None;
             }
             return buf
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .take(count / 2)
                 .map(|unit| char::from_u32(u32::from(u16::from_le_bytes([unit[0], unit[1]]))))
                 .collect();

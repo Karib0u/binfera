@@ -57,17 +57,17 @@ pub struct DynamicCounts {
     pub process_feature_counts: Vec<(Address, u64)>,
 }
 
-fn yaml_str(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
-    match map.get(serde_yaml::Value::String(key.to_string())) {
-        Some(serde_yaml::Value::String(s)) => Some(s.clone()),
+fn yaml_str(map: &serde_norway::Mapping, key: &str) -> Option<String> {
+    match map.get(serde_norway::Value::String(key.to_string())) {
+        Some(serde_norway::Value::String(s)) => Some(s.clone()),
         _ => None,
     }
 }
 
-fn yaml_bool(map: &serde_yaml::Mapping, key: &str) -> bool {
+fn yaml_bool(map: &serde_norway::Mapping, key: &str) -> bool {
     matches!(
-        map.get(serde_yaml::Value::String(key.to_string())),
-        Some(serde_yaml::Value::Bool(true))
+        map.get(serde_norway::Value::String(key.to_string())),
+        Some(serde_norway::Value::Bool(true))
     )
 }
 

@@ -616,12 +616,12 @@ pub fn filter_rules_by_tag(rules: Vec<Rule>, tag: &str) -> Vec<Rule> {
     let namespaces = crate::rules::index_rules_by_namespace(&rules);
     let by_name: HashMap<String, &Rule> = rules.iter().map(|r| (r.name.clone(), r)).collect();
 
-    fn tag_in_value(value: &serde_yaml::Value, tag: &str) -> bool {
+    fn tag_in_value(value: &serde_norway::Value, tag: &str) -> bool {
         match value {
-            serde_yaml::Value::String(s) => s.contains(tag),
-            serde_yaml::Value::Sequence(seq) => seq
+            serde_norway::Value::String(s) => s.contains(tag),
+            serde_norway::Value::Sequence(seq) => seq
                 .iter()
-                .any(|v| matches!(v, serde_yaml::Value::String(s) if s.contains(tag))),
+                .any(|v| matches!(v, serde_norway::Value::String(s) if s.contains(tag))),
             _ => false,
         }
     }
