@@ -124,6 +124,8 @@ jobs:
       - run: npm ci
       - run: npm run prepare-assets
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:prerender
       - name: Web engine checks
         run: |
           npm run test:analyze
