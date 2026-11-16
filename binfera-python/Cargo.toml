@@ -34,7 +34,7 @@ doctest = false
 
 [dependencies]
 binfera = { path = "../binfera" }
-# `abi3-py39`: one wheel per platform instead of one per CPython minor
+# `abi3-py39`: one build per platform instead of one per CPython minor
 # version (J15's compatibility matrix).
 #
 # `extension-module` is a local feature, not unconditional on this
@@ -61,5 +61,5 @@ serde = "1"
 [features]
 python-extension = ["pyo3/extension-module"]
 # The native decompiler (Ghidra's C++ core). Off by default so a plain `cargo build --workspace`
-# needs no C++ toolchain; the published wheels enable it through `pyproject.toml`.
+# needs no C++ toolchain; `pyproject.toml` enables it for every pip or maturin install.
 decompiler = ["binfera/decompiler"]

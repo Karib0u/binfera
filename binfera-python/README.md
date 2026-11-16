@@ -2,15 +2,19 @@
 
 In-process Python binding for [binfera](https://github.com/Karib0u/binfera): detect capabilities in PE/ELF/shellcode/.NET/Mach-O programs, called through the C ABI. No subprocess, no Python at analysis time, nothing reimplemented -- Python calls straight into binfera's own `binfera` analysis code.
 
-Distributed as **`binfera`** wheels, importable as **`binfera`** -- deliberately neither name Mandiant's own PyPI package (`flare-capa`, imported as `capa`) uses, so the two are never confused for one another.
+Installed as the **`binfera`** package, importable as **`binfera`** -- deliberately neither name Mandiant's own PyPI package (`flare-capa`, imported as `capa`) uses, so the two are never confused for one another.
 
 ## Install
 
-binfera does not publish to PyPI. Prebuilt `abi3` wheels (one per platform, covering every CPython >= 3.9) are attached to each [GitHub release](https://github.com/Karib0u/binfera/releases); download the one matching your platform and install it directly:
+binfera is not on PyPI, and releases carry no wheels. Install it from source, straight from GitHub:
 
 ```bash
-pip install binfera-<version>-cp38-abi3-<platform>.whl
+uv pip install "binfera @ git+https://github.com/Karib0u/binfera@v1.0.0#subdirectory=binfera-python"
+# or
+pip install "binfera @ git+https://github.com/Karib0u/binfera@v1.0.0#subdirectory=binfera-python"
 ```
+
+This compiles the package, including the native decompiler, so it needs Rust 1.89 or newer and a C++ compiler (with zlib headers on macOS and Linux, Visual Studio Build Tools on Windows). Expect it to take a few minutes.
 
 Or build from a source checkout with [maturin](https://www.maturin.rs/):
 
@@ -20,7 +24,7 @@ cd binfera-python
 maturin develop --release
 ```
 
-Wheels ship no rules (`capa-rules` is a 4.2 MB, 1,045-file corpus that pinning it into the wheel would fork on every install); point `Rules.from_directory` at a checkout, or fetch the pinned release explicitly:
+The package ships no rules (`capa-rules` is a 4.2 MB, 1,045-file corpus that pinning it into the package would fork on every install); point `Rules.from_directory` at a checkout, or fetch the pinned release explicitly:
 
 ```python
 import binfera
@@ -67,7 +71,7 @@ binfera.decompile_all("sample.exe", on_event=lambda event: ...)
 ```
 
 - `inspect` reads headers only (PE, ELF, Mach-O, or raw shellcode with `format="sc32"`/`"sc64"`) and is in every build.
-- `Decompiler`, `decompile_all` and `binfera.HAS_DECOMPILER` need a build with the native decompiler. The published wheels include it; a source build needs `--features decompiler` and a C++ compiler.
+- `Decompiler`, `decompile_all` and `binfera.HAS_DECOMPILER` need a build with the native decompiler. The install above includes it; a plain `cargo` build of the crate needs `--features decompiler` and a C++ compiler.
 - A `Decompiler` belongs to the thread that created it and holds the GIL while it works; use `decompile_all` or separate processes for parallelism.
 - Failures raise the same `binfera.CapaError` family as `analyze`.
 

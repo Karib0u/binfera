@@ -182,102 +182,10 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
-  # J15 (docs/benchmarks.md): abi3 wheels for the published target matrix,
-  # each one built, imported, and used to scan a sample. Tag/manual-dispatch
-  # only -- a five-platform wheel matrix is not a per-push cost, and every
-  # push already gets a linux-only build plus the binding-parity check
-  # (`.github/workflows/ci.yml`'s `python-binding` job).
-  wheels:
-    name: wheels (${{ matrix.os }} / ${{ matrix.cibw-archs }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            cibw-archs: x86_64
-          # Build and test ARM64 wheels natively, without QEMU.
-          - os: ubuntu-24.04-arm
-            cibw-archs: aarch64
-          # Each macOS wheel builds on a runner of its own architecture: the wheel contains the
-          # native decompiler, whose C++ core builds only when host and target match.
-          - os: macos-15-intel
-            cibw-archs: x86_64
-          - os: macos-latest
-            cibw-archs: arm64
-          - os: windows-latest
-            cibw-archs: AMD64
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read # checkout
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # The wheel's own `CIBW_TEST_COMMAND` scans a sample, which needs
-          # both `rules/` (the same one submodule `archive` fetches) and one
-          # small `tests/testfiles/` sample.
-          submodules: false
-
-      - name: Fetch test submodules
-        run: git submodule update --init --depth 1 rules tests/testfiles
-
-      - uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
-
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
-        with:
-          package-dir: binfera-python
-          output-dir: wheelhouse
-        env:
-          # abi3-py39 (binfera-python/Cargo.toml): one wheel covers every
-          # CPython >= 3.9, so building only against cp39's ABI is correct,
-          # not a narrowing.
-          CIBW_BUILD: "cp39-*"
-          CIBW_SKIP: "*-musllinux*"
-          CIBW_ARCHS: ${{ matrix.cibw-archs }}
-          # A smoke test, not a measurement (docs/benchmarks.md "Binding
-          # corpus"): install, import, scan one sample. `{project}` is
-          # cibuildwheel's placeholder for this job's checkout root, which
-          # is why `rules`/`tests/testfiles` are fetched above rather than
-          # left to `fetch_rules` -- a release smoke test must not touch the
-          # network.
-          CIBW_TEST_COMMAND: >
-            python -c "from pathlib import Path; import binfera;
-            root = Path(r'{project}');
-            rules = binfera.Rules.from_directory(root / 'rules');
-            doc = binfera.analyze(root / 'tests' / 'testfiles' / 'c335a9d41185a32ad918c5389ee54235.exe_', rules, jobs=1);
-            assert doc['rules'];
-            print('scanned', len(doc['rules']), 'matched rules');
-            assert binfera.HAS_DECOMPILER;
-            dll = root / 'tests' / 'decompiler' / 'fixtures.dll';
-            session = binfera.Decompiler(dll);
-            text = session.decompile(session.functions[0])['text'];
-            assert 'arithmetic' in text;
-            assert binfera.inspect(dll)['format'] == 'pe';
-            print('decompiled', len(session.functions), 'functions')"
-          # Linux wheels build inside manylinux containers, which cannot see
-          # the host runner's Rust toolchain. Install Rust in each container
-          # so maturin does not fall back to fetching one through puccinialin.
-          # The wheel includes the native decompiler, so the container also needs a C++ compiler
-          # and zlib headers.
-          CIBW_BEFORE_ALL_LINUX: >
-            yum install -y gcc-c++ zlib-devel &&
-            curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
-          CIBW_ENVIRONMENT_LINUX: "PATH=$HOME/.cargo/bin:$PATH"
-          # The decompiler's C++17 sources need macOS 10.15 (std::filesystem); cibuildwheel
-          # defaults CPython 3.9 macOS wheels to 10.9.
-          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.15
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: binfera-python-wheels-${{ matrix.os }}-${{ matrix.cibw-archs }}
-          path: wheelhouse/*.whl
-
   publish:
     permissions:
       contents: write # create the draft release
-    needs: [archive, wheels]
+    needs: [archive]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -306,7 +214,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          sha256sum *.tar.gz *.zip *.whl > SHA256SUMS
+          sha256sum *.tar.gz *.zip > SHA256SUMS
 
       # The notes are this version's CHANGELOG section plus the install steps.
       - name: Release notes
@@ -327,7 +235,7 @@ jobs:
             echo "irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.ps1 | iex       # Windows, PowerShell"
             echo '```'
             echo
-            echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads. The Python wheels (\`pip install <wheel>\`) include the decompiler. \`SHA256SUMS\` lists every file."
+            echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads. \`SHA256SUMS\` lists every file."
             echo
             echo "binfera is an independent project, not affiliated with or endorsed by Google LLC or Mandiant, Inc."
           } >> notes.md
@@ -342,4 +250,4 @@ jobs:
           set -euo pipefail
           shopt -s failglob # a missing asset fails here
           gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md dist/*.tar.gz dist/*.zip dist/*.whl dist/SHA256SUMS
+            --notes-file notes.md dist/*.tar.gz dist/*.zip dist/SHA256SUMS

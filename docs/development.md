@@ -101,7 +101,7 @@ The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.87. See [d
 
 1. Set `version` in the workspace `Cargo.toml`, add a `## [X.Y.Z]` section to [`CHANGELOG.md`](https://github.com/Karib0u/binfera/blob/main/CHANGELOG.md) (it becomes the release notes) and check [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md).
 2. Merge to `main` and wait for CI to pass.
-3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and wheel and publishes nothing.
+3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and publishes nothing.
 4. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds again and creates a **draft** release; it fails if the tag differs from the `Cargo.toml` version or `CHANGELOG.md` has no section for it.
 5. Open the draft, check the notes and assets, and publish it. Then run `scripts/install.sh` on a clean machine.
 
