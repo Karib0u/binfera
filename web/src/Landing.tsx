@@ -121,6 +121,7 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
             </button>
           )}
           {!desktop && <button type="button" className="lp-navlink" onClick={() => document.getElementById("lp-features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>}
+          {!desktop && <a className="lp-navlink" href="https://docs.binfera.io/">Docs</a>}
           {!desktop && <a className="lp-navlink" href={`${REPO}/releases`} target="_blank" rel="noreferrer">Download</a>}
           <a className="lp-navlink" href={REPO} target="_blank" rel="noreferrer">GitHub</a>
           <ThemeToggle />
@@ -224,6 +225,8 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
           <p>Built by <a href="https://github.com/Karib0u" target="_blank" rel="noreferrer">Karib0u</a>, a malware analyst of 10+ years. Decompiler: Ghidra's C++ core. Rules: capa.</p>
         </div>
         <div className="lp-foot-links">
+          {!desktop && <a href="https://docs.binfera.io/getting-started/">Quickstart</a>}
+          {!desktop && <a href="https://docs.binfera.io/faq/">FAQ</a>}
           <a href={REPO} target="_blank" rel="noreferrer">GitHub</a>
           <a href={`${REPO}/releases`} target="_blank" rel="noreferrer">Download</a>
         </div>
