@@ -1,8 +1,10 @@
 <h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
-    <img src="docs/images/logo-light.png" alt="Binfera" width="440">
-  </picture>
+  <a href="#gh-dark-mode-only">
+    <img src="docs/images/logo-dark.png#gh-dark-mode-only" alt="Binfera" width="440">
+  </a>
+  <a href="#gh-light-mode-only">
+    <img src="docs/images/logo-light.png#gh-light-mode-only" alt="Binfera" width="440">
+  </a>
 </h1>
 
 **See what a binary does.** Decompiled C, capabilities mapped onto the code, and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
