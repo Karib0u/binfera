@@ -50,6 +50,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          package-manager-cache: false
 
 
       - name: Install Linux dependencies
@@ -148,7 +149,12 @@ jobs:
         with:
           path: installers
           merge-multiple: true
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          draft: true
-          files: installers/*
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s failglob # no installers fails here
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" installers/*

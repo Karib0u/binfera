@@ -334,13 +334,12 @@ jobs:
 
       # A draft: check the assets and notes, then publish it from the Releases page.
       - name: Create draft release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          draft: true
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/**/*.whl
-            dist/SHA256SUMS
-          body_path: notes.md
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s failglob # a missing asset fails here
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md dist/*.tar.gz dist/*.zip dist/*.whl dist/SHA256SUMS
