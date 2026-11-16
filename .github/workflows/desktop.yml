@@ -170,5 +170,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s failglob # no installers fails here
-          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" installers/*
+          shopt -s failglob globstar # a missing installer type fails here
+          # Installers only, from their bundle folders (dmg/, nsis/, ...). The first-launch smoke
+          # logs are downloaded too, all named desktop-smoke.log, and must not become assets.
+          files=(installers/**/*.{dmg,exe,msi,deb,rpm,AppImage})
+          for f in "${files[@]}"; do (cd "$(dirname "$f")" && sha256sum "$(basename "$f")"); done > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" "${files[@]}" SHA256SUMS
