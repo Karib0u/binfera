@@ -768,10 +768,21 @@ impl Reader<'_> {
                 .push("Malformed or oversized x64 exception directory".into());
             return;
         }
-        let Some(entries) = self.bytes(directory, size as usize) else {
+        // A truncated file keeps the leading rows it still holds. Those are valid
+        // RUNTIME_FUNCTION entries, so read them and report the loss.
+        let mut present = size as usize;
+        if self.bytes(directory, present).is_none() {
             result
                 .diagnostics
                 .push("Truncated x64 exception directory".into());
+            present = self
+                .image
+                .file_backed_at(directory, present)
+                .map_or(0, <[u8]>::len)
+                / 12
+                * 12;
+        }
+        let Some(entries) = self.bytes(directory, present).filter(|_| present > 0) else {
             return;
         };
         // Copy only the bounded directory, so the reader's work budget can mutate.
@@ -912,6 +923,85 @@ mod tests {
                 if valid { image.image_base } else { stub }
             );
         }
+    }
+
+    /// `.text` at rva 0x1000 holding one function, `.rdata` at 0x2000 holding its unwind
+    /// info (an `EHANDLER` naming `__CxxFrameHandler4`), and a `.pdata` that declares
+    /// `declared` bytes of rows while the file holds only the first.
+    fn truncated_pdata_image(declared: u32) -> LoadedImage {
+        use crate::extract::image::{MappedSection, Permissions};
+        let base = 0x10000u64;
+        let word = |value: u32| value.to_le_bytes();
+        let text = vec![0xc3u8; 8];
+        let mut rdata = vec![0x09, 0, 0, 0]; // version 1, UNW_FLAG_EHANDLER, no codes
+        rdata.extend_from_slice(&word(0x1004)); // handler
+        rdata.extend_from_slice(&word(0x2010)); // FuncInfo
+        rdata.resize(0x20, 0);
+        let mut pdata = Vec::new();
+        for value in [0x1000, 0x1004, 0x2000] {
+            pdata.extend_from_slice(&word(value));
+        }
+        let mut bytes = text.clone();
+        let rdata_offset = bytes.len();
+        bytes.extend_from_slice(&rdata);
+        let pdata_offset = bytes.len();
+        bytes.extend_from_slice(&pdata);
+        let section =
+            |name: &str, rva: u64, offset: usize, data: &[u8], execute: bool| MappedSection {
+                name: name.into(),
+                address: base + rva,
+                virtual_size: data.len() as u64,
+                file_offset: offset as u64,
+                file_size: data.len() as u64,
+                permissions: Permissions {
+                    read: true,
+                    write: false,
+                    execute,
+                },
+            };
+        let mut pdata_section = section(".pdata", 0x3000, pdata_offset, &pdata, false);
+        pdata_section.virtual_size = u64::from(declared);
+        let mut image = LoadedImage::for_test(
+            ImageFormat::Pe,
+            Architecture::X64,
+            base,
+            vec![
+                section(".text", 0x1000, 0, &text, true),
+                section(".rdata", 0x2000, rdata_offset, &rdata, false),
+                pdata_section,
+            ],
+            BTreeMap::new(),
+            bytes,
+        )
+        .with_import_location(base + 0x1004, "__CxxFrameHandler4");
+        image.pe_exception_directory = Some((base + 0x3000, declared));
+        image
+    }
+
+    #[test]
+    fn truncated_x64_exception_directory_keeps_the_rows_that_fit() {
+        // Declared 24 bytes, present 12: the first row is read, the loss is reported.
+        let info = ExceptionInfo::read(&truncated_pdata_image(24));
+        assert!(info
+            .diagnostics
+            .contains(&"Truncated x64 exception directory".to_string()));
+        assert!(
+            info.diagnostics
+                .iter()
+                .any(|message| message.contains("FH4 metadata at 0x11000")),
+            "{:?}",
+            info.diagnostics
+        );
+        // A complete directory reads the same row and reports no truncation.
+        let info = ExceptionInfo::read(&truncated_pdata_image(12));
+        assert!(!info
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("Truncated")));
+        assert!(info
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("FH4 metadata at 0x11000")));
     }
 
     #[test]

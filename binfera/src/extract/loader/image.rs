@@ -462,6 +462,22 @@ impl LoadedImage {
         self.mapped_bytes.get(index).map(Vec::as_slice)
     }
 
+    /// Like [`Self::bytes_at`], but stops at the end of the section's file data, so
+    /// the loader's zero fill (and a truncated file's missing tail) is never returned.
+    pub(crate) fn file_backed_at(&self, address: u64, max_len: usize) -> Option<&[u8]> {
+        let (index, section) = self
+            .sections
+            .iter()
+            .enumerate()
+            .find(|(_, section)| section.contains_va(address))?;
+        let start = usize::try_from(address.checked_sub(section.address)?).ok()?;
+        let backed = usize::try_from(section.file_size).unwrap_or(usize::MAX);
+        let len = max_len.min(backed.checked_sub(start)?);
+        self.mapped_bytes
+            .get(index)?
+            .get(start..start.checked_add(len)?)
+    }
+
     pub fn bytes_at(&self, address: u64, max_len: usize) -> Option<&[u8]> {
         let (index, section) = self
             .sections
