@@ -1,6 +1,6 @@
 # Benchmarks
 
-Two questions: how fast Binfera finds the code in a file compared with Ghidra, and whether its capability results match Python capa. The numbers hold for these files, versions and this machine; they are not universal claims.
+Code recovery against Ghidra, Binary Ninja Free and rev.ng, and capability agreement with Python capa. The results apply to the files, versions and machines listed below.
 
 <div class="grid cards" markdown>
 
@@ -117,6 +117,68 @@ Both tools decompile with Ghidra's C++ core, so the difference measured here is 
     | osx.lockbit | Mach-O arm64 | 0.41 MB | 0.18 s | 12.4 s | 373 / 343 | 67× |
     | osx.insidiousgh0st | Mach-O arm64 | 5.67 MB | 2.98 s | 70.6 s | 5,136 / 5,136 | 24× |
 
+## Speed against Binary Ninja Free
+
+**Binfera lists functions sooner on 16 of 20 files with stable inventories.** Seven of the 22 corpus files had stable inventories and at least 80% function-start overlap. Binfera was quicker on all seven.
+
+| File | Binfera | Binary Ninja Free | Start overlap |
+|---|---:|---:|---:|
+| Hive (Go, 2.3 MB) | 2.77 s | 105.61 s | 93.4% |
+| NimBlackout (0.5 MB) | 0.97 s | 13.22 s | 90.5% |
+| NotPetya (0.36 MB) | 0.80 s | 7.87 s | 97.2% |
+| Small x64 PE fixture | 0.71 s | 0.21 s | 100% |
+
+### Method
+
+| | |
+|---|---|
+| **Binfera** | Time to the first `--decompile-all --jobs 1` record. |
+| **Binary Ninja Free** | Time from opening a file in the running GUI to completion of default analysis, including local [MCP](https://docs.binary.ninja/guide/mcp.html) calls. Default analysis does more work than listing functions. |
+| **Overlap** | Shared function starts divided by the union, using file offsets. Counts retain import stubs. DarkGate and the 9.6 MB PE had unstable inventories and are excluded from the stable-file tally. |
+| **Runs** | Median of three on 22 corpus files and eight source fixtures. Apple M1 Max, macOS 27.2, warm disk cache, 2026-11-17. |
+| **Versions** | Binfera 1.0.1 and Binary Ninja Free 6.0.10905. |
+
+??? note "Decompiler checks on eight source fixtures"
+
+    Of 366 input cases per tool, Binfera passed 358 and compilation blocked eight. Binary Ninja passed 280, failed 16 at runtime and had 70 blocked by compilation.
+
+    | Check | Binfera | Binary Ninja Free |
+    |---|---|---|
+    | ARM64 floating return | Infers a 16-byte array | Infers `double` |
+    | ARM and Thumb branches | Preserves unsigned comparisons | Uses a signed comparison |
+    | PE switch | Preserves the default result | Loses the default return path |
+    | Forwarded results | Drops the results of `write_hello` and `imported` | Preserves both return expressions |
+
+    The source checks recompile selected functions with Clang. They supply type aliases and an intrinsic definition while preserving inferred types and control flow. Returns are compared at the source width.
+
+## Speed against rev.ng
+
+**On eight source fixtures, Binfera emits its full decompilation output a median of 12.2 times sooner than rev.ng emits its C artifact.** The median ratio for the function list and model was 15.0×. Startup contributes to both timings on files this small.
+
+| File | Binfera batch | rev.ng C |
+|---|---:|---:|
+| Windows x64 DLL | 1.17 s | 3.79 s |
+| Linux x64 ELF | 0.35 s | 3.99 s |
+| Windows ARM64 PE | 0.29 s | 3.53 s |
+| macOS x64 Mach-O | 0.34 s | 4.60 s |
+
+### Method
+
+| | |
+|---|---|
+| **Binfera** | Time to the first function list and time to complete the `--decompile-all --jobs 1` JSONL batch. |
+| **rev.ng** | `quick analyze` to the default analysis model, and `quick artifact emit-c-as-single-file` to the full PTML output. The model also contains inferred prototypes and data structures. |
+| **Runs** | Median of three in the same Linux x86-64 container on an Apple M1 Max. Container startup is outside the timer. Measured 2026-11-17. |
+| **Versions** | Binfera 1.0.1 and rev.ng `0e2b259`. |
+
+??? note "Function starts and pseudocode"
+
+    Binfera found 39 of 40 starts verified against ELF text symbols, PE export and entry records, or Mach-O linker metadata. Rev.ng found all 40, including the ARM64 Windows export Binfera missed. Rev.ng also listed six import stubs, two ARM-mode entries in Thumb code and one Mach-O string as a function.
+
+    Both tools preserve the unsigned `mix` comparison and miss the ARM64 scalar floating-point signature. Binfera preserves the return path after `malloc` in both Mach-O fixtures. Rev.ng preserves the string-length return in the ARM64 ELF `imported` wrapper, which Binfera omits.
+
+    Rev.ng passed all 182 source-derived cases that ran on isolated C. The other 184 cases are unscored by this probe, which provides standard headers and leaves out generated stack types, segment data and runtime helpers.
+
 ## Agreement with capa
 
 Binfera runs the unmodified capa rules. Results are compared file by file with pinned Python capa 10.0.0 and capa-rules v10.0.0.
@@ -137,11 +199,44 @@ Evidence trees and duplicate-match counts are not compared. The reference reject
 cargo build --release -p binfera-cli --features decompiler
 ```
 
+The Binary Ninja Free and rev.ng scripts use the same eight source fixtures with `--fixtures` and save their results locally.
+
 === "Against Ghidra"
 
     ```bash
     # One JSON line per file, then the tables above
     scripts/bench/bench_vs_ghidra.py target/release/binfera /path/to/ghidra_12.1.4_PUBLIC FILE...
+    ```
+
+=== "Against Binary Ninja Free"
+
+    Enable `ui.mcp.enabled` in [Binary Ninja Free](https://binary.ninja/free/) and restart it. The benchmark uses the default local MCP endpoint. Initialize the `tests/testfiles` submodule for the corpus run. Omit `--demos` if the locally packed web demos are unavailable.
+
+    ```bash
+    python3 scripts/bench/bench_vs_binja.py --samples scripts/corpus-bench.txt \
+      --demos --output /tmp/binfera-binja-corpus
+    python3 scripts/bench/bench_vs_binja.py --fixtures \
+      --output /tmp/binfera-binja-fixtures
+    python3 scripts/bench/bench_vs_binja.py --quality /tmp/binfera-binja-fixtures/results.jsonl \
+      --output /tmp/binfera-binja-quality
+    ```
+
+=== "Against rev.ng"
+
+    Use the [Linux x86-64 Binfera 1.0.1 release](https://github.com/Karib0u/binfera/releases/tag/v1.0.1) in the same container as rev.ng. Set `WORK` to the directory containing the extracted release.
+
+    ```bash
+    REVNG_IMAGE=revng/revng@sha256:9e07c7982cd673bb4861534641b6e63438cf9ac01c8a3f71b302a739cda2ecaa
+    docker run --platform linux/amd64 --rm --network none \
+      -v "$PWD:/repo:ro" -v "$WORK:/bench" "$REVNG_IMAGE" bash -c '
+      source /revng/environment && python3 -B /repo/scripts/bench/bench_vs_revng.py \
+        --binfera /bench/binfera-v1.0.1-x86_64-unknown-linux-gnu/binfera \
+        --fixtures --output /bench/results'
+    docker run --platform linux/amd64 --rm --network none \
+      -v "$WORK:/bench" "$REVNG_IMAGE" \
+      cp -r /revng/root/share/revng/include /bench/revng-include
+    python3 scripts/bench/bench_vs_revng.py --quality "$WORK/results" \
+      --headers "$WORK/revng-include"
     ```
 
 === "Against capa"
