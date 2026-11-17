@@ -1,8 +1,10 @@
 use crate::engine::{Engine, Job};
 use crate::rpc::Handler;
-use binfera_project::{Edit, EditKind, Error as ProjectError, Source, Store};
+use binfera_project::{Edit, EditKind, Error as ProjectError, Project, Source, Store};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
 
 const INSTRUCTIONS: &str = "Binfera: deterministic static analysis of executables (PE, ELF, Mach-O) with a decompiler, capability \
 detection and a persistent project per file. open_binary starts analysis in the background; poll get_project until analysis_status \
@@ -239,17 +241,17 @@ impl Tools {
 
     fn open_binary(&mut self, args: &Value) -> Result<Value, String> {
         let path = str_arg(args, "path")?;
-        let file = std::path::Path::new(path);
+        let file = Path::new(path);
         if !file.is_file() {
             return Err(format!("`{path}` is not a readable file"));
         }
         let project = self.store.open_project(file).map_err(project_err)?;
+        let input = Arc::new(self.engine.input(&project)?);
         self.engine.clear_failure(&project.sha256, Job::Decompile);
         self.engine.clear_failure(&project.sha256, Job::Capa);
         self.engine
-            .ensure(&project.sha256, &project.path, Job::Decompile);
-        self.engine
-            .ensure(&project.sha256, &project.path, Job::Capa);
+            .ensure(&project.sha256, input.clone(), Job::Decompile);
+        self.engine.ensure(&project.sha256, input, Job::Capa);
         self.get_project(&json!({"project_id": format!("sha256:{}", project.sha256)}))
     }
 
@@ -261,7 +263,9 @@ impl Tools {
         let decompile = self.engine.status(&sha, Job::Decompile);
         let mut out = json!({
             "project_id": format!("sha256:{sha}"),
-            "path": self.path_for(&sha).unwrap_or(project.path),
+            "path": self.path_for(&project).ok().or_else(|| {
+                (!Path::new(&project.path).is_absolute()).then_some(project.path)
+            }),
             "size": project.size,
             "revision": project.revision,
             "analysis_status": decompile,
@@ -327,22 +331,18 @@ impl Tools {
         Ok((documented, library))
     }
 
-    fn path_for(&self, sha: &str) -> Result<String, String> {
-        let project = self.store.project(sha).map_err(project_err)?;
-        let dir = self
-            .engine
-            .cache_dir
-            .parent()
-            .ok_or("missing data directory")?;
-        binfera_project::project_input(dir, &project)
+    fn path_for(&self, project: &Project) -> Result<String, String> {
+        binfera_project::project_input(self.engine.data_dir()?, project)
             .map(|p| p.to_string_lossy().into_owned())
             .map_err(project_err)
     }
 
     fn get_overview(&mut self, args: &Value) -> Result<Value, String> {
         let sha = Self::project_id(args)?;
-        let path = self.path_for(&sha)?;
-        let mut info = self.engine.image_info(&path)?;
+        let input = self
+            .engine
+            .input(&self.store.project(&sha).map_err(project_err)?)?;
+        let mut info = self.engine.image_info(input.path())?;
         // Keep the overview bounded: counts for large tables, full detail for the small ones.
         if let Some(object) = info.as_object_mut() {
             for key in ["imports", "exports", "regions", "segments"] {
@@ -462,17 +462,17 @@ impl Tools {
 
         // Importance: what a function does that an analyst would want named first.
         let signals: Option<HashMap<u64, [usize; 4]>> = if sort == "importance" {
-            let path = self.path_for(&sha)?;
+            let project = self.store.project(&sha).map_err(project_err)?;
             let capabilities = self.engine.capability_counts(&sha);
             let string_addresses: HashSet<u64> = self
                 .engine
-                .strings(&sha, &path)?
+                .strings(&project)?
                 .iter()
                 .map(|s| s.address)
                 .collect();
             let import_slots: HashSet<u64> = self
                 .engine
-                .image(&sha, &path)?
+                .image(&project)?
                 .imports
                 .iter()
                 .map(|i| i.2)
@@ -631,8 +631,8 @@ impl Tools {
             .flatten()
             .take(5)
             .collect();
-        let path = self.path_for(&sha)?;
-        let image = self.engine.image(&sha, &path)?;
+        let project = self.store.project(&sha).map_err(project_err)?;
+        let image = self.engine.image(&project)?;
         let rows: Vec<&Value> = record["asm"]
             .as_array()
             .map(|r| r.iter().collect())
@@ -723,9 +723,9 @@ impl Tools {
             });
         let offset = int_arg(args, "offset", 0).max(0) as usize;
         let limit = int_arg(args, "limit", 50).clamp(1, 200) as usize;
-        let path = self.path_for(&sha)?;
+        let project = self.store.project(&sha).map_err(project_err)?;
         let index = self.engine.index(&sha)?;
-        let image = self.engine.image(&sha, &path)?;
+        let image = self.engine.image(&project)?;
         let names = self.names(&sha)?;
         let label = |a: u64| json!({"address": hex(a), "name": names.get(&a).cloned().or_else(|| index.get(a).map(|f| f.name.clone()))});
         let mut rows: Vec<Value> = Vec::new();
@@ -763,7 +763,7 @@ impl Tools {
             }
         }
         if kinds.contains("string") {
-            for s in self.engine.strings(&sha, &path)?.iter() {
+            for s in self.engine.strings(&project)?.iter() {
                 if s.value.to_ascii_lowercase().contains(&query) {
                     let users: Vec<Value> = index
                         .refs_to
@@ -785,12 +785,6 @@ impl Tools {
 
     fn emulate(&mut self, args: &Value, call_sites: bool) -> Result<Value, String> {
         let sha = Self::project_id(args)?;
-        let path = self.path_for(&sha)?;
-        let (actual_hash, _) =
-            binfera_project::hash_file(std::path::Path::new(&path)).map_err(project_err)?;
-        if actual_hash != sha {
-            return Err("project file changed; reopen the binary before emulation".into());
-        }
         let address = parse_address(str_arg(args, "address")?)?;
         let mut request = match args.get("request") {
             None => Map::new(),
@@ -810,7 +804,12 @@ impl Tools {
         } else {
             None
         };
-        let result = self.engine.emulate(&path, &Value::Object(request), sites)?;
+        let input = self
+            .engine
+            .input(&self.store.project(&sha).map_err(project_err)?)?;
+        let result = self
+            .engine
+            .emulate(input.path(), &Value::Object(request), sites)?;
         Ok(json!({"project_id":format!("sha256:{sha}"), "result":result, "untrusted":UNTRUSTED}))
     }
 
@@ -917,7 +916,10 @@ impl Tools {
             .cloned()
             .unwrap_or_default();
         let index = self.engine.index(&sha)?;
-        let image = self.engine.image_info(&self.path_for(&sha)?).ok();
+        let input = self
+            .engine
+            .input(&self.store.project(&sha).map_err(project_err)?)?;
+        let image = self.engine.image_info(input.path()).ok();
         let in_image = |address: u64| -> bool {
             image
                 .as_ref()
@@ -1142,16 +1144,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (sha, retained) = binfera_project::retain_sample(dir.path(), b"desktop input").unwrap();
         let store = Store::open_in_memory().unwrap();
-        store.ensure_project(&sha, "dropped.sys", 13).unwrap();
+        let project = store.ensure_project(&sha, "dropped.sys", 13).unwrap();
         let engine = Engine::new("unused".into(), dir.path().join("cache"), "test".into());
         let mut tools = Tools::new(store, engine, "test".into());
-        assert_eq!(tools.path_for(&sha).unwrap(), retained.to_string_lossy());
-        let project = tools
-            .get_project(&json!({"project_id": format!("sha256:{sha}")}))
+        assert_eq!(
+            tools.path_for(&project).unwrap(),
+            retained.to_string_lossy()
+        );
+        let args = json!({"project_id": format!("sha256:{sha}")});
+        assert_eq!(
+            tools.get_project(&args).unwrap()["path"],
+            retained.to_string_lossy().as_ref()
+        );
+
+        let original = dir.path().join("original.sys");
+        std::fs::write(&original, b"changed input").unwrap();
+        tools
+            .store
+            .set_path(&sha, original.to_str().unwrap())
             .unwrap();
-        assert_eq!(project["path"], retained.to_string_lossy().as_ref());
+        let project = tools.store.project(&sha).unwrap();
+        assert_eq!(
+            tools.path_for(&project).unwrap(),
+            retained.to_string_lossy()
+        );
+        let snapshot = tools.engine.input(&project).unwrap();
+        assert_eq!(std::fs::read(snapshot.path()).unwrap(), b"desktop input");
         std::fs::remove_file(retained).unwrap();
-        assert!(tools.path_for(&sha).unwrap_err().contains("Reopen"));
+        assert!(tools.path_for(&project).unwrap_err().contains("SHA-256"));
+        assert!(tools.get_project(&args).unwrap()["path"].is_null());
+        assert!(tools.get_overview(&args).unwrap_err().contains("SHA-256"));
     }
 
     #[test]

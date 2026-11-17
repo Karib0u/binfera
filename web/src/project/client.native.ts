@@ -26,7 +26,10 @@ export const desktop: Desktop | null = {
   forget: (sha) => invoke("project_forget", { sha256: sha }),
   pick: async (expect) => {
     const picked = await invoke<{ path: string; name: string; sha256: string } | null>("file_pick", { expect: expect ?? null });
-    return picked && { file: await read(picked.path, picked.name), sha256: picked.sha256 };
+    if (!picked) return null;
+    const file = await read(picked.path, picked.name);
+    if (await sha256(new Uint8Array(await file.arrayBuffer())) !== picked.sha256) throw new Error(`${picked.name} changed while it was being opened.`);
+    return { file, sha256: picked.sha256 };
   },
   open: async (entry) => {
     const path = await project!.path(entry.sha256);

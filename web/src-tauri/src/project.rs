@@ -66,7 +66,7 @@ pub fn project_load(
     })
 }
 
-/// Resolve the original file or its saved copy and allow the webview to read that project input.
+/// Resolve a verified project input and allow the webview to read it.
 #[tauri::command]
 pub fn project_path(state: State<'_, Projects>, sha256: String) -> Result<Option<String>, String> {
     let path = state.with(|s| {
@@ -414,8 +414,14 @@ pub async fn file_read(
 /// Shows a history entry's file in the system file manager.
 #[tauri::command]
 pub fn file_reveal(state: State<'_, Projects>, sha256: String) -> Result<(), String> {
-    let path = project_path(state, sha256)?.ok_or("the file is no longer there")?;
-    let path = PathBuf::from(path);
+    let project = state.with(|s| s.project(&sha256.to_ascii_lowercase()))?;
+    let original = PathBuf::from(&project.path);
+    let path = if original.is_absolute() && original.is_file() {
+        original
+    } else {
+        binfera_project::project_input(&binfera_project::data_dir(), &project)
+            .map_err(|e| e.to_string())?
+    };
     if !path.is_absolute() || !path.exists() {
         return Err("the file is no longer there".into());
     }
@@ -487,7 +493,13 @@ mod tests {
         assert!(!recent[0].missing);
         assert_eq!(
             binfera_project::project_input(dir.path(), &project).unwrap(),
-            std::fs::canonicalize(&original).unwrap()
+            saved
+        );
+
+        std::fs::write(&original, b"changed binary!").unwrap();
+        assert_eq!(
+            binfera_project::project_input(dir.path(), &project).unwrap(),
+            saved
         );
 
         std::fs::remove_file(&original).unwrap();
