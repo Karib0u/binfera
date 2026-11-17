@@ -2,15 +2,24 @@
   <img src="docs/images/logo.png" alt="Binfera" width="440">
 </p>
 
+<p align="center">
+  <a href="https://github.com/Karib0u/binfera/actions/workflows/ci.yml"><img src="https://github.com/Karib0u/binfera/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Karib0u/binfera/releases/latest"><img src="https://img.shields.io/github/v/release/Karib0u/binfera?style=flat-square&amp;color=ff8a3d" alt="Latest release"></a>
+  <a href="https://github.com/Karib0u/binfera/releases"><img src="https://img.shields.io/github/downloads/Karib0u/binfera/total?style=flat-square&amp;color=ff8a3d" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-ff8a3d?style=flat-square" alt="Apache 2.0 license"></a>
+</p>
+
+<p align="center">
+  <a href="https://binfera.io">Try it in your browser</a> ·
+  <a href="https://docs.binfera.io">Documentation</a> ·
+  <a href="https://github.com/Karib0u/binfera/releases">Releases</a>
+</p>
+
 **See what a binary does.** Decompiled C, capabilities mapped onto the code, and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
 
 ![Opening the WannaCry demo: the overview, a capability, the function behind it, search and the function list](docs/images/tour.gif)
 
 binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra's C++ core and SLEIGH, no JVM). The browser build runs both as WebAssembly in Web Workers, so a sample never leaves the page and there is no backend. Capability matches come from a native Rust implementation of [Mandiant capa](https://github.com/mandiant/capa) that runs the unmodified capa rules.
-
-[Try it in your browser](https://binfera.io) · [Documentation](https://docs.binfera.io) · [Releases](https://github.com/Karib0u/binfera/releases)
-
-> Status: early release (1.0). Expect rough edges; interfaces may still change.
 
 ## Choose how to use it
 
