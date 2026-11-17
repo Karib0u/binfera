@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -343,7 +343,7 @@ impl Engine {
         let key = (sha.to_string(), job);
         let path = path.to_string();
         std::thread::spawn(move || {
-            let outcome = run_job(&exe, &path, job, &target);
+            let outcome = run_job(&exe, Path::new(&path), job, &target);
             let mut jobs = jobs.lock().unwrap();
             match outcome {
                 Ok(()) => {
@@ -657,7 +657,7 @@ fn build_index(file: &PathBuf) -> Result<Index, String> {
     })
 }
 
-fn run_job(exe: &PathBuf, path: &str, job: Job, target: &PathBuf) -> Result<(), String> {
+fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), String> {
     let tmp = target.with_extension("tmp");
     let err_path = target.with_extension("err");
     let out = File::create(&tmp).map_err(|e| e.to_string())?;
@@ -686,10 +686,11 @@ fn run_job(exe: &PathBuf, path: &str, job: Job, target: &PathBuf) -> Result<(), 
             .env_remove("CAPA_RULES_DIR");
     }
     match job {
-        Job::Decompile => command.args(["--decompile-all", "--json", path]),
-        Job::Capa => command.args(["--json", path]),
+        Job::Decompile => command.args(["--decompile-all", "--json"]),
+        Job::Capa => command.arg("--json"),
     };
     let mut child = command
+        .arg(path)
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err)
