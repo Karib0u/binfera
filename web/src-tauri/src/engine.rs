@@ -3,8 +3,8 @@
 //! One frontend "engine run" is one `binfera` process, exactly like one WebAssembly invocation in
 //! the browser build, so the frontend's request shapes carry over unchanged. A run is:
 //!
-//! 1. `stage_sample`: the sample's bytes cross the IPC boundary once, as a raw body, and land in a
-//!    retained input file shared with MCP (no base64, no JSON).
+//! 1. `stage_sample`: the sample's bytes cross the IPC boundary once as a raw body. The desktop
+//!    engine gets a private snapshot, and MCP can use the retained input.
 //! 2. `run_engine`: spawns the sidecar with `{sample}` / `{rules}` placeholders in its arguments
 //!    resolved, writes any small text `files` (fingerprints) into a per-run working directory,
 //!    and sends each stdout line over a [`Channel`] as it is printed.
@@ -13,7 +13,7 @@
 use crate::cache::{self, Cache};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,8 +27,8 @@ const STDERR_LINES: usize = 50;
 struct Inner {
     scratch: PathBuf,
     next: AtomicU64,
-    /// Staged samples: the retained input and its SHA-256, which names the sample in the cache.
-    samples: Mutex<HashMap<u64, (PathBuf, String)>>,
+    /// Staged samples: a private snapshot and its SHA-256, which names the sample in the cache.
+    samples: Mutex<HashMap<u64, (Arc<tempfile::NamedTempFile>, String)>>,
     /// Process id of each live run's `binfera` process (also its process group on Unix).
     running: Mutex<HashMap<u64, u32>>,
     /// Runs the frontend cancelled, so a cancel that races ahead of the spawn still takes effect.
@@ -131,9 +131,15 @@ pub async fn stage_sample(state: State<'_, Engine>, request: Request<'_>) -> Res
     };
     let inner = &state.0;
     let id = inner.next.fetch_add(1, Ordering::Relaxed);
-    let (sha, path) = binfera_project::retain_sample(&binfera_project::data_dir(), bytes)
+    let (sha, _) = binfera_project::retain_sample(&binfera_project::data_dir(), bytes)
         .map_err(|e| format!("could not retain the sample: {e}"))?;
-    inner.samples.lock().unwrap().insert(id, (path, sha));
+    let mut sample = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    sample.write_all(bytes).map_err(|e| e.to_string())?;
+    inner
+        .samples
+        .lock()
+        .unwrap()
+        .insert(id, (Arc::new(sample), sha));
     Ok(id)
 }
 
@@ -291,7 +297,7 @@ fn run_blocking(
             let mut arg = arg.clone();
             if arg.contains("{sample}") {
                 let sample = sample.as_ref().ok_or("this run needs a sample")?;
-                arg = arg.replace("{sample}", &sample.to_string_lossy());
+                arg = arg.replace("{sample}", &sample.path().to_string_lossy());
             }
             if let Some(rules) = &rules {
                 arg = arg.replace("{rules}", &rules.to_string_lossy());
