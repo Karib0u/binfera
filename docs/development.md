@@ -99,10 +99,10 @@ The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.87. See [d
 
 ## Releasing
 
-1. Set `version` in the workspace `Cargo.toml`, add a `## [X.Y.Z]` section to [`CHANGELOG.md`](https://github.com/Karib0u/binfera/blob/main/CHANGELOG.md) (it becomes the release notes) and check [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md).
+1. Set the version in the workspace `Cargo.toml`, `web/src-tauri/Cargo.toml` and `web/src-tauri/tauri.conf.json`, add a `## [X.Y.Z]` section to [`CHANGELOG.md`](https://github.com/Karib0u/binfera/blob/main/CHANGELOG.md) (it becomes the release notes) and check [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md).
 2. Merge to `main` and wait for CI to pass.
-3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and publishes nothing.
-4. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds again and creates a **draft** release; it fails if the tag differs from the `Cargo.toml` version or `CHANGELOG.md` has no section for it.
+3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and desktop installer and publishes nothing.
+4. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds again and creates a **draft** release; it fails if the tag differs from the version in `Cargo.toml`, `web/src-tauri/Cargo.toml` or `web/src-tauri/tauri.conf.json`, or `CHANGELOG.md` has no section for it.
 5. Open the draft, check the notes and assets, and publish it. Then run `scripts/install.sh` on a clean machine.
 
-The desktop installers are a separate workflow, started by hand or by a `desktop-vX.Y.Z` tag, and also produce a draft release.
+The release holds both the command-line archives and the desktop installers. The **Desktop** workflow, which builds the installers, can also be run on its own by hand; it then publishes nothing.

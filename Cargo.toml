@@ -8,7 +8,7 @@ members = ["binfera", "binfera-cli", "binfera-python", "binfera-ghidra", "binfer
 exclude = ["third_party/dnfile", "web/src-tauri"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 # Set by the bundled SQLite: every rusqlite with the fixed libsqlite3-sys (0.39+,
 # RUSTSEC-2026-0459) needs 1.89. The code itself last bisected to 1.87 (1.86 fails
