@@ -1,7 +1,7 @@
 # binfera smoke corpus -- the *mid* development loop.
 #
 # 23 samples, stratified across the failure buckets of the 200-sample
-# `corpus-outer.txt` run (docs/history/v1-shipping-plan.md Phase 1 item 3), plus the
+# `corpus-outer.txt` run (v1 shipping plan, Phase 1 item 3), plus the
 # three over-reporters v2 Phase A.0 added.
 # Paths are relative to tests/testfiles/, same as every other corpus list.
 #
@@ -51,7 +51,7 @@ al-khaser_x86.exe_                                                      # anti-a
 03bb32d43885e83bc56c0b2bcad6f0c5ea40402763b7057056c654990022471b.dll_   # plain PE dll
 
 # --- v2 Phase A.0: over-reporters, so a trade cannot hide ------------------
-# Added 2026-07-27 (docs/development/v2-shipping-plan.md Phase A.0). Phase A closes flow
+# Added 2026-07-27 (v2 shipping plan, Phase A.0). Phase A closes flow
 # gaps to remove *false* matches, and the failure mode it must not commit is
 # trading one extra for another -- a change that leaves the headline count
 # flat while moving *which* rule is wrong. The guard can only see that on a

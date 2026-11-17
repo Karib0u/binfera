@@ -1,4 +1,4 @@
-# WebAssembly build of the CLI for the browser UI (web/): see docs/wasm.md.
+# WebAssembly build of the CLI for the browser UI (web/): see web/README.md.
 # Emscripten provides the C++ runtime, C++ exceptions (Ghidra's error channel) and zlib.
 [target.wasm32-unknown-emscripten]
 rustflags = [

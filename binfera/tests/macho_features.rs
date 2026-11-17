@@ -12,7 +12,7 @@
 //! the fixture *source* (`src/fixture_exe.c`/`fixture_dylib.c`) and
 //! cross-checked directly against `otool`/`nm`/`llvm-readobj` output on this
 //! machine (recorded in this file's own comments, not carried forward from
-//! a note -- see AGENTS.md's "never carry a measurement forward" rule).
+//! a note -- see docs/development.md's "never carry a measurement forward" rule).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -608,7 +608,7 @@ fn error_messages_name_the_structural_problem() {
 }
 
 // ---------------------------------------------------------------------
-// `--jobs 1` vs `N`: byte-identical, same as every other backend (AGENTS.md).
+// `--jobs 1` vs `N`: byte-identical, same as every other backend (docs/development.md).
 // ---------------------------------------------------------------------
 
 #[test]

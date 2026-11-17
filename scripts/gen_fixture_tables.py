@@ -9,7 +9,7 @@ Dev-time only: run this under the pinned `.venv` whenever PINNED.md's
 `mandiant/capa` pin bumps, paste its
 output into the two `#[rustfmt::skip] const ROWS: &[Row] = &[ ... ];`
 blocks, and re-run `cargo fmt`/`cargo test`. The generated Rust is committed
--- `cargo test` never invokes Python (AGENTS.md "No Python at runtime").
+-- `cargo test` never invokes Python (docs/development.md, "Rules of the codebase").
 
 `pytest` isn't a runtime dependency of the pinned capa package, so this
 stubs the decorator surface used when the `fixtures` package imports.

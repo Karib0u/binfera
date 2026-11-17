@@ -184,8 +184,8 @@ fn normalized_json(doc: &ResultDocument) -> serde_json::Value {
 }
 
 /// Cell 1: `--jobs 1` vs default (and a couple of points in between) --
-/// byte-identical after timestamp normalization, matching AGENTS.md's
-/// blanket rule for every backend.
+/// byte-identical after timestamp normalization, matching the blanket
+/// determinism rule (docs/development.md) for every backend.
 #[test]
 #[ignore = "slow acceptance gate; run with --include-ignored"]
 fn jobs_1_matches_default_for_every_shape() {
@@ -313,7 +313,7 @@ fn result_document_round_trips_for_every_shape() {
 /// Cell 4: malformed input -- a byte-flipped copy of every clean fixture
 /// must never panic through the full `analyze` pipeline, whether it ends up
 /// `Ok` (tolerant parsing found something plausible) or `Err` (a contextual
-/// failure). AGENTS.md's hard rule ("no panics on untrusted input") applies
+/// failure). The "no unwrap on untrusted input" rule (docs/development.md) applies
 /// to the whole pipeline, not just the per-format loaders that already have
 /// their own dedicated fuzz tests (`macho_features.rs`,
 /// `aarch64_pe_features.rs`, `aarch64_elf_fuzz.rs`, `dotnet_dnfile_fuzz.rs`)

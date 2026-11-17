@@ -5,8 +5,8 @@
 //! Regenerate the two tables below (never by hand -- see each table's
 //! header) with `scripts/gen_fixture_tables.py dotnet`, run under the
 //! pinned `.venv` against the checked-out `reference/capa/` source; the
-//! **output is committed**, and `cargo test` never invokes Python (AGENTS.md
-//! "No Python at runtime").
+//! **output is committed**, and `cargo test` never invokes Python (docs/development.md,
+//! "No Python ... at runtime").
 //!
 //! ## Scope resolution
 //!
