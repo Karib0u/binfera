@@ -1,6 +1,5 @@
-/* Trivial fixture source for binova's AArch64 PE corpus (V3-0 task 4,
- * docs/development/milestones/v3/V3-0-oracles-and-seam.md). No Windows SDK
- * is available in this build environment, so this is `-nostdlib` with its
+/* Trivial fixture source for binfera's AArch64 PE corpus (V3-0 task 4).
+ * No Windows SDK is available in this build environment, so this is `-nostdlib` with its
  * own entry point rather than a real `main`/CRT-started program -- it
  * links and produces a genuine, loadable ARM64 PE, but is not meant to run
  * under Windows (there is no OS to run it under here to check). What

@@ -13,7 +13,7 @@
 //! cross-checked against this fixture directory's own captured
 //! `llvm-readobj`/`llvm-objdump` output and this machine's `objdump`
 //! (`coff-arm64` support), recorded in this file's own comments per
-//! AGENTS.md's "never carry a measurement forward" rule.
+//! docs/development.md's "never carry a measurement forward" rule.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -340,7 +340,7 @@ fn a_pe_format_rule_matches_arch_aarch64() {
 }
 
 // ---------------------------------------------------------------------
-// `--jobs 1` vs `N`: byte-identical, same as every other backend (AGENTS.md).
+// `--jobs 1` vs `N`: byte-identical, same as every other backend (docs/development.md).
 // ---------------------------------------------------------------------
 
 #[test]

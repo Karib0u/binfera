@@ -1,6 +1,5 @@
-/* Trivial fixture source for binova's Mach-O corpus (V3-0 task 4,
- * docs/development/milestones/v3/V3-0-oracles-and-seam.md). Exports two
- * ordinary symbols and calls a libSystem import (memset) internally, so the
+/* Trivial fixture source for binfera's Mach-O corpus (V3-0 task 4).
+ * Exports two ordinary symbols and calls a libSystem import (memset) internally, so the
  * built dylib has both exports and an import stub to resolve. */
 #include <string.h>
 

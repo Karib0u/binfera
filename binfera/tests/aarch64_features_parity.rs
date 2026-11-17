@@ -24,8 +24,8 @@
 //! Regenerate the table below (never by hand -- see its header) with
 //! `scripts/gen_fixture_tables.py aarch64`, run under the pinned `.venv`
 //! against the checked-out `reference/capa/` source; the **output is
-//! committed**, and `cargo test` never invokes Python (AGENTS.md "No Python
-//! at runtime").
+//! committed**, and `cargo test` never invokes Python (docs/development.md
+//! "No Python at runtime").
 
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 

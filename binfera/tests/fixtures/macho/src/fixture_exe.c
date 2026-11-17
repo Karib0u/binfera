@@ -1,6 +1,5 @@
-/* Trivial fixture source for binova's Mach-O corpus (V3-0 task 4,
- * docs/development/milestones/v3/V3-0-oracles-and-seam.md). Calls a real
- * libSystem import (puts) and allocates/frees via malloc/free so the built
+/* Trivial fixture source for binfera's Mach-O corpus (V3-0 task 4).
+ * Calls a real libSystem import (puts) and allocates/frees via malloc/free so the built
  * binary has ordinary lazy-bound stubs to resolve, plus one internal
  * function so the fixture isn't trivially just an import thunk. The large
  * uninitialized static array gives the linker a __DATA.__bss zero-fill

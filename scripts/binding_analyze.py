@@ -16,7 +16,7 @@ install binfera-python/` or `maturin develop --release` from that venv --
 import fails, rather than silently skipping the check).
 
 `jobs=1`: matches every other difftest invocation's single-threaded
-baseline (AGENTS.md "The three loops" -- comparisons run single-threaded
+baseline (docs/development.md "Feedback loops" -- comparisons run single-threaded
 unless the comparison is *about* parallelism), so nothing about this
 particular run's thread count can be a variable in a reported divergence.
 """

@@ -189,7 +189,7 @@ fn build_features(path: &Path) -> StaticFeatures {
 /// here are transcribed in upstream's row order, which revisits ~18 distinct
 /// samples in an interleaved pattern, so a one-slot cache thrashes and the
 /// PE -> recovery -> FLIRT -> extraction pipeline runs dozens of times. This
-/// is the project's inner development loop (`AGENTS.md`, "the three loops"),
+/// is the project's inner development loop (`docs/development.md`, "Feedback loops"),
 /// so it caches every sample instead, shared across the tests in this binary.
 ///
 /// The per-sample `OnceLock` is what keeps the pipeline off the global lock:

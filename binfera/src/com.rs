@@ -10,7 +10,7 @@
 //! The two COM name -> GUID-list databases (`capa/features/com/{classes,
 //! interfaces}.py`) are ~3.7k and ~25.6k plain literal Python dicts with no
 //! other logic. Rather than reimplementing a Python-literal parser at
-//! runtime (or shelling out to Python, which is forbidden -- see AGENTS.md),
+//! runtime (or shelling out to Python, which is forbidden -- see docs/development.md),
 //! `scripts/gen_com_db.py` converts them to JSON once; `build.rs` compresses
 //! the JSON, which is embedded here and parsed lazily on first use.
 

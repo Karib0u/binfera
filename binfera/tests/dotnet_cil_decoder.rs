@@ -2,8 +2,8 @@
 //! committed `dncil` dump.
 //! The oracle (`binfera/tests/fixtures/dotnet/cil_dump.json`) is generated
 //! by `scripts/gen_dotnet_cil_dump.py` against pinned Python `dnfile`/
-//! `dncil`/capa (never invoked at test time -- AGENTS.md "No Python at
-//! runtime") and committed.
+//! `dncil`/capa (never invoked at test time -- docs/development.md "No Python
+//! at runtime") and committed.
 //!
 //! Compares every managed method's full decoded body -- header fields,
 //! every instruction's offset/mnemonic/size/operand, every exception

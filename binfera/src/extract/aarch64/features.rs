@@ -134,7 +134,7 @@ pub fn extract_features(ctx: &InsnContext, insn: &DecodedInstruction) -> Vec<(Ad
 /// shift-immediate operand kind (`InsnOperandKind::IMM_VLSL`,
 /// `format_insn/mod.rs`), reached by a real vector instruction in the pinned
 /// corpus -- a bug in the *formatter*, unrelated to decoding, which task 2's
-/// own fuzz/corpus gate already proved never panics. AGENTS.md's "no panics
+/// own fuzz/corpus gate already proved never panics. docs/development.md's "no panics
 /// on untrusted input" rule means the fix is to never call the formatter
 /// outside instruction classes already known safe, not to `catch_unwind`
 /// around a call that might not be. The cost is real but bounded and

@@ -6,8 +6,8 @@ files and emit them as JSON data assets for binfera (COM feature expansion,
 capa/features/com/__init__.py::translate_com_feature).
 
 This is a build-time (developer-run) step, not part of binfera-cli's runtime --
-binfera never imports or shells out to Python (see AGENTS.md "no Python at
-runtime"). Re-run this only when PINNED.md's `mandiant/capa` ref changes and
+binfera never imports or shells out to Python (see docs/development.md, "Rules of the
+codebase"). Re-run this only when PINNED.md's `mandiant/capa` ref changes and
 capa/features/com/{classes,interfaces}.py have been regenerated upstream.
 
 usage: scripts/gen_com_db.py
