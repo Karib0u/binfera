@@ -46,6 +46,8 @@ npm run build
 npx wrangler deploy
 ```
 
+Publishing a `v*` release deploys the site automatically: `.github/workflows/site.yml` builds the wasm engine from the release tag, builds the site and runs `wrangler deploy`, then checks that binfera.io serves the new bundle, the demos and the install scripts. Run it from the Actions tab to deploy another branch or tag. It needs the `binfera.io` environment's `CLOUDFLARE_API_TOKEN` (a token with the Workers Scripts: Edit permission) and `CLOUDFLARE_ACCOUNT_ID` secrets. CI has no malpedia checkout, so `npm run fetch-demos` downloads the packed demos binfera.io already serves, checks each one's SHA-256, and rebuilds the index from `demo/samples.json`. It fails when a sample is added, removed or replaced: pack that change locally (`npm run pack-demos`) and deploy by hand once.
+
 Run `npm run test:delivery` for cache-header behavior and `npm run test:assets` for compressed pack selection, decompression, and worker buffer ownership. With Wrangler running locally, a real hashed `/assets/` URL should return `immutable`, while a missing URL returns status 404 and `no-store`.
 
 ## CI and wasm size

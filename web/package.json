@@ -29,6 +29,7 @@
     "test:demos": "node scripts/check-demos.mjs",
     "pack-rules": "node scripts/pack-rules.mjs",
     "pack-demos": "node scripts/pack-demos.mjs",
+    "fetch-demos": "node scripts/fetch-demos.mjs",
     "prepare-assets": "npm run build:wasm && npm run pack-rules",
     "build": "tsc --noEmit && vite build && node scripts/prerender.mjs && node scripts/copy-installers.mjs",
     "deploy": "npm run build && wrangler deploy",
