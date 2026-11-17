@@ -49,6 +49,12 @@ The desktop app opens the same database. **Agent** (top right, or Cmd/Ctrl+J) op
 
 Names, variable names and comments an agent saves appear in the existing views within about two seconds.
 
+The recording replays a real Claude Code run of **Triage this binary** on the WannaCry demo: the tool calls, the names and comments it saved, and its answer.
+
+<video src="../images/agent.mp4" poster="../images/ai.webp" autoplay loop muted playsinline controls style="width:100%"></video>
+
+![The report Claude Code saved for WannaCry, open in Artifacts](images/report.webp)
+
 Your own renames, comments and stars are written to the database as human edits, which no agent run can replace. Existing local names, comments and stars are imported once. Press `;` to add or edit a comment at the cursor, or use the context menu. Empty comments remove the annotation. Cmd/Ctrl+Z and the More menu undo your own edits for the current workspace session; text fields keep their normal undo behavior. Browser builds keep these notes in localStorage.
 
 ## Known limits

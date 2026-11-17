@@ -9,6 +9,8 @@ A first analysis in each interface. They share one engine, so results agree; the
 3. The overview lists the file's capabilities grouped by ATT&CK tactic. Select a capability to jump to the functions that implement it.
 4. In a function, switch between decompiled C, assembly and the control-flow graph.
 
+![The overview of the WannaCry demo: first look, file map and capabilities](images/overview.webp)
+
 To compare two builds, choose **Compare two files** on the landing page and drop both.
 
 ## Desktop app
@@ -17,6 +19,8 @@ To compare two builds, choose **Compare two files** on the landing page and drop
 2. Choose **Choose a file** or drop one on the window.
 3. Rename functions and add comments as you read. They are saved and come back when you reopen the file.
 4. To bring in an AI agent, click **Agent** (top right, or Cmd/Ctrl+J). If Claude Code or Codex is installed and signed in, the app runs it for you: pick a request such as **Triage this binary** or type your own. Its names, comments and reports show up in the views as it works.
+
+![Claude Code's triage of WannaCry in the Agent panel, with the functions it named in the list](images/ai.webp)
 
 ## Command line
 
@@ -28,6 +32,8 @@ binfera sample.exe -j -q | jq -r '.rules | keys[]'   # capabilities, one per lin
 binfera sample.exe --decompile-all                   # every function as C, one JSON object per line
 binfera diff old.exe new.exe                         # exits 1 when the builds differ
 ```
+
+![binfera in a terminal: the capability report for WannaCry, one function decompiled to C, then all 134 functions decompiled](images/cli.gif)
 
 JSON output, exit statuses and baselines are covered in the [command-line guide](cli.md).
 
