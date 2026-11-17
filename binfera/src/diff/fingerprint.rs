@@ -144,6 +144,9 @@ pub struct FunctionRecord {
     /// `shape` plus referenced strings and imports.
     pub content: u64,
     pub cfg: u64,
+    /// Direct internal branch sources and destinations in normalized instruction order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_hash: Option<u64>,
     pub refs: Vec<Ref>,
     pub constants: Vec<u64>,
     pub minhash: Vec<u32>,
@@ -163,6 +166,9 @@ pub struct DetailInstruction {
     /// The function it calls or jumps to. Masked in `norm`, so compared through the function match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call: Option<u64>,
+    /// The destination block of a direct branch within this function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,6 +476,15 @@ fn function_instructions(function: &Function) -> Vec<&DecodedInstruction> {
     all
 }
 
+fn internal_branch(insn: &DecodedInstruction, blocks: &BTreeSet<u64>) -> Option<u64> {
+    insn.direct_target.filter(|target| {
+        matches!(
+            insn.flow,
+            Flow::ConditionalBranch | Flow::UnconditionalBranch
+        ) && blocks.contains(target)
+    })
+}
+
 /// The variant of an import's name both files will share: the one without a library prefix.
 fn import_name(bindings: &[String]) -> Option<String> {
     bindings.iter().min_by_key(|name| name.len()).cloned()
@@ -689,8 +704,15 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
     let mut details = BTreeMap::new();
     for function in analysis.functions.values() {
         let own: BTreeSet<u64> = function.blocks.iter().map(|block| block.addr).collect();
+        let instructions = function_instructions(function);
+        let positions: Vec<_> = instructions
+            .iter()
+            .filter(|insn| !insn.is_alignment_filler())
+            .map(|insn| insn.address)
+            .collect();
         let mut shape = Fnv::new();
         let mut content = Fnv::new();
+        let mut branch_hash = Fnv::new();
         let mut refs = Vec::new();
         let mut constants = BTreeSet::new();
         let mut mnemonics = Vec::new();
@@ -698,7 +720,7 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
         let mut count = 0_u32;
         let mut pages = BTreeMap::new();
         let mut read: BTreeMap<u64, (String, Option<String>, Option<u64>)> = BTreeMap::new();
-        for insn in function_instructions(function) {
+        for insn in instructions {
             let normal = normalize(insn, image, &mut pages);
             if insn.is_alignment_filler() {
                 if options.detail {
@@ -707,6 +729,13 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
                 continue;
             }
             let first_ref = refs.len();
+            if let Some(target) = internal_branch(insn, &own) {
+                // A target may start with alignment filler. Use the next normalized position.
+                let destination = positions.partition_point(|&address| address < target);
+                branch_hash
+                    .number(u64::from(count))
+                    .number(destination as u64);
+            }
             count += 1;
             size += insn.bytes.len() as u64;
             shape.text(&normal.text);
@@ -815,6 +844,7 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
                                 },
                                 note,
                                 call,
+                                branch: internal_branch(insn, &own),
                             }
                         })
                         .collect(),
@@ -851,6 +881,7 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
             shape: shape_hash,
             content: content.finish(),
             cfg,
+            branch_hash: Some(branch_hash.finish()),
             refs,
             constants: constants.into_iter().take(MAX_CONSTANTS).collect(),
             minhash: minhash(&mnemonic_grams(&mnemonics)),
@@ -1021,6 +1052,7 @@ fn records_from_features(
                         text,
                         note: None,
                         call: None,
+                        branch: None,
                     });
                 }
             }
@@ -1063,6 +1095,7 @@ fn records_from_features(
             shape: shape_hash,
             content: content.finish(),
             cfg,
+            branch_hash: None,
             refs,
             constants: constants.into_iter().take(MAX_CONSTANTS).collect(),
             minhash: minhash(&mnemonic_grams(&mnemonics)),
