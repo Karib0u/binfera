@@ -50,9 +50,10 @@ const E_FILE_LIMITATION: u8 = 14;
 const E_INVALID_SIG: u8 = 15;
 const E_INVALID_FILE_TYPE: u8 = 16;
 
-/// `-f`/`--format`'s values. `Auto` mirrors
+/// `-f`/`--format`'s values. `Auto` follows
 /// `capa.features.extractors.common.extract_format`'s magic-byte dispatch
-/// order (PE, then ELF, then freeze); the rest select a format explicitly,
+/// order (managed PE, PE, ELF, then freeze), with Mach-O, a binfera
+/// extension, tried before freeze; the rest select a format explicitly,
 /// skipping auto-detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Format {
@@ -145,7 +146,7 @@ pub enum AnalysisError {
     #[error("parsing freeze file: {0}")]
     Freeze(FreezeError),
     #[error(
-        "could not auto-detect input format: binfera supports PE, ELF, and freeze-file input \
+        "could not auto-detect input format: binfera supports PE, ELF, Mach-O and freeze-file input \
          (shellcode has no magic bytes to detect; pass --format sc32/sc64 explicitly)"
     )]
     UnknownFormat,

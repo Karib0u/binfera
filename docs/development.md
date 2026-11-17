@@ -2,9 +2,9 @@
 
 ## Setup
 
-Build and run: Rust 1.87+ and the rules submodule.
+Build and run: Rust 1.89+ and the rules submodule.
 
-Development uses Rust 1.99.1, pinned in `rust-toolchain.toml` together with rustfmt, Clippy and the WebAssembly target. Rustup selects and installs these when running Rust commands from the checkout. Normal CI and release jobs use the same version; update their pins with the toolchain file. The packages still support Rust 1.87, which the compatibility jobs check independently.
+Development uses Rust 1.99.1, pinned in `rust-toolchain.toml` together with rustfmt, Clippy and the WebAssembly target. Rustup selects and installs these when running Rust commands from the checkout. Normal CI and release jobs use the same version; update their pins with the toolchain file. The packages still support Rust 1.89 (`rust-version` in `Cargo.toml`), which the `msrv` job checks independently.
 
 ```bash
 git clone https://github.com/Karib0u/binfera.git
@@ -51,7 +51,7 @@ cargo test --workspace
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-`cargo test --workspace` takes ~20 s. The slow acceptance and fuzz gates are `#[ignore]`d (about 383 s of a ~402 s suite); CI runs them on all three platforms with `--include-ignored`.
+`cargo test --workspace` takes ~20 s. The slow acceptance and fuzz gates are `#[ignore]`d (about 383 s of a ~402 s suite); CI runs them on Linux with `--include-ignored`; on macOS and Windows it compiles them and runs every other test.
 
 Before merge or release:
 
@@ -95,7 +95,7 @@ cargo test --release -p binfera-ghidra --features native
 cargo test --release -p binfera-cli --features decompiler --test decompiler
 ```
 
-The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.87. See [decompiler.md](decompiler.md) for source fixture rebuilding, development reference generation and performance measurements.
+The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.89, as a single `cargo test --release -p binfera -p binfera-ghidra -p binfera-cli` call with the three features and `--lib --tests`. See [Decompiler design](decompiler-design.md#tests) for source fixture rebuilding, development reference generation and performance measurements.
 
 ## Releasing
 

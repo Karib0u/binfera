@@ -323,7 +323,7 @@ public:
 // `DAT_<addr>` for plain data, `PTR_<target>_<addr>` for a pointer cell and
 // `s_<text>_<addr>` / `u_<text>_<addr>` for narrow and wide string literals.
 // The embedded engine has no program database, so the adapter derives the same
-// names from the image bytes, per request (see docs/decompiler.md). Constants
+// names from the image bytes, per request (see docs/decompiler-design.md). Constants
 // copied from Ghidra 12.1.4's observed labels: at most 32 characters of text,
 // every character other than a letter, digit, `_`, `<` or `>` becomes `_`, trailing
 // line breaks are dropped, and the address is lowercase hex padded to 8 digits.
@@ -1212,7 +1212,7 @@ public:
     static_cast<StringPrintC *>(arch.print)->c_types = !spec.go_pack;
     // Windows x64 SDK layouts (winnt.h). DWORD and LONG are four bytes;
     // ANYSIZE_ARRAY is one in the declaration, not a runtime allocation bound.
-    // See docs/decompiler.md for the declarations and provenance.
+    // See docs/decompiler-design.md for the declarations and provenance.
     auto *types = arch.types;
     auto set_struct_fields = access_set_struct_fields(SetStructFieldsTag());
     auto *u32 = types->getBase(4, TYPE_UINT);

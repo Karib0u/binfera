@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::panic;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use binfera::extract::elf::extract_elf;
 use binfera::extract::flirt::enrich_static_features;
@@ -53,50 +54,69 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
-// 900 mutants through the full ELF pipeline, single-threaded: ~166 s, the
+// 900 mutants through the full ELF pipeline: ~166 s single-threaded, the
 // second largest cost in `cargo test --workspace`. It guards against rare
 // panics on malformed input, not against the behavior an ordinary edit moves,
 // so it is a pre-merge gate rather than an inner-loop test. CI runs it via
 // `cargo test --workspace -- --include-ignored`.
+//
+// The mutants run on every available core. Each mutant's byte flips are drawn
+// up front from its sample's seeded PRNG, exactly as a serial run draws them,
+// so the mutants are the same; only the wall time changes. Workers take
+// mutants from one shared queue because the samples differ a lot in cost.
 #[test]
 #[ignore = "slow robustness gate; run with --include-ignored"]
 fn mutated_aarch64_elf_samples_never_panic() {
+    let originals: Vec<Vec<u8>> = SAMPLES.iter().map(|name| fixture_bytes(name)).collect();
+    let mutants: Vec<(usize, Vec<(usize, u8)>)> = originals
+        .iter()
+        .enumerate()
+        .flat_map(|(sample, original)| {
+            let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ (SAMPLES[sample].len() as u64 + 1));
+            (0..MUTANTS_PER_SAMPLE)
+                .map(|_| {
+                    let n_flips = 1 + rng.below(4);
+                    let flips = (0..n_flips)
+                        .map(|_| (rng.below(original.len()), (rng.next() & 0xFF) as u8))
+                        .collect();
+                    (sample, flips)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(|_| {}));
 
-    let mut failures: Vec<String> = Vec::new();
-
-    for name in SAMPLES {
-        let original = fixture_bytes(name);
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ (name.len() as u64 + 1));
-
-        for _ in 0..MUTANTS_PER_SAMPLE {
-            let mut data = original.clone();
-            let n_flips = 1 + rng.below(4);
-            for _ in 0..n_flips {
-                let idx = rng.below(data.len());
-                data[idx] = (rng.next() & 0xFF) as u8;
-            }
-
-            let result = panic::catch_unwind(|| {
-                let _: Result<_, binfera::extract::ExtractError> = extract_elf(&data);
-                let analysis: Result<_, RecoveryError> = recovery::analyze(&data);
-                if let Ok(analysis) = analysis {
-                    if let Ok(mut features) = extract_elf(&data) {
-                        enrich_static_features(
-                            &mut features,
-                            &analysis,
-                            &BTreeMap::new(),
-                            &AnalysisOptions::SERIAL,
-                        );
+    let next = AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut failures = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((sample, flips)) = mutants.get(i) else {
+                            break;
+                        };
+                        let mut data = originals[*sample].clone();
+                        for &(idx, byte) in flips {
+                            data[idx] = byte;
+                        }
+                        if panic::catch_unwind(|| run_pipeline(&data)).is_err() {
+                            failures.push(format!("{}: mutant panicked", SAMPLES[*sample]));
+                        }
                     }
-                }
-            });
-            if result.is_err() {
-                failures.push(format!("{name}: mutant panicked"));
-            }
-        }
-    }
+                    failures
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("mutation worker"))
+            .collect()
+    });
 
     panic::set_hook(default_hook);
     assert!(
@@ -105,4 +125,19 @@ fn mutated_aarch64_elf_samples_never_panic() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+fn run_pipeline(data: &[u8]) {
+    let _: Result<_, binfera::extract::ExtractError> = extract_elf(data);
+    let analysis: Result<_, RecoveryError> = recovery::analyze(data);
+    if let Ok(analysis) = analysis {
+        if let Ok(mut features) = extract_elf(data) {
+            enrich_static_features(
+                &mut features,
+                &analysis,
+                &BTreeMap::new(),
+                &AnalysisOptions::SERIAL,
+            );
+        }
+    }
 }
