@@ -14,9 +14,9 @@ To compare two builds, choose **Compare two files** on the landing page and drop
 ## Desktop app
 
 1. [Install the desktop app](installation.md#desktop-app) and open it.
-2. Choose **Open a file…** or drop one on the window.
+2. Choose **Choose a file** or drop one on the window.
 3. Rename functions and add comments as you read. They are saved and come back when you reopen the file.
-4. To bring in an AI agent, open **AI → Connect**, copy the one-line command into Claude Code or Codex, then paste a request such as **Full analysis**.
+4. To bring in an AI agent, click **Agent** (top right, or Cmd/Ctrl+J). If Claude Code or Codex is installed and signed in, the app runs it for you: pick a request such as **Triage this binary** or type your own. Its names, comments and reports show up in the views as it works.
 
 ## Command line
 

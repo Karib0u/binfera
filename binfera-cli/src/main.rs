@@ -27,7 +27,7 @@ mod embedded_rules;
 #[derive(Parser)]
 #[command(name = "binfera", version = binfera::VERSION_STRING, about = "See what a binary does: capabilities, decompiled C and diffs for PE, ELF and Mach-O", long_about = None)]
 struct Cli {
-    /// path to file to analyze (PE, ELF, or a freeze file)
+    /// path to file to analyze (PE, ELF, Mach-O, or a freeze file)
     ///
     /// Optional only so `binfera fetch-rules` can run without one; every
     /// analysis still requires it.
@@ -286,8 +286,8 @@ enum Format {
     Sc64,
     Freeze,
     Dotnet,
-    /// A binfera extension -- never
-    /// selected by `Auto`.
+    /// A binfera extension: pinned capa has no Mach-O loader. `Auto` also
+    /// detects it, after PE and ELF.
     Macho,
 }
 
