@@ -2,7 +2,7 @@
 
 Binfera needs no installation to try: [binfera.io](https://binfera.io) runs the whole engine in your browser. Install it when you want the desktop app, the command line, or an AI agent connection.
 
-All downloads are on the [Releases page](https://github.com/Karib0u/binfera/releases). Command-line releases are tagged `v*`; desktop releases are tagged `desktop-v*`.
+All downloads are on the [Releases page](https://github.com/Karib0u/binfera/releases). Each release holds the command-line archives and the desktop installers for that version.
 
 ## Command-line tool
 
@@ -39,7 +39,7 @@ To install by hand, download the archive for your platform from Releases, check 
 
 ## Desktop app
 
-Download the installer for your system from a `desktop-v*` release and run it. The desktop app keeps your renames, comments and recent files, and shares its project database with the command-line MCP server.
+Download the installer for your system from the [latest release](https://github.com/Karib0u/binfera/releases/latest) and run it. The desktop app keeps your renames, comments and recent files, and shares its project database with the command-line MCP server.
 
 | Platform | Installer |
 |---|---|

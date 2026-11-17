@@ -61,7 +61,7 @@ Open [Binfera in your browser](https://binfera.io), pick a sample or drop a file
 
 ### 2. Desktop app
 
-Download the installer for your OS (the `desktop-v*` releases) and run it. The macOS app is signed and notarised; the Windows installer is not signed, so SmartScreen warns on first run ([details](https://docs.binfera.io/installation/#code-signing)).
+Download the installer for your OS from the [latest release](https://github.com/Karib0u/binfera/releases/latest) and run it. The macOS app is signed and notarised; the Windows installer is not signed, so SmartScreen warns on first run ([details](https://docs.binfera.io/installation/#code-signing)).
 
 1. **Open a file…** or drop one on the window. Recent files and your renames and comments are kept.
 2. To bring in an AI agent, open **AI → Connect**, copy the one-line command into Claude Code or Codex, then paste a request such as **Full analysis**.

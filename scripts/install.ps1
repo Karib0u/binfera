@@ -17,8 +17,8 @@ $target = "x86_64-pc-windows-msvc"
 
 $version = $env:BINFERA_VERSION
 if (-not $version) {
-  # Not GitHub's "latest release": the desktop app is released under desktop-v* tags, can become
-  # the latest, and carries no command-line archives. Take the newest release tagged v<number>.
+  # The newest release tagged v<number>, not GitHub's "latest release" flag, which a
+  # maintainer can move by hand.
   $api = if ($env:BINFERA_API_URL) { $env:BINFERA_API_URL } else { "https://api.github.com/repos/$repo/releases?per_page=50" }
   # Parentheses make Windows PowerShell 5.1 pass the releases one by one; without them it passes
   # the whole array as one object and no release matches.

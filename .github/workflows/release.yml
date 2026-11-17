@@ -184,10 +184,23 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
+  # The desktop installers, built by desktop.yml, go into the same release as the archives.
+  desktop:
+    permissions:
+      contents: read # checkout
+    uses: ./.github/workflows/desktop.yml
+    secrets:
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+      MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+
   publish:
     permissions:
       contents: write # create the draft release
-    needs: [archive]
+    needs: [archive, desktop]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -195,28 +208,37 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify tag matches workspace version
+      - name: Verify tag matches the command-line and desktop versions
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          expected="v${version}"
-          if [[ "${GITHUB_REF_NAME}" != "${expected}" ]]; then
-            echo "error: tag ${GITHUB_REF_NAME} does not match workspace version ${expected}" >&2
-            exit 1
-          fi
+          cli="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          crate="$(sed -n 's/^version = "\([^"]*\)"/\1/p' web/src-tauri/Cargo.toml | head -1)"
+          app="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' web/src-tauri/tauri.conf.json | head -1)"
+          for v in "$cli" "$crate" "$app"; do
+            if [[ "${GITHUB_REF_NAME}" != "v${v}" ]]; then
+              echo "error: tag ${GITHUB_REF_NAME} does not match Cargo.toml (${cli}), web/src-tauri/Cargo.toml (${crate}) and tauri.conf.json (${app})" >&2
+              exit 1
+            fi
+          done
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
+          # The archives and the installers. The desktop first-launch logs are named
+          # desktop-smoke-* and stay out.
+          pattern: binfera-*
           merge-multiple: true
 
       - name: Checksums
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s failglob # a missing archive or installer type fails here
           cd dist
-          sha256sum *.tar.gz *.zip > SHA256SUMS
+          # The installers arrive in their bundle folders (dmg/, nsis/, ...); release assets are flat.
+          find . -mindepth 2 -type f -exec mv -n -t . {} +
+          sha256sum -- *.tar.gz *.zip *.dmg *.exe *.msi *.deb *.rpm *.AppImage > SHA256SUMS
 
       # The notes are this version's CHANGELOG section plus the install steps.
       - name: Release notes
@@ -237,7 +259,18 @@ jobs:
             echo "irm https://binfera.io/install.ps1 | iex   # Windows, PowerShell"
             echo '```'
             echo
-            echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads. \`SHA256SUMS\` lists every file."
+            echo "Or download an archive below: it holds the \`binfera\` binary and the pinned capa-rules, so it runs with no further downloads."
+            echo
+            echo "## Desktop app"
+            echo
+            echo "| System | File |"
+            echo "|---|---|"
+            echo "| macOS, Apple silicon | \`Binfera_${version}_aarch64.dmg\` |"
+            echo "| macOS, Intel | \`Binfera_${version}_x64.dmg\` |"
+            echo "| Windows | \`Binfera_${version}_x64-setup.exe\` or \`Binfera_${version}_x64_en-US.msi\` |"
+            echo "| Linux | \`.deb\`, \`.rpm\` or \`.AppImage\` |"
+            echo
+            echo "The macOS command-line binary, app and disk images are signed and notarised. The Windows installers are not signed, so SmartScreen asks for confirmation on first run. \`SHA256SUMS\` lists every file."
             echo
             echo "binfera is an independent project, not affiliated with or endorsed by Google LLC or Mandiant, Inc."
           } >> notes.md
@@ -251,5 +284,6 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s failglob # a missing asset fails here
-          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --draft --title "Binfera ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md dist/*.tar.gz dist/*.zip \
+            dist/*.dmg dist/*.exe dist/*.msi dist/*.deb dist/*.rpm dist/*.AppImage dist/SHA256SUMS
