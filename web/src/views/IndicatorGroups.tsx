@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { Indicator } from "../indicators";
 import type { StringEntry } from "../types";
 import { hex } from "../workspace/labels";
+import { FunctionReferences } from "./FunctionReferences";
 
 const byteLength = (x: StringEntry) => (x.w ? x.s.length * 2 : x.s.length);
 
@@ -31,7 +32,8 @@ export function IndicatorGroups({ items, query, refs, label, onFn, onHex, ready 
               <div className="ioc" key={it.value}>
                 <button className="ioc-value" title={`${hex(first.a)} · show these bytes`} onClick={() => onHex(first.a, byteLength(first))}>{it.value}</button>
                 <div className="addrs used">
-                  {fns.length ? <>{fns.slice(0, 6).map((ad) => <button key={ad} onClick={() => onFn(ad, it.strings.find((x) => refs.get(x.a)?.includes(ad))?.a)}>{label(ad)}</button>)}{fns.length > 6 && <small>+{fns.length - 6}</small>}</>
+                  {fns.length ? <FunctionReferences addresses={fns} limit={6} label={label}
+                    onSelect={(ad) => onFn(ad, it.strings.find((x) => refs.get(x.a)?.includes(ad))?.a)} />
                     : <small>{ready ? "No function references found" : "Looking for references…"}</small>}
                 </div>
               </div>
