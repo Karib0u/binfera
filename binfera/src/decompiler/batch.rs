@@ -4,7 +4,8 @@
 //! WebAssembly and language bindings can use the same policy. The caller owns output.
 use super::{DecompilationTimings, DecompileError, DecompilerSession};
 use crate::api::Format;
-use crate::extract::recovery::Analysis;
+use crate::extract::image::ImageFormat;
+use crate::extract::recovery::{Analysis, SeedKind};
 use crate::packing::Packing;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -148,10 +149,15 @@ fn decompile_all_impl(
         );
     }
     functions.retain(|address| {
+        // A PE export or unwind start can have the same body as a linker import stub.
         !rejected.contains(address)
             && session.is_code_address(*address)
-            && !session.is_import_thunk(*address)
             && !session.is_local_label(*address)
+            && (!session.is_import_thunk(*address)
+                || (analysis.image.format == ImageFormat::Pe
+                    && analysis.seeds.get(address).is_some_and(|kinds| {
+                        kinds.contains(&SeedKind::Export) || kinds.contains(&SeedKind::Unwind)
+                    })))
     });
     let addresses: Vec<u64> = functions.iter().copied().collect();
     // The viewer reads branches out of the listing, and AArch64 text is not x86's.
