@@ -140,6 +140,86 @@ fn a_redirected_call_marks_the_function_changed() -> Outcome {
     Ok(())
 }
 
+#[test]
+fn redirected_internal_branches_change_the_function() -> Outcome {
+    let options = FingerprintOptions {
+        format: binfera::api::Format::Sc64,
+        detail: true,
+        ..FingerprintOptions::default()
+    };
+    let compare_entry = |bytes: &[u8], changes: &[(usize, u8)], same_topology: bool| -> Outcome {
+        let mut patched = bytes.to_vec();
+        for &(offset, displacement) in changes {
+            patched[offset] = displacement;
+        }
+        let old = fingerprint(bytes, &options)?;
+        let new = fingerprint(&patched, &options)?;
+        let address = old.header.entry.ok_or("missing entry")?;
+        let document = compare(&old, &new, None);
+        let found = document
+            .matches
+            .iter()
+            .find(|m| m.a_addr == address)
+            .ok_or("entry not matched")?;
+        assert!(found.evidence.same_instructions, "{found:?}");
+        assert_eq!(old.functions[0].cfg == new.functions[0].cfg, same_topology);
+        assert!(found.changed, "{found:?}");
+        assert_eq!(found.reasons, [ChangeReason::Code]);
+        assert!(!found.evidence.same_cfg);
+        let rows = diff_functions(&old.details[&address], &new.details[&found.b_addr], None);
+        assert_eq!(
+            rows.blocks
+                .iter()
+                .flat_map(|block| &block.rows)
+                .filter(|row| {
+                    row.status == binfera::diff::pair::Status::Changed
+                        && row.a.as_ref().is_some_and(|insn| insn.branch.is_some())
+                })
+                .count(),
+            changes.len()
+        );
+
+        let compact = FingerprintOptions {
+            detail: false,
+            ..options.clone()
+        };
+        let mut ndjson = Vec::new();
+        fingerprint(bytes, &compact)?.write_ndjson(&mut ndjson)?;
+        let old_compact = Fingerprint::read_ndjson(ndjson.as_slice())?;
+        assert_eq!(
+            document,
+            compare(&old_compact, &fingerprint(&patched, &compact)?, None)
+        );
+        if !same_topology {
+            let mut legacy = old_compact;
+            for function in &mut legacy.functions {
+                function.branch_hash = None;
+            }
+            ndjson.clear();
+            legacy.write_ndjson(&mut ndjson)?;
+            let legacy = Fingerprint::read_ndjson(ndjson.as_slice())?;
+            assert_eq!(document, compare(&legacy, &new, None));
+        }
+        Ok(())
+    };
+    let topology_changed = [
+        0x85, 0xc0, 0x74, 6, // test eax,eax; je A
+        0x85, 0xc9, 0x74, 8, // test ecx,ecx; je B
+        0xeb, 0, // jmp A
+        0xb8, 1, 0, 0, 0, 0xc3, // A: return 1
+        0xb8, 2, 0, 0, 0, 0xc3, // B: return 2
+    ];
+    let topology_preserved = [
+        0x85, 0xc0, 0x74, 2, // test eax,eax; je A
+        0xeb, 6, // jmp B
+        0xb8, 1, 0, 0, 0, 0xc3, // A: return 1
+        0xb8, 2, 0, 0, 0, 0xc3, // B: return 2
+    ];
+    compare_entry(&topology_changed, &[(3, 12)], false)?;
+    compare_entry(&topology_preserved, &[(3, 8), (5, 0)], true)?;
+    Ok(())
+}
+
 /// The score can be checked against what it was made from.
 #[test]
 fn a_changed_function_says_what_changed() -> Outcome {
@@ -255,12 +335,32 @@ fn a_rebased_copy_is_equivalent() -> Outcome {
     for dll in [DLL32, DLL64] {
         let rebased = rebase(dll, 0x1000_0000)?;
         assert_ne!(rebased, dll);
-        let document = diff(dll, &rebased)?;
+        let old = print(dll)?;
+        let new = print(&rebased)?;
+        let document = compare(&old, &new, None);
         assert!(document.file_delta.is_empty(), "{:?}", document.file_delta);
         assert!(document.unmatched_a.is_empty() && document.unmatched_b.is_empty());
         let changed: Vec<_> = document.matches.iter().filter(|m| m.changed).collect();
         assert!(changed.is_empty(), "{changed:?}");
         assert_eq!(document.verdict, Verdict::Equivalent);
+
+        let matched_branch = document
+            .matches
+            .iter()
+            .find(|m| {
+                old.details[&m.a_addr]
+                    .blocks
+                    .iter()
+                    .flat_map(|b| &b.instructions)
+                    .any(|insn| insn.branch.is_some())
+            })
+            .ok_or("fixture has no matched internal branch")?;
+        let (a, b) = (
+            &old.details[&matched_branch.a_addr],
+            &new.details[&matched_branch.b_addr],
+        );
+        let rows = diff_functions(a, b, Some(&binfera::diff::function_map(&old, &new)));
+        assert_eq!(rows.similarity, 1.0);
     }
     Ok(())
 }

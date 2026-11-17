@@ -10,6 +10,9 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use binfera_project::Project;
+use tempfile::NamedTempFile;
+
 const JOB_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
@@ -82,7 +85,7 @@ impl Index {
 
 /// Where a virtual address lives in the file, from the normalised image headers.
 pub struct Image {
-    pub path: PathBuf,
+    input: Mutex<NamedTempFile>,
     sections: Vec<Section>,
     pub imports: Vec<(String, String, u64)>,
     pub exports: Vec<(String, u64)>,
@@ -101,7 +104,7 @@ pub struct StringEntry {
 }
 
 impl Image {
-    fn parse(path: &str, info: &Value) -> Image {
+    fn parse(input: NamedTempFile, info: &Value) -> Image {
         let sections = info["sections"]
             .as_array()
             .into_iter()
@@ -137,7 +140,7 @@ impl Image {
             })
             .collect();
         Image {
-            path: PathBuf::from(path),
+            input: Mutex::new(input),
             sections,
             imports,
             exports,
@@ -151,7 +154,7 @@ impl Image {
             .find(|s| va >= s.va && va < s.va + s.size)?;
         let start = s.off + (va - s.va);
         let len = (s.size - (va - s.va)).min(max as u64) as usize;
-        let mut file = File::open(&self.path).ok()?;
+        let mut file = self.input.lock().ok()?;
         file.seek(SeekFrom::Start(start)).ok()?;
         let mut buffer = vec![0u8; len];
         let n = file.read(&mut buffer).ok()?;
@@ -323,7 +326,7 @@ impl Engine {
     }
 
     /// Starts `job` for the file in the background unless it is cached, running, or already failed.
-    pub fn ensure(&self, sha: &str, path: &str, job: Job) {
+    pub fn ensure(&self, sha: &str, input: Arc<NamedTempFile>, job: Job) {
         if self.is_ready(sha, job) {
             return;
         }
@@ -343,9 +346,8 @@ impl Engine {
         let exe = self.exe.clone();
         let target = self.cache_file(sha, job);
         let key = (sha.to_string(), job);
-        let path = path.to_string();
         std::thread::spawn(move || {
-            let outcome = run_job(&exe, Path::new(&path), job, &target);
+            let outcome = run_job(&exe, input.path(), job, &target);
             let mut jobs = jobs.lock().unwrap();
             match outcome {
                 Ok(()) => {
@@ -383,20 +385,34 @@ impl Engine {
         Ok(index)
     }
 
-    pub fn image(&mut self, sha: &str, path: &str) -> Result<Arc<Image>, String> {
+    pub fn data_dir(&self) -> Result<&Path, String> {
+        self.cache_dir
+            .parent()
+            .ok_or("missing data directory".into())
+    }
+
+    pub fn input(&self, project: &Project) -> Result<NamedTempFile, String> {
+        binfera_project::snapshot_input(self.data_dir()?, project).map_err(|e| e.to_string())
+    }
+
+    pub fn image(&mut self, project: &Project) -> Result<Arc<Image>, String> {
+        let sha = &project.sha256;
         if let Some(image) = self.images.get(sha) {
             return Ok(Arc::clone(image));
         }
-        let image = Arc::new(Image::parse(path, &self.image_info(path)?));
+        let input = self.input(project)?;
+        let info = self.image_info(input.path())?;
+        let image = Arc::new(Image::parse(input, &info));
         self.images.insert(sha.to_string(), Arc::clone(&image));
         Ok(image)
     }
 
-    pub fn strings(&mut self, sha: &str, path: &str) -> Result<Arc<Vec<StringEntry>>, String> {
+    pub fn strings(&mut self, project: &Project) -> Result<Arc<Vec<StringEntry>>, String> {
+        let sha = &project.sha256;
         if let Some(strings) = self.strings.get(sha) {
             return Ok(Arc::clone(strings));
         }
-        let strings = Arc::new(self.image(sha, path)?.scan_strings(200_000));
+        let strings = Arc::new(self.image(project)?.scan_strings(200_000));
         self.strings.insert(sha.to_string(), Arc::clone(&strings));
         Ok(strings)
     }
@@ -467,7 +483,7 @@ impl Engine {
     /// Emulation runs in a fresh child with request/output files and an overall deadline.
     pub fn emulate(
         &self,
-        path: &str,
+        path: &Path,
         request: &Value,
         call_sites: Option<usize>,
     ) -> Result<Value, String> {
@@ -548,9 +564,10 @@ impl Engine {
             .map_err(|e| e.to_string())
     }
 
-    pub fn image_info(&self, path: &str) -> Result<Value, String> {
+    pub fn image_info(&self, path: &Path) -> Result<Value, String> {
         let output = Command::new(&self.exe)
-            .args(["--image-info", "--json", path])
+            .args(["--image-info", "--json"])
+            .arg(path)
             .env_remove("BINFERA_RULES_DIR")
             .env_remove("CAPA_RULES_DIR")
             .stdin(Stdio::null())
@@ -730,6 +747,37 @@ fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_image_reads_the_verified_snapshot_after_original_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("engine");
+        std::fs::write(
+            &exe,
+            r#"#!/bin/sh
+test "$(cat "$3")" = 'original text' || exit 1
+printf '%s\n' '{"sections":[{"va":4096,"off":0,"size":13,"perms":"r"}]}'
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let original = dir.path().join("original.bin");
+        std::fs::write(&original, b"original text").unwrap();
+        let store = binfera_project::Store::open_in_memory().unwrap();
+        let project = store.open_project(&original).unwrap();
+        let mut engine = Engine::new(exe, dir.path().join("cache"), "test".into());
+        let image = engine.image(&project).unwrap();
+        assert_eq!(image.string_at(4096).unwrap().value, "original text");
+
+        std::fs::write(&original, b"modified text").unwrap();
+        assert!(engine.input(&project).is_err());
+        assert!(Arc::ptr_eq(&image, &engine.image(&project).unwrap()));
+        assert_eq!(image.string_at(4096).unwrap().value, "original text");
+        assert_eq!(engine.strings(&project).unwrap()[0].value, "original text");
+    }
 
     fn write(name: &str, lines: &[&str]) -> PathBuf {
         let path = std::env::temp_dir().join(format!("binfera-mcp-{}-{name}", std::process::id()));

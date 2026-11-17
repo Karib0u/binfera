@@ -11,6 +11,8 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 mod cache;
@@ -226,8 +228,10 @@ pub struct Counts {
 
 /// SHA-256 of a file, hex encoded, streamed so large inputs are not held in memory.
 pub fn hash_file(path: &Path) -> Result<(String, u64), Error> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
+    Ok(hash_input(File::open(path)?, io::sink())?)
+}
+
+fn hash_input(mut file: File, mut copy: impl Write) -> io::Result<(String, u64)> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
     let mut size = 0u64;
@@ -238,6 +242,7 @@ pub fn hash_file(path: &Path) -> Result<(String, u64), Error> {
         }
         size += n as u64;
         hasher.update(&buffer[..n]);
+        copy.write_all(&buffer[..n])?;
     }
     Ok((
         hasher
@@ -267,32 +272,63 @@ pub fn sample_path(dir: &Path, sha: &str) -> Result<PathBuf, Error> {
 
 /// Keep an input beyond an engine run's lifetime, publishing complete files atomically.
 pub fn retain_sample(dir: &Path, bytes: &[u8]) -> Result<(String, PathBuf), Error> {
-    use std::io::Write;
     let sha = hash_bytes(bytes);
     let path = sample_path(dir, &sha)?;
-    if !path.is_file() {
+    if !path.is_file() || !hash_file(&path).is_ok_and(|(actual, _)| actual == sha) {
         let parent = path.parent().expect("sample directory");
         std::fs::create_dir_all(parent)?;
         let mut file = tempfile::NamedTempFile::new_in(parent)?;
         file.write_all(bytes)?;
-        match file.persist_noclobber(&path) {
-            Ok(_) => {}
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e.error.into()),
-        }
+        file.persist(&path).map_err(|e| e.error)?;
     }
     Ok((sha, path))
 }
 
-/// Resolve a real input, never treating a display label as a relative filesystem path.
+/// Resolve a verified input, preferring the retained copy over the mutable original path.
 pub fn project_input(dir: &Path, project: &Project) -> Result<PathBuf, Error> {
-    let original = Path::new(&project.path);
-    if original.is_absolute() && original.is_file() {
-        return Ok(original.to_path_buf());
-    }
+    resolve_project_input(dir, project, |path| {
+        let (sha, _) = hash_file(path)?;
+        Ok((sha, path.to_path_buf()))
+    })
+}
+
+/// Copy and hash the same bytes so later reads and subprocesses use the verified input.
+pub fn snapshot_input(dir: &Path, project: &Project) -> Result<tempfile::NamedTempFile, Error> {
+    resolve_project_input(dir, project, |path| {
+        let mut copy = tempfile::NamedTempFile::new()?;
+        let (sha, _) = hash_input(File::open(path)?, copy.as_file_mut())?;
+        Ok((sha, copy))
+    })
+}
+
+fn resolve_project_input<T>(
+    dir: &Path,
+    project: &Project,
+    mut read: impl FnMut(&Path) -> Result<(String, T), Error>,
+) -> Result<T, Error> {
     let retained = sample_path(dir, &project.sha256)?;
-    if retained.is_file() {
-        return Ok(retained);
+    let original = Path::new(&project.path);
+    let mut mismatch = false;
+    let mut error = None;
+    for path in
+        std::iter::once(retained.as_path()).chain(original.is_absolute().then_some(original))
+    {
+        if !path.is_file() {
+            continue;
+        }
+        match read(path) {
+            Ok((sha, input)) if sha.eq_ignore_ascii_case(&project.sha256) => return Ok(input),
+            Ok(_) => mismatch = true,
+            Err(e) => error = Some(e),
+        }
+    }
+    if mismatch {
+        return Err(Error::Invalid(
+            "The project's input bytes do not match its SHA-256. Reopen the binary to analyse its current contents.".into(),
+        ));
+    }
+    if let Some(error) = error {
+        return Err(error);
     }
     Err(Error::NotFound(
         "The project's input file is unavailable. Reopen the binary in the desktop app or use open_binary with its current absolute path.".into(),
@@ -1144,18 +1180,40 @@ mod tests {
         store.set_path(&sha, original.to_str().unwrap()).unwrap();
         assert_eq!(
             project_input(dir.path(), &store.project(&sha).unwrap()).unwrap(),
-            original
+            retained
         );
-        std::fs::remove_file(&original).unwrap();
+        std::fs::write(&original, b"MZ changed desktop input!").unwrap();
         assert_eq!(
             project_input(dir.path(), &store.project(&sha).unwrap()).unwrap(),
             retained
         );
         std::fs::remove_file(retained).unwrap();
+        assert!(project_input(dir.path(), &store.project(&sha).unwrap()).is_err());
         assert!(project_input(dir.path(), &project)
             .unwrap_err()
             .to_string()
             .contains("Reopen"));
+    }
+
+    #[test]
+    fn corrupt_retained_input_falls_back_only_to_matching_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original.bin");
+        let bytes = b"original bytes";
+        std::fs::write(&original, bytes).unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let project = store.open_project(&original).unwrap();
+        let (_, retained) = retain_sample(dir.path(), bytes).unwrap();
+        std::fs::write(&retained, b"corrupt! bytes").unwrap();
+        assert_eq!(
+            project_input(dir.path(), &project).unwrap(),
+            std::fs::canonicalize(&original).unwrap()
+        );
+        std::fs::write(&original, b"modified bytes").unwrap();
+        assert!(project_input(dir.path(), &project).is_err());
+        retain_sample(dir.path(), bytes).unwrap();
+        assert_eq!(std::fs::read(&retained).unwrap(), bytes);
+        assert_eq!(project_input(dir.path(), &project).unwrap(), retained);
     }
 
     #[test]

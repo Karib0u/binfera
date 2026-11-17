@@ -8,12 +8,13 @@ fn workers_match_serial_bodies_and_emit_one_inventory_and_completion() {
     let input =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/decompiler/fixtures.dll");
     let mut reference = None;
-    for jobs in [1, 2, 3] {
-        let output = Command::new(env!("CARGO_BIN_EXE_binfera"))
-            .arg(&input)
-            .args(["--decompile-all", "--jobs", &jobs.to_string()])
-            .output()
-            .unwrap();
+    for jobs in [None, Some("1"), Some("2"), Some("3")] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_binfera"));
+        command.arg(&input).arg("--decompile-all");
+        if let Some(jobs) = jobs {
+            command.args(["--jobs", jobs]);
+        }
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}",

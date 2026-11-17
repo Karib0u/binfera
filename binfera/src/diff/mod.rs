@@ -94,7 +94,7 @@ pub enum Method {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeReason {
-    /// The normalized instructions differ.
+    /// The normalized instructions or their control flow differ.
     Code,
     /// A referenced string differs.
     String,

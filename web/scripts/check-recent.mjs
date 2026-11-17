@@ -8,11 +8,12 @@ const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source)
 const mocks = moduleUrl(`
   import { createHash } from "node:crypto";
   export const calls = [];
-  let path = null, bytes = new Uint8Array();
-  export function input(nextPath, nextBytes) { path = nextPath; bytes = nextBytes; calls.length = 0; }
+  let path = null, bytes = new Uint8Array(), picked = null;
+  export function input(nextPath, nextBytes, nextPick = null) { path = nextPath; bytes = nextBytes; picked = nextPick; calls.length = 0; }
   export async function invoke(command, args) {
     calls.push({ command, args });
     if (command === "project_path") return path;
+    if (command === "file_pick") return picked;
     if (command === "file_read") return bytes.slice().buffer;
     throw new Error("Unexpected command: " + command);
   }
@@ -53,3 +54,10 @@ assert.equal(calls.length, 1);
 input("/binfera/samples/" + sha256, new Uint8Array([0]));
 await assert.rejects(desktop.open(entry), /has changed since it was analysed/);
 console.log("Missing inputs request locating, and changed contents are rejected: passed");
+
+const picked = { path: "/found/inside.exe", name: entry.name, sha256 };
+input(null, bytes, picked);
+assert.equal((await desktop.pick(sha256)).sha256, sha256);
+input(null, new Uint8Array([0]), picked);
+await assert.rejects(desktop.pick(sha256), /changed while it was being opened/);
+console.log("Located project inputs are verified after reading: passed");

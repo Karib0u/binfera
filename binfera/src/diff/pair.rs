@@ -123,7 +123,7 @@ fn block_similarity(a: &DetailBlock, b: &DetailBlock) -> f64 {
 }
 
 /// Adjacent removals and additions of one mnemonic are one instruction with new operands.
-fn rows(a: &DetailBlock, b: &DetailBlock) -> Vec<InstructionRow> {
+fn rows(a: &DetailBlock, b: &DetailBlock, pairs: &BTreeMap<u64, u64>) -> Vec<InstructionRow> {
     let mut rows: Vec<InstructionRow> = Vec::new();
     let mut removed: Vec<DetailInstruction> = Vec::new();
     let mut added: Vec<DetailInstruction> = Vec::new();
@@ -159,10 +159,20 @@ fn rows(a: &DetailBlock, b: &DetailBlock) -> Vec<InstructionRow> {
         match step {
             (Some(x), Some(y)) => {
                 flush(&mut rows, &mut removed, &mut added);
+                let (a, b) = (a.instructions.get(x), b.instructions.get(y));
+                let redirected = a
+                    .and_then(|insn| insn.branch)
+                    .and_then(|target| pairs.get(&target).copied())
+                    .zip(b.and_then(|insn| insn.branch))
+                    .is_some_and(|(mapped, actual)| mapped != actual);
                 rows.push(InstructionRow {
-                    status: Status::Same,
-                    a: a.instructions.get(x).cloned(),
-                    b: b.instructions.get(y).cloned(),
+                    status: if redirected {
+                        Status::Changed
+                    } else {
+                        Status::Same
+                    },
+                    a: a.cloned(),
+                    b: b.cloned(),
                 });
             }
             (Some(x), None) => removed.extend(a.instructions.get(x).cloned()),
@@ -327,7 +337,7 @@ pub fn diff_functions(
         let peer = pairs.get(&block.address).and_then(|y| by_b.get(y));
         let row = match peer {
             Some(peer) => {
-                let rows = rows(block, peer);
+                let rows = rows(block, peer, &pairs);
                 let kept = rows.iter().filter(|r| r.status == Status::Same).count();
                 same += kept;
                 total += rows.len();
