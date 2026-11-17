@@ -68,6 +68,8 @@ export interface CapaRule {
   description: string;
   count: number;
   addresses: number[];
+  /** Addresses of matched features, keyed by the rule match address. */
+  evidence: ReadonlyMap<number, readonly number[]>;
 }
 
 export interface CapaResult {

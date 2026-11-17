@@ -6,6 +6,22 @@ import { stripTypes } from "./strip-types.mjs";
 
 const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const shellcodeModule = moduleUrl(stripTypes(await readFile(new URL("../src/engine/shellcode.ts", import.meta.url), "utf8")));
+const { summarizeCapa } = await import(moduleUrl(stripTypes(await readFile(new URL("../src/engine/capa.ts", import.meta.url), "utf8"))));
+const absolute = (value) => ({ type: "absolute", value });
+const feature = (type, value, children = [], success = true) => ({
+  success, node: { type: "feature", feature: { type } }, children, locations: [absolute(value)],
+});
+const [rule] = summarizeCapa({
+  meta: { sample: {}, analysis: { base_address: absolute(0x1000) } },
+  rules: { fixture: { meta: { name: "fixture", scopes: { static: "function" } }, matches: [
+    [absolute(0x1010), feature("match", 0x1010, [feature("api", 0x1018), feature("api", 0x101e, [], false)])],
+    [absolute(0x1040), feature("api", 0x104c)],
+  ] } },
+}, 0).rules;
+assert.deepEqual(rule.addresses, [0x10, 0x40]);
+assert.deepEqual([...rule.evidence], [[0x10, [0x18]], [0x40, [0x4c]]]);
+console.log("Capability evidence follows nested matches and uses rebased instruction addresses: passed");
+
 const mocks = moduleUrl(`
   export const workers = [];
   export const requests = [];
