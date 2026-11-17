@@ -100,8 +100,18 @@ fn bss_beyond_the_file_bytes_maps_as_zeros() -> anyhow::Result<()> {
 fn static_linux_syscalls_have_names_and_prototypes() -> anyhow::Result<()> {
     let mut session = DecompilerSession::from_elf(FIXTURE)?;
     let output = session.decompile_function(symbol("write_hello")?)?;
-    assert!(output.text.contains("linux_write(1,"), "{}", output.text);
+    let (result, _) = output
+        .text
+        .lines()
+        .find_map(|line| line.trim().split_once(" = linux_write(1,"))
+        .ok_or_else(|| anyhow::anyhow!("missing linux_write result in {}", output.text))?;
+    assert!(
+        output.text.contains(&format!("return {result};")),
+        "{}",
+        output.text
+    );
     assert!(!output.unknown_callees, "{:?}", output.warnings);
+    assert!(!output.incomplete, "{:?}", output.warnings);
     let entry = session.decompile_function(symbol("_start")?)?;
     assert!(entry.text.contains("linux_exit("), "{}", entry.text);
     Ok(())

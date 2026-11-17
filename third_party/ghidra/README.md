@@ -52,7 +52,8 @@ and asserts each original hook occurs exactly once before changing it:
   outside the conditional block being removed. Such a COPY passed validation
   but failed replacement with `Illegal op in iblock` (Go Vidar's heap reclamation).
 - `coreaction.cc`: extend ABI-aligned input containers in both directions so an
-  overlapping later stack input is not cut in half.
+  overlapping later stack input is not cut in half. Preserve a verified tail
+  call or resolved syscall result that reaches every normal return unchanged.
 - `jumptable.cc`: stop speculative table enumeration at an interior address in a
   different declared unwind range. Separate entries/cold fragments remain valid;
   truncation retains the engine's incomplete-analysis warning. For a wrapped

@@ -82,24 +82,21 @@ fn plt_and_iat_imports_have_platform_prototypes() -> anyhow::Result<()> {
             assert!(output.text.contains("GetTickCount()"), "{}", output.text);
         } else {
             assert!(output.text.contains("puts(__s)"), "{}", output.text);
-            assert!(output.text.contains("strlen(__s)"), "{}", output.text);
             assert!(output.text.contains("char *"), "{}", output.text);
+            let (result, _) = output
+                .text
+                .lines()
+                .find_map(|line| line.trim().split_once(" = strlen(__s);"))
+                .ok_or_else(|| anyhow::anyhow!("missing strlen result in {}", output.text))?;
+            assert!(
+                output.text.contains(&format!("return {result};")),
+                "{}",
+                output.text
+            );
         }
         assert!(!output.unknown_callees, "{:?}", output.warnings);
         assert!(!output.incomplete, "{:?}", output.warnings);
         assert!(output.text.contains("return"), "{}", output.text);
-        if !bytes.starts_with(b"MZ") {
-            // Without caller evidence a tail wrapper's return type can remain void.
-            // With its source contract, verify that x0 forwards the imported result.
-            session.set_signature(
-                symbol(bytes, "imported")?,
-                ValueType::U64,
-                &[ValueType::CharPointer],
-            )?;
-            let typed = session.decompile_function(symbol(bytes, "imported")?)?;
-            assert!(typed.text.contains("= strlen(param_1)"), "{}", typed.text);
-            assert!(!typed.text.contains("void imported"), "{}", typed.text);
-        }
     }
     Ok(())
 }
