@@ -379,11 +379,19 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
       {notes.comments(address).map((c, i) => <p key={i}><span className="fn-by">{c.source === "ai" ? "AI" : "You"}</span>{c.text}</p>)}
     </div>
   );
+  const capButton = (rule: CapaRule) => (
+    <button key={rule.name} className="cap" title={(rule.namespace ?? "") + " · click to show the match"} onClick={() => {
+      const instructions = new Set(f?.asm?.map(([at]) => at));
+      const matches = rule.addresses.filter((ad) => ad === address || instructions.has(ad));
+      const ad = matches.flatMap((site) => rule.evidence.get(site) ?? []).find((at) => instructions.has(at)) ?? matches[0];
+      if (ad !== undefined) { selfScroll.current = true; setFocus({ kind: "a", ad }); onCursor(ad); }
+    }}>{rule.name}</button>
+  );
 
   if (mobile) {
     const refCount = (callees?.length ?? 0) + (callers?.length ?? 0) + strings.length;
     // Capability chips scroll away with the code instead of pinning a row to the screen.
-    const capChips = rules.length > 0 && <div className="m-caps">{rules.map((r) => <span key={r.name} className="cap">{r.name}</span>)}</div>;
+    const capChips = rules.length > 0 && <div className="m-caps">{rules.map(capButton)}</div>;
     // A horizontal swipe on text moves between views; graphs and the listing keep the gesture for panning.
     const order: (CodeView | "refs")[] = ["c", "asm", "graph", "calls", "listing", "refs"];
     const swipeable = mTab === "c" || mTab === "asm" || mTab === "refs";
@@ -441,12 +449,6 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   }
 
   const railSize = inspector === "stack" ? Math.max(railWidth, 300) : railWidth;
-  const capButton = (r: CapaRule) => (
-    <button key={r.name} className="cap" title={(r.namespace ?? "") + " · click to show the match"} onClick={() => {
-      const ad = r.addresses.find((x) => f?.asm?.some((row) => row[0] === x));
-      if (ad !== undefined) { selfScroll.current = true; setFocus({ kind: "a", ad }); onCursor(ad); }
-    }}>{r.name}</button>
-  );
   return (
     <div className={"cockpit" + (wrap ? " wrap" : "")}>
       <div className="cp-head">
