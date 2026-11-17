@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Analysis } from "./types";
 import { revealIn } from "./workspace/panels";
+import { FunctionReferences } from "./views/FunctionReferences";
 
 const hex = (n: number) => "0x" + n.toString(16);
 const PAGE = 300;
@@ -70,7 +71,7 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
                   <small>{r ? `${r.length} caller${r.length === 1 ? "" : "s"}` : a.done ? "no callers" : ""}</small>
                   {isOpen && (
                     <div className="str-actions" onClick={(e) => e.stopPropagation()}>
-                      {r?.slice(0, 8).map((ad) => <button key={ad} onClick={() => onFn(ad, i.name)}>{label(ad)}</button>)}
+                      {r && <FunctionReferences addresses={r} limit={8} label={label} onSelect={(ad) => onFn(ad, i.name)} />}
                       {i.va > 0 && <button className="primary" onClick={() => (onBytes ?? onAddr)(i.va)}>View slot</button>}
                     </div>
                   )}
@@ -82,7 +83,7 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
                 <span className="imp-name">{i.name}</span>
                 {i.va > 0 && <button className="imp-slot" onClick={(e) => { e.stopPropagation(); (onBytes ?? onAddr)(i.va); }} title="Show the import slot in the hex view">{hex(i.va)}</button>}
                 <span className="addrs used">
-                  {r ? <>{r.slice(0, 6).map((ad) => <button key={ad} onClick={() => onFn(ad, i.name)}>{label(ad)}</button>)}{r.length > 6 && <small>+{r.length - 6}</small>}</>
+                  {r ? <FunctionReferences addresses={r} limit={6} label={label} onSelect={(ad) => onFn(ad, i.name)} />
                     : <small>{a.done ? "no callers found" : ""}</small>}
                 </span>
               </div>

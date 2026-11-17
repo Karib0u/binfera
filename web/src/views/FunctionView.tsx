@@ -34,6 +34,7 @@ function DecompileNotice({ a, address }: { a: Analysis; address: number }) {
 export type { Layout };
 
 const PEEK_LINES = 14, PEEK_WIDTH = 480, PEEK_HEIGHT = 340;
+const INLINE_CAPABILITIES = 3;
 
 /** A function at a glance, shown while hovering a link to it, without leaving the place being read. */
 function FnPeek({ a, address, rect, caps, display }: { a: Analysis; address: number; rect: DOMRect; caps: string[]; display: (t: string) => string | undefined }) {
@@ -343,6 +344,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
 
   const frameContent = <StackFrame frame={f?.frame} arch={a.arch} pending={!f} onWord={setWord} onInstruction={(ad) => { selfScroll.current = true; setFocus({ kind: "a", ad }); onCursor(ad); }} />;
 
+  const [expandedCapsFor, setExpandedCapsFor] = useState<number | null>(null);
   const [mTab, setMTab] = useState<CodeView | "refs">("c");
   const touch = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { setMTab((tab) => tab === "calls" ? "calls" : "c"); }, [address]);
@@ -449,6 +451,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   }
 
   const railSize = inspector === "stack" ? Math.max(railWidth, 300) : railWidth;
+  const remainingCaps = rules.length - INLINE_CAPABILITIES;
+  const capsExpanded = remainingCaps > 0 && expandedCapsFor === address;
   return (
     <div className={"cockpit" + (wrap ? " wrap" : "")}>
       <div className="cp-head">
@@ -457,18 +461,23 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
           {editing ? nameField : <h1 title={fnLabel(address, f?.name)} onDoubleClick={startRename}>{notes.aiName(address) && <span className={"ai-mark " + notes.aiName(address)} title={`Named by AI (${notes.aiName(address)})`}>✦ </span>}{fnLabel(address, f?.name)}</h1>}
           <code className="addr">{copied ? "Copied" : hex(address)}</code>
         </div>
-        {!mobile && (
-          <div className="cp-caps-inline">
-            {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
-            {rules.slice(0, 3).map(capButton)}
-            {rules.length > 3 && <button className="cap more" title={rules.slice(3).map((r) => r.name).join("\n")} onClick={onToggleRail}>+{rules.length - 3} more</button>}
-          </div>
+        <div className="cp-caps-inline">
+          {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
+          {!capsExpanded && rules.slice(0, INLINE_CAPABILITIES).map(capButton)}
+        </div>
+        {remainingCaps > 0 && (
+          <button type="button" className="cap" aria-expanded={capsExpanded}
+            aria-label={capsExpanded ? undefined : `+${remainingCaps} more capabilities`}
+            onClick={() => setExpandedCapsFor(capsExpanded ? null : address)}>
+            {capsExpanded ? "Show less" : `+${remainingCaps} more`}
+          </button>
         )}
         <span className="cp-spacer" />
         <button className="icon-btn" onClick={onComment} aria-label="Edit comment" title="Add or edit a comment (;)">;</button>
         <button className={"icon-btn star-btn" + (starred ? " on" : "")} onClick={onStar} aria-pressed={starred} aria-label="Star this function" title="Star this function (s)">{starred ? "★" : "☆"}</button>
         <button className="icon-btn" onClick={onToggleRail} aria-pressed={railOpen} aria-label="Function inspector" title="Show or hide the function inspector (])"><PanelIcon side="right" /></button>
       </div>
+      {capsExpanded && <div className="cp-caps-expanded">{rules.map(capButton)}</div>}
       {/* The same height with or without matches, so the code does not move from function to function. */}
       {mobile && <div className="cp-caps">
         {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
