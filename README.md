@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Karib0u/binfera/main/docs/images/logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Karib0u/binfera/main/docs/images/logo-light.png">
-    <img src="https://raw.githubusercontent.com/Karib0u/binfera/main/docs/images/logo-light.png" alt="Binfera" width="440">
-  </picture>
+  <img src="docs/images/logo.png" alt="Binfera" width="440">
 </p>
 
 **See what a binary does.** Decompiled C, capabilities mapped onto the code, and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
