@@ -3,6 +3,123 @@ use binfera::decompiler::{decompile_all, BatchEvent, BatchOptions, DecompileErro
 use std::collections::BTreeSet;
 
 const FIXTURE: &[u8] = include_bytes!("../../tests/decompiler/fixtures.dll");
+const ARM64_PE: &[u8] = include_bytes!("fixtures/aarch64_decompiler/windows.exe");
+
+#[test]
+fn batch_keeps_the_exported_arm64_import_wrapper() -> anyhow::Result<()> {
+    let address = 0x140001058;
+    let mut found = false;
+    decompile_all(ARM64_PE, &BatchOptions::default(), |event| {
+        match event {
+            BatchEvent::Start {
+                functions, names, ..
+            } => {
+                assert!(functions.contains(&address));
+                assert_eq!(names.get(&address).map(String::as_str), Some("imported"));
+            }
+            BatchEvent::Function(function) if function.address == address => {
+                assert_eq!(function.extra, Some(false));
+                assert!(function
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("GetTickCount()")));
+                found = true;
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+    assert!(found);
+    Ok(())
+}
+
+#[test]
+fn batch_skips_pe_forwarders_data_exports_and_unexported_stubs() -> anyhow::Result<()> {
+    let mut bytes = ARM64_PE.to_vec();
+    // Point the imported and ninth exports at a forwarder and a data value in .rdata.
+    let forwarder = b"KERNEL32.GetTickCount\0";
+    bytes[0x714..0x714 + forwarder.len()].copy_from_slice(forwarder);
+    bytes[0x730..0x734].copy_from_slice(&42u32.to_le_bytes());
+    bytes[0x104..0x108].copy_from_slice(&0x12au32.to_le_bytes()); // export directory size
+    bytes[0x1b0..0x1b4].copy_from_slice(&0x134u32.to_le_bytes()); // .rdata virtual size
+    bytes[0x640..0x644].copy_from_slice(&0x2114u32.to_le_bytes());
+    bytes[0x644..0x648].copy_from_slice(&0x2130u32.to_le_bytes());
+
+    let pe = goblin::pe::PE::parse(&bytes)?;
+    assert!(pe
+        .exports
+        .iter()
+        .any(|export| export.name == Some("imported")
+            && export.rva == 0x2114
+            && export.reexport.is_some()));
+    assert!(pe.exports.iter().any(|export| export.name == Some("ninth")
+        && export.rva == 0x2130
+        && export.reexport.is_none()));
+
+    // The entry point still calls the original stub even after removing its export.
+    let stub = 0x140001058;
+    let options = BatchOptions::default();
+    let (session, native) = options.open(&bytes)?;
+    assert!(native.functions.contains_key(&stub));
+    assert!(session.is_import_thunk(stub));
+    let excluded = [stub, 0x140002114, 0x140002130];
+    decompile_all(&bytes, &options, |event| {
+        match event {
+            BatchEvent::Start { functions, .. } => {
+                assert!(excluded.iter().all(|address| !functions.contains(address)));
+            }
+            BatchEvent::Function(function) => assert!(!excluded.contains(&function.address)),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn batch_keeps_an_x64_import_wrapper_with_an_unwind_entry() -> anyhow::Result<()> {
+    let mut bytes = FIXTURE.to_vec();
+    // Call the existing GetTickCount stub at RVA 0x1120 instead of calling through the IAT.
+    bytes[0x4eb..0x4f1].copy_from_slice(&[0xe8, 0x30, 0, 0, 0, 0x90]);
+    let stub = 0x1dca81120;
+    let options = BatchOptions::default();
+    for (with_unwind, compatible) in [(false, true), (true, true), (true, false)] {
+        if with_unwind {
+            // Append a RUNTIME_FUNCTION with the same empty unwind info as branches.
+            for (offset, value) in [(0x854, 0x1120u32), (0x858, 0x1126), (0x85c, 0x4004)] {
+                bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            bytes[0x124..0x128].copy_from_slice(&0x60u32.to_le_bytes()); // exception directory size
+            bytes[0x1e0..0x1e4].copy_from_slice(&0x60u32.to_le_bytes()); // .pdata virtual size
+        }
+        if !compatible {
+            bytes[0xa00] = 2; // version of an earlier record that compatibility recovery stops at
+        }
+        let (session, native) = options.open(&bytes)?;
+        assert!(native.functions.contains_key(&stub));
+        assert!(session.is_import_thunk(stub));
+        let mut found = false;
+        decompile_all(&bytes, &options, |event| {
+            match event {
+                BatchEvent::Start { functions, .. } => {
+                    assert_eq!(functions.contains(&stub), with_unwind);
+                }
+                BatchEvent::Function(function) if function.address == stub => {
+                    assert_eq!(function.extra, Some(false));
+                    assert!(function
+                        .text
+                        .as_deref()
+                        .is_some_and(|text| text.contains("GetTickCount()")));
+                    found = true;
+                }
+                _ => {}
+            }
+            Ok(())
+        })?;
+        assert_eq!(found, with_unwind);
+    }
+    Ok(())
+}
 
 fn stable_events(events: &[BatchEvent]) -> Result<Vec<serde_json::Value>, serde_json::Error> {
     events
@@ -24,6 +141,7 @@ fn recovery_snapshot_preserves_native_outputs_and_diagnostics() -> anyhow::Resul
     let directory = tempfile::tempdir()?;
     for bytes in [
         FIXTURE,
+        ARM64_PE,
         include_bytes!("fixtures/aarch64_decompiler/pie.elf").as_slice(),
         include_bytes!("fixtures/risc/thumb.elf").as_slice(),
         include_bytes!("fixtures/risc/mips.elf").as_slice(),
