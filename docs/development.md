@@ -53,6 +53,8 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 
 `cargo test --workspace` takes ~20 s. The slow acceptance and fuzz gates are `#[ignore]`d (about 383 s of a ~402 s suite); CI runs them on Linux with `--include-ignored`; on macOS and Windows it compiles them and runs every other test.
 
+Branch protection requires the `CI result` check. It waits for the web, Rust, determinism, and native decompiler jobs, fails if any required job fails or is cancelled, and accepts jobs skipped by the change filters. Require this check instead of individual matrix jobs, whose platform names are absent when the matrix is skipped.
+
 Before merge or release:
 
 ```bash
