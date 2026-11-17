@@ -1,5 +1,7 @@
 //! Process isolation for the native engine, with recovery performed by the parent.
-use super::{decompile_error, decompiler_options, Cli, CliError, E_CORRUPT_FILE};
+use super::{decompile_error, Cli, CliError, E_CORRUPT_FILE};
+use binfera::decompiler::{prepare_decompile_all_with_signature_jobs, BatchOptions};
+use binfera::parallel::Jobs;
 use clap::ValueEnum;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -102,7 +104,12 @@ fn run_stage(
     Ok(())
 }
 
-pub(super) fn run(bytes: &[u8], cli: &Cli) -> Result<bool, CliError> {
+pub(super) fn run(
+    bytes: &[u8],
+    cli: &Cli,
+    options: &BatchOptions,
+    signature_jobs: Jobs,
+) -> Result<bool, CliError> {
     if cli.shard.is_some() {
         return Err(error(
             "--jobs greater than 1 cannot be combined with --shard",
@@ -114,7 +121,7 @@ pub(super) fn run(bytes: &[u8], cli: &Cli) -> Result<bool, CliError> {
         .map_err(error)?;
     let cache = directory.path().join("recovery.bin");
     let started = std::time::Instant::now();
-    if !binfera::decompiler::prepare_decompile_all(bytes, &decompiler_options(cli), &cache)
+    if !prepare_decompile_all_with_signature_jobs(bytes, options, &cache, signature_jobs)
         .map_err(decompile_error)?
     {
         return Ok(false);

@@ -7,13 +7,17 @@ use crate::api::Format;
 use crate::extract::image::ImageFormat;
 use crate::extract::recovery::{Analysis, SeedKind};
 use crate::packing::Packing;
+use crate::parallel::Jobs;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod cache;
 mod graph;
 #[doc(hidden)]
-pub use cache::prepare as prepare_decompile_all;
+pub use cache::{
+    prepare as prepare_decompile_all,
+    prepare_with_signature_jobs as prepare_decompile_all_with_signature_jobs,
+};
 mod listings;
 mod options;
 mod selection;
@@ -21,6 +25,7 @@ use crate::image_info::unsupported_elf_cpu;
 pub use graph::{FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, Reference};
 use listings::{emit_data_only_elf, emit_managed_methods};
 pub use options::{BatchOptions, RetryPolicy};
+pub(super) use selection::needs_compatibility;
 
 pub type InstructionRow = (u64, String, String);
 
@@ -92,7 +97,18 @@ pub fn decompile_all(
     options: &BatchOptions,
     emit: impl FnMut(BatchEvent) -> Result<(), DecompileError>,
 ) -> Result<(), DecompileError> {
-    decompile_all_impl(bytes, options, None, emit)
+    decompile_all_with_signature_jobs(bytes, options, Jobs::SERIAL, emit)
+}
+
+/// Set the native PE startup budget for loading bundled compatibility signatures.
+#[doc(hidden)]
+pub fn decompile_all_with_signature_jobs(
+    bytes: &[u8],
+    options: &BatchOptions,
+    signature_jobs: Jobs,
+    emit: impl FnMut(BatchEvent) -> Result<(), DecompileError>,
+) -> Result<(), DecompileError> {
+    decompile_all_impl(bytes, options, None, signature_jobs, emit)
 }
 
 /// Use the invocation-local recovery snapshot created by `prepare_decompile_all`.
@@ -103,13 +119,14 @@ pub fn decompile_all_cached(
     path: &std::path::Path,
     emit: impl FnMut(BatchEvent) -> Result<(), DecompileError>,
 ) -> Result<(), DecompileError> {
-    decompile_all_impl(bytes, options, Some(path), emit)
+    decompile_all_impl(bytes, options, Some(path), Jobs::SERIAL, emit)
 }
 
 fn decompile_all_impl(
     bytes: &[u8],
     options: &BatchOptions,
     cached: Option<&std::path::Path>,
+    signature_jobs: Jobs,
     mut emit: impl FnMut(BatchEvent) -> Result<(), DecompileError>,
 ) -> Result<(), DecompileError> {
     let repaired = crate::extract::elf::without_corrupt_section_headers(bytes);
@@ -129,7 +146,7 @@ fn decompile_all_impl(
     let (mut session, analysis, rejected) = if let Some(path) = cached {
         cache::open(bytes, options, path)?
     } else {
-        let (mut session, native) = options.open(bytes)?;
+        let (mut session, native) = options.open_recovered(bytes, None, signature_jobs)?;
         let (analysis, rejected) = selection::select_analysis(bytes, native, &mut session)?;
         (session, analysis, rejected)
     };

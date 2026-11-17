@@ -39,13 +39,14 @@ impl BatchOptions {
 
     /// Recover the input and create its native session, applying explicit raw-code options.
     pub fn open(&self, bytes: &[u8]) -> Result<(DecompilerSession, Analysis), DecompileError> {
-        self.open_recovered(bytes, None)
+        self.open_recovered(bytes, None, Jobs::SERIAL)
     }
 
     pub(super) fn open_recovered(
         &self,
         bytes: &[u8],
         recovered: Option<Analysis>,
+        signature_jobs: Jobs,
     ) -> Result<(DecompilerSession, Analysis), DecompileError> {
         use crate::decompiler::{CallingConvention as C, DecompilerSession};
         let convention = match (self.format, self.os.as_deref().unwrap_or("auto")) {
@@ -86,10 +87,7 @@ impl BatchOptions {
                 Some(analysis) => {
                     DecompilerSession::from_recovered(bytes, self.arch.as_deref(), analysis)
                 }
-                None => DecompilerSession::from_bytes_with_arch_and_analysis(
-                    bytes,
-                    self.arch.as_deref(),
-                ),
+                None => DecompilerSession::open_bytes(bytes, self.arch.as_deref(), signature_jobs),
             }
         }
     }
