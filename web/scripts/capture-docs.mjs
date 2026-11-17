@@ -34,12 +34,12 @@ for (const tool of ["cwebp", "ffmpeg"]) {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The analysis is done and the panes have drawn: the status bar counts functions and nothing is pending. */
-async function ready(page) {
+async function ready(page, settle = 1500) {
   await page.waitForFunction(() => {
     const t = document.body.innerText;
     return / functions · /.test(t) && !/Decompiling|Analyzing|Loading…/.test(t);
   }, null, { timeout: 180_000 });
-  await pause(1500);
+  await pause(settle);
 }
 
 async function open(page, base, hash) {
@@ -89,8 +89,8 @@ async function glide(page, locator, { click = true, wait = 600 } = {}) {
   await el.scrollIntoViewIfNeeded();
   const box = await el.boundingBox();
   if (!box) throw new Error("nothing to click");
-  await page.mouse.move(box.x + Math.min(box.width / 2, 60), box.y + box.height / 2, { steps: 25 });
-  await pause(250);
+  await page.mouse.move(box.x + Math.min(box.width / 2, 60), box.y + box.height / 2, { steps: 18 });
+  await pause(150);
   if (click) await page.mouse.click(box.x + Math.min(box.width / 2, 60), box.y + box.height / 2);
   await pause(wait);
 }
@@ -98,6 +98,10 @@ async function glide(page, locator, { click = true, wait = 600 } = {}) {
 // ----- what to capture -------------------------------------------------------------------------
 
 const WANNACRY = "#demo=wannacry";
+/** One C pane beside the function list, so the agent panel can take the space. */
+const AGENT_VIEW = `${WANNACRY}&fn=0x401fe7&view=c`;
+/** The agent panel's width, as the workspace stores it after a drag (it allows 300 to 720). */
+const WIDE_AGENT = `try { localStorage.setItem("binfera-ui:agent-width", "640"); } catch {}`;
 
 /** Stills, light theme unless `dark`. `mock` runs in the agent design mode. */
 const shots = [
@@ -149,9 +153,9 @@ const shots = [
     },
   },
   {
-    name: "ai", mock: true, about: "Claude Code's triage of WannaCry, replayed in the Agent panel",
+    name: "ai", mock: true, wide: true, about: "Claude Code's triage of WannaCry, replayed in the Agent panel",
     go: async (p, b) => {
-      await open(p, b, `${WANNACRY}&fn=0x401fe7&view=c+graph`);
+      await open(p, b, AGENT_VIEW);
       await agentTriage(p);
       // Start of the answer: the verdict, under the tool calls that back it.
       await p.evaluate(() => {
@@ -166,9 +170,9 @@ const shots = [
     },
   },
   {
-    name: "report", mock: true, about: "The report the agent saved, with clickable function addresses",
+    name: "report", mock: true, wide: true, about: "The report the agent saved, with clickable function addresses",
     go: async (p, b) => {
-      await open(p, b, `${WANNACRY}&fn=0x401fe7&view=c+graph`);
+      await open(p, b, AGENT_VIEW);
       await p.getByRole("button", { name: "Agent", exact: true }).click();
       await clickText(p, "button, [role=tab]", "Artifacts");
       await pause(800);
@@ -195,35 +199,38 @@ const videos = [
     name: "tour", gif: true, about: "From a sample to its decompiled code",
     go: async (p, b) => {
       await p.goto(`${b}/`);
-      await pause(1500);
-      await glide(p, p.locator("button.lp-tile[title='WannaCry']"));
+      await pause(700);
+      await glide(p, p.locator("button.lp-tile[title='WannaCry']"), { wait: 300 });
       await glide(p, p.locator("button.lp-start"), { wait: 0 });
-      await ready(p);
-      await pause(1800);
+      // The analysis is real but its wait is not worth watching: it plays at 4x.
+      p.fast();
+      await ready(p, 300);
+      p.normal();
+      await pause(1000);
       // Overview → a capability → the function that matched it.
       const row = p.locator("button.caprow-head", { hasText: "create service" }).first();
       await row.scrollIntoViewIfNeeded();
-      await pause(900);
-      await glide(p, row, { wait: 1200 });
-      await glide(p, p.locator(".caprow a, .caprow button", { hasText: "FUN_00401ce8" }), { wait: 2500 });
+      await pause(500);
+      await glide(p, row, { wait: 900 });
+      await glide(p, p.locator(".caprow a, .caprow button", { hasText: "FUN_00401ce8" }), { wait: 1800 });
       // Search everything at once.
-      await p.mouse.move(VIEWPORT.width / 2, 28, { steps: 20 });
+      await p.mouse.move(VIEWPORT.width / 2, 28, { steps: 15 });
       await palette(p, "wnry");
-      await pause(1600);
+      await pause(1200);
       await p.keyboard.press("Escape");
       // Narrow the function list, then open the main routine.
       await glide(p, p.getByPlaceholder("Filter functions"), { wait: 200 });
-      await p.keyboard.type("1fe7", { delay: 120 });
-      await pause(700);
-      await glide(p, p.locator("span.fn", { hasText: "FUN_00401fe7" }), { wait: 3000 });
+      await p.keyboard.type("1fe7", { delay: 90 });
+      await pause(400);
+      await glide(p, p.locator("span.fn", { hasText: "FUN_00401fe7" }), { wait: 2200 });
     },
   },
   {
-    name: "agent", mock: true, about: "Triage this binary, answered by Claude Code through Binfera's tools",
+    name: "agent", mock: true, wide: true, about: "Triage this binary, answered by Claude Code through Binfera's tools",
     go: async (p, b) => {
-      await open(p, b, `${WANNACRY}&fn=0x401fe7&view=c+graph`);
+      await open(p, b, AGENT_VIEW);
       p.startHere();
-      await pause(800);
+      await pause(600);
       await agentTriage(p, { visible: true });
       await pause(2500);
     },
@@ -255,6 +262,7 @@ try {
   for (const shot of pick(shots)) {
     const base = await serve(shot.mock ? "mock" : "development");
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: shot.dark ? "dark" : "light" });
+    if (shot.wide) await context.addInitScript(WIDE_AGENT);
     const page = await context.newPage();
     try {
       await shot.go(page, base);
@@ -278,11 +286,17 @@ try {
     const dir = join(temp, video.name);
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, colorScheme: "light", recordVideo: { dir, size: VIEWPORT } });
     await context.addInitScript(CURSOR);
+    if (video.wide) await context.addInitScript(WIDE_AGENT);
     const page = await context.newPage();
     // Recordings start when the page does; a video can skip its own loading with `page.startHere()`.
     const opened = Date.now();
     let skip = 0.6;
-    page.startHere = () => { skip = (Date.now() - opened) / 1000; };
+    const at = () => (Date.now() - opened) / 1000;
+    page.startHere = () => { skip = at(); };
+    // `page.fast()` … `page.normal()` marks a stretch to play at 4x.
+    const fast = [];
+    page.fast = () => fast.push([at(), null]);
+    page.normal = () => { fast.at(-1)[1] = at(); };
     let ok = true;
     try {
       await video.go(page, base);
@@ -294,7 +308,7 @@ try {
     await context.close();
     if (!ok) continue;
     const [webm] = (await readdir(dir)).filter((f) => f.endsWith(".webm"));
-    await encode(join(dir, webm), video.name, skip, video.gif);
+    await encode(join(dir, webm), video.name, skip, fast, video.gif);
     console.log(`${video.name}.mp4${video.gif ? ` / ${video.name}.gif` : ""}  ${video.about}`);
   }
 } finally {
@@ -305,13 +319,23 @@ try {
 }
 
 /** MP4 for the docs site; GIF for the README, since GitHub does not play videos from the repository. */
-async function encode(webm, name, skip, gif) {
+async function encode(webm, name, skip, fast, gif) {
   const ff = (...a) => {
     const r = spawnSync("ffmpeg", ["-v", "error", "-y", ...a]);
     if (r.status !== 0) throw new Error(String(r.stderr));
   };
-  const from = skip.toFixed(2);
-  ff("-ss", from, "-i", webm, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "28", "-preset", "slow", "-movflags", "+faststart", "-an", join(out, `${name}.mp4`));
+  // Cut the recording into pieces at the marks, speed up the marked ones, and join them again.
+  const cuts = [[skip, null, 1]];
+  for (const [a, b] of fast) {
+    const last = cuts.at(-1);
+    last[1] = a;
+    cuts.push([a, b, 4], [b, null, 1]);
+  }
+  const pieces = cuts.filter(([a, b]) => b === null || b > a + 0.05);
+  const graph = pieces.map(([a, b, speed], i) =>
+    `[0:v]trim=start=${a.toFixed(2)}${b === null ? "" : `:end=${b.toFixed(2)}`},setpts=(PTS-STARTPTS)/${speed}[v${i}]`).join(";")
+    + `;${pieces.map((_, i) => `[v${i}]`).join("")}concat=n=${pieces.length}:v=1:a=0[out]`;
+  ff("-i", webm, "-filter_complex", graph, "-map", "[out]", "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "28", "-preset", "slow", "-movflags", "+faststart", "-an", join(out, `${name}.mp4`));
   if (!gif) return;
   const palette = join(tmpdir(), `${name}-palette.png`);
   const scale = "fps=10,scale=960:-1:flags=lanczos";
