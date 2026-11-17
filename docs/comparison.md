@@ -57,6 +57,8 @@ In the C diff, `FUN_` names go through the function match, other address names a
 
 A comparison is one workspace with four views:
 
+![Two builds of the example compared: a function that no longer calls IsDebuggerPresent, as a split diff of its decompiled C](images/compare.webp)
+
 - **Changes** opens first: the comparison in a sentence, then everything that differs, most telling first, each in a few plain words. Capabilities rank above imports, then new callees, strings and plain code. Choosing one shows its difference as a split or unified diff of its decompiled C and its assembly, with unchanged lines folded, plus its graph and a **Why** tab holding the evidence. A function named in a diff can be followed to its own difference, and clicking a block in the graph goes to it in the assembly. **All changes** puts every difference on one page, each computed as it comes into view, and **File details** holds the file-level facts.
 - **A** and **B** are the whole single-file workspace for that file, analyzed the first time it is opened. The function list marks what changed, and each function says what happened to it.
 - **A | B** is both side by side, each with its own place, Back and Forward. **Linked** moves the other side to the matching function.

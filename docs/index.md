@@ -2,7 +2,9 @@
 
 **See what a binary does.** Binfera shows decompiled C, the capabilities a file implements mapped onto its code, and what changed between two builds, for Windows, Linux and macOS executables. Analysis runs on your machine: in a browser tab, a desktop app, the command line, or through your AI agent.
 
-![A decompiled function beside its control-flow graph, with the capabilities it matches](images/code.webp)
+<video src="images/tour.mp4" poster="images/code.webp" autoplay loop muted playsinline controls style="width:100%"></video>
+
+The [tour](tour.md) shows every view on a real sample.
 
 Binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra's C++ core and SLEIGH, no JVM). Capability matches come from a native Rust implementation of [Mandiant capa](https://github.com/mandiant/capa) that runs the unmodified capa rules.
 
@@ -32,4 +34,5 @@ Binfera is built for the first hours with an unknown file, not as a replacement 
 
 - [Installation](installation.md): the desktop app, the command-line tool, or a build from source.
 - [Quickstart](getting-started.md): a first analysis in each interface.
+- [Tour](tour.md): every view, on the WannaCry demo.
 - [Benchmarks](benchmarks.md): speed against Ghidra and agreement with capa, with the commands to reproduce them.

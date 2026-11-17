@@ -2,6 +2,8 @@
 
 `binfera` is a plain command-line tool: no server, no network. Output is JSON with `-j`, and the exit status says what happened, so it fits a shell script or a CI job. For the AI agent server, see [Binfera MCP server](mcp.md).
 
+![binfera in a terminal: the capability report for WannaCry, one function decompiled to C, then all 134 functions decompiled](images/cli.gif)
+
 ## Recipes
 
 ```sh

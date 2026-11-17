@@ -4,7 +4,7 @@
 
 **See what a binary does.** Decompiled C, capabilities mapped onto the code, and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
 
-![A decompiled function beside its control-flow graph, with the capabilities it matches](docs/images/code.webp)
+![Opening the WannaCry demo: the overview, a capability, the function behind it, search and the function list](docs/images/tour.gif)
 
 binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra's C++ core and SLEIGH, no JVM). The browser build runs both as WebAssembly in Web Workers, so a sample never leaves the page and there is no backend. Capability matches come from a native Rust implementation of [Mandiant capa](https://github.com/mandiant/capa) that runs the unmodified capa rules.
 
@@ -31,9 +31,38 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 - **Bring your own AI agent.** An [MCP server](docs/mcp.md) lets Claude Code, Codex or any MCP client name functions, comment code and save reports with evidence. binfera runs no model, and every agent run can be undone.
 - **Local by design.** Nothing is uploaded; the static site can be served from any host.
 
-| Overview | Compare two builds | Work with an AI agent |
-|---|---|---|
-| ![Capabilities grouped by ATT&CK tactic](docs/images/overview.webp) | ![Changed functions between two builds](docs/images/compare.webp) | ![Claude Code working on a file in the Agent panel](docs/images/ai.webp) |
+## A closer look
+
+Every picture is the WannaCry demo from [binfera.io](https://binfera.io), so you can open it and follow along. The [tour](https://docs.binfera.io/tour/) walks through each view.
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/images/overview.webp"><img src="docs/images/overview.webp" alt="The overview: first look, file map and capabilities"></a><br><b>Overview.</b> What the file is, how it was built and packed, and its capabilities by ATT&CK tactic.</td>
+    <td width="50%"><a href="docs/images/capabilities.webp"><img src="docs/images/capabilities.webp" alt="A capability with its ATT&CK and MBC ids and the functions that match it"></a><br><b>Capabilities on the code.</b> ATT&CK and MBC ids, and the functions behind each match.</td>
+  </tr>
+  <tr>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/code-dark.webp"><img src="docs/images/code.webp" alt="Decompiled C beside the control-flow graph"></picture><br><b>Decompiled C and the graph.</b> C, assembly, listing, graphs, hex, strings and imports, side by side.</td>
+    <td><a href="docs/images/callgraph.webp"><img src="docs/images/callgraph.webp" alt="The call graph of the main routine with capability counts"></a><br><b>Call graph.</b> Callers and callees, with the capabilities each one carries.</td>
+  </tr>
+  <tr>
+    <td><a href="docs/images/hex.webp"><img src="docs/images/hex.webp" alt="The resource-extraction function beside the embedded ZIP in hex"></a><br><b>Code and bytes.</b> The function that loads a resource, beside the ZIP it extracts.</td>
+    <td><a href="docs/images/search.webp"><img src="docs/images/search.webp" alt="One search across capabilities, imports, strings and decompiled code"></a><br><b>Search everything.</b> Functions, capabilities, imports, strings and code in one list.</td>
+  </tr>
+  <tr>
+    <td><a href="docs/images/compare.webp"><img src="docs/images/compare.webp" alt="Two builds compared, as a split diff of decompiled C"></a><br><b>Compare two builds.</b> Every change ranked, down to the changed lines.</td>
+    <td><a href="docs/images/archive.webp"><img src="docs/images/archive.webp" alt="A password-protected zip unlocked with the usual password"></a><br><b>Archives.</b> Zip and 7z open in place, with the usual passwords tried for you.</td>
+  </tr>
+</table>
+
+### With your own AI agent
+
+In the desktop app, **Agent** runs your own Claude Code or Codex through Binfera's tools. Below is a real Claude Code triage of the same sample: it read the overview and the key functions, named and commented them, and answered with addresses you can click. Then it saved a report with evidence. Every run can be undone.
+
+| The triage, in the Agent panel | The report it saved |
+|---|---|
+| ![Claude Code's triage of WannaCry in the Agent panel, with the functions it named](docs/images/ai.webp) | ![The analysis report Claude Code saved, open in Artifacts](docs/images/report.webp) |
+
+[Watch the run](https://docs.binfera.io/mcp/#binfera-desktop) (20 seconds).
 
 ## How it compares
 
@@ -86,6 +115,8 @@ For Claude Code, Codex or any MCP client, with nothing but the command-line tool
 Everything the agent saves is kept in a local project database, and the desktop app opens the same one, so you can review an agent's work there later. See [Binfera MCP server](docs/mcp.md) for the tools and limits, and [function emulation](docs/emulation.md).
 
 ### 4. In a script or CI
+
+![binfera in a terminal: the capability report for WannaCry, one function decompiled to C, then all 134 functions decompiled](docs/images/cli.gif)
 
 ```sh
 binfera sample.exe -j -q | jq -r '.rules | keys[]'   # capabilities, one per line

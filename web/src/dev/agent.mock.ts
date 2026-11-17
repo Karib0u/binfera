@@ -1,20 +1,9 @@
-// Development only (`vite --mode mock`): an agent that answers with a scripted turn, tool calls included.
+// Development only (`vite --mode mock`): an agent that replays a recorded run, tool calls included.
 import type { AgentClient, AgentEvent, ModelInfo } from "../agent/types";
+import replay from "./agent-replay.json";
 
-const script: [number, AgentEvent][] = [
-  [200, { kind: "session", id: "mock-session" }],
-  [400, { kind: "text", text: "I'll start with the overview, then look at the entry function." }],
-  [300, { kind: "tool", id: "t1", name: "get_overview", input: { project_id: "sha256:ab12" }, status: "running", output: null }],
-  [700, { kind: "tool", id: "t1", name: "get_overview", input: { project_id: "sha256:ab12" }, status: "done", output: "{\n  \"format\": \"Mach-O\",\n  \"arch\": \"x86-64\",\n  \"functions\": 50\n}" }],
-  [200, { kind: "tool", id: "t2", name: "get_function", input: { project_id: "sha256:ab12", address: "0x100000978" }, status: "running", output: null }],
-  [900, { kind: "tool", id: "t2", name: "get_function", input: { project_id: "sha256:ab12", address: "0x100000978" }, status: "done", output: "int entry(int argc, char **argv) { … }" }],
-  [200, { kind: "tool", id: "t3", name: "apply_annotations", input: { renames: 3, comments: 4 }, status: "running", output: null }],
-  [500, { kind: "tool", id: "t3", name: "apply_annotations", input: { renames: 3, comments: 4 }, status: "done", output: "{\"run_id\":\"run-triage-3f2a\",\"applied\":7}" }],
-  [300, { kind: "text", text: "This is the **x86-64 slice of Apple's `ls`**. The function at 0x2101dc does arithmetic, the string at 0x2001c8 is data, and `0x4000` maps to nothing with `fts_read`.\n\n- No network imports\n- Reads extended attributes and ACLs\n\nStatic analysis does not prove runtime behaviour." }],
-  [300, { kind: "tool", id: "t4", name: "save_report", input: { title: "Static triage of ls" }, status: "done", output: "{\"version\":2,\"title\":\"Static triage of ls\"}" }],
-  [100, { kind: "usage", input: 48200, output: 1300, cost: 0.12 }],
-  [100, { kind: "done" }],
-];
+// A real Claude Code triage of the WannaCry demo, recorded and converted by scripts/agent-replay.mjs.
+const script = replay.events as [number, AgentEvent][];
 
 const levels = ["low", "medium", "high", "xhigh", "max"];
 const models: Record<string, ModelInfo[]> = {
