@@ -20,13 +20,24 @@ fn options_key(options: &BatchOptions) -> String {
 /// Returns false for inputs handled by the serial managed/data-only paths.
 #[doc(hidden)]
 pub fn prepare(bytes: &[u8], options: &BatchOptions, path: &Path) -> Result<bool, DecompileError> {
+    prepare_with_signature_jobs(bytes, options, path, Jobs::SERIAL)
+}
+
+/// Load bundled compatibility signatures with the parent's startup budget.
+#[doc(hidden)]
+pub fn prepare_with_signature_jobs(
+    bytes: &[u8],
+    options: &BatchOptions,
+    path: &Path,
+    signature_jobs: Jobs,
+) -> Result<bool, DecompileError> {
     options.validate()?;
     if crate::extract::dotnet::looks_like_dotnet_pe(bytes) || unsupported_elf_cpu(bytes).is_some() {
         return Ok(false);
     }
     let repaired = crate::extract::elf::without_corrupt_section_headers(bytes);
     let bytes = repaired.as_deref().unwrap_or(bytes);
-    let (mut session, native) = options.open(bytes)?;
+    let (mut session, native) = options.open_recovered(bytes, None, signature_jobs)?;
     let mut output = BufWriter::new(std::fs::File::create(path).map_err(error)?);
     output.write_all(MAGIC).map_err(error)?;
     output.write_all(&Sha256::digest(bytes)).map_err(error)?;
@@ -65,7 +76,7 @@ pub(super) fn open(
     }
     let native: Analysis =
         bincode::serde::decode_from_std_read(&mut input, config()).map_err(error)?;
-    let (mut session, native) = options.open_recovered(bytes, Some(native))?;
+    let (mut session, native) = options.open_recovered(bytes, Some(native), Jobs::SERIAL)?;
     let compatible: bool =
         bincode::serde::decode_from_std_read(&mut input, config()).map_err(error)?;
     let (analysis, rejected) = if compatible {

@@ -161,6 +161,8 @@ struct Cli {
     /// With --decompile-all, use up to N native worker processes, capped at
     /// 16 and the available cores [default for decompilation: 1]. Recovery is
     /// prepared once; function records stream as workers finish.
+    /// Native x86/x64 PE startup uses up to N threads to load bundled signatures
+    /// [default: available cores, capped by the number of databases].
     #[arg(long = "jobs", value_name = "N", value_parser = parse_jobs, global = true)]
     jobs: Option<Jobs>,
 
@@ -1196,13 +1198,22 @@ fn run_decompile_all(_: &[u8], _: &Cli) -> Result<(), CliError> {
 /// Serialize the library's batch events as NDJSON for native and browser callers.
 #[cfg(feature = "decompiler")]
 fn run_decompile_all(bytes: &[u8], cli: &Cli) -> Result<(), CliError> {
-    use binfera::decompiler::{decompile_all, decompile_all_cached, DecompileError};
+    use binfera::decompiler::{
+        decompile_all_cached, decompile_all_with_signature_jobs, DecompileError,
+    };
     use std::io::Write;
+    let options = decompiler_options(cli);
+    let signature_jobs = if cfg!(target_arch = "wasm32") || !cli.decompile_retry.is_empty() {
+        Jobs::SERIAL
+    } else {
+        let available = Jobs::available();
+        cli.jobs.unwrap_or(available).min(available)
+    };
     #[cfg(not(target_arch = "wasm32"))]
     if cli.decompile_cache.is_none()
         && cli.decompile_retry.is_empty()
         && cli.jobs.is_some_and(|jobs| jobs.get() > 1)
-        && decompile_workers::run(bytes, cli)?
+        && decompile_workers::run(bytes, cli, &options, signature_jobs)?
     {
         return Ok(());
     }
@@ -1220,8 +1231,8 @@ fn run_decompile_all(bytes: &[u8], cli: &Cli) -> Result<(), CliError> {
             .map_err(|e| DecompileError::Output(e.to_string()))
     };
     match &cli.decompile_cache {
-        Some(path) => decompile_all_cached(bytes, &decompiler_options(cli), path, emit),
-        None => decompile_all(bytes, &decompiler_options(cli), emit),
+        Some(path) => decompile_all_cached(bytes, &options, path, emit),
+        None => decompile_all_with_signature_jobs(bytes, &options, signature_jobs, emit),
     }
     .map_err(decompile_error)
 }

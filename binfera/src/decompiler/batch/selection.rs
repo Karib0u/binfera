@@ -1,7 +1,7 @@
 //! Reconcile compatibility and native function discovery for batch decompilation.
 use super::*;
 
-pub(super) fn needs_compatibility(analysis: &Analysis) -> bool {
+pub(in crate::decompiler) fn needs_compatibility(analysis: &Analysis) -> bool {
     analysis.instructions.len() <= 1_000_000
         && !matches!(
             analysis.image.format,

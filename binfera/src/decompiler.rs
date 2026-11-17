@@ -22,14 +22,15 @@ use crate::extract::recovery::flirt::{self, Signatures};
 use crate::extract::recovery::{self, Analysis};
 use crate::fid;
 use crate::golang::{self, GoBinary};
+use crate::parallel::{AnalysisOptions, Jobs};
 use crate::rtti;
 use crate::target::{Abi, Compiler, TargetProfile};
 
 mod batch;
 pub use batch::{
-    decompile_all, decompile_all_cached, prepare_decompile_all, BatchEvent, BatchFunction,
-    BatchOptions, FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, InstructionRow, Reference,
-    RetryPolicy,
+    decompile_all, decompile_all_cached, decompile_all_with_signature_jobs, prepare_decompile_all,
+    prepare_decompile_all_with_signature_jobs, BatchEvent, BatchFunction, BatchOptions,
+    FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, InstructionRow, Reference, RetryPolicy,
 };
 
 mod candidates;
@@ -446,12 +447,20 @@ impl DecompilerSession {
         bytes: &[u8],
         arch: Option<&str>,
     ) -> Result<(Self, Analysis), DecompileError> {
+        Self::open_bytes(bytes, arch, Jobs::SERIAL)
+    }
+
+    fn open_bytes(
+        bytes: &[u8],
+        arch: Option<&str>,
+        signature_jobs: Jobs,
+    ) -> Result<(Self, Analysis), DecompileError> {
         if crate::extract::looks_like_macho(bytes) {
             Self::open_macho(bytes, arch)
         } else if bytes.starts_with(b"\x7fELF") {
             Self::open_elf(bytes)
         } else {
-            Self::open_pe(bytes)
+            Self::open_pe_recovered(bytes, None, signature_jobs)
         }
     }
 
@@ -485,16 +494,13 @@ impl DecompilerSession {
     /// Parse and recover once. Native SLEIGH, not iced-x86, translates the
     /// requested function. Existing callers can avoid recovery via from_analysis.
     pub fn from_pe(bytes: &[u8]) -> Result<Self, DecompileError> {
-        Self::open_pe(bytes).map(|(session, _)| session)
-    }
-
-    fn open_pe(bytes: &[u8]) -> Result<(Self, Analysis), DecompileError> {
-        Self::open_pe_recovered(bytes, None)
+        Self::open_pe_recovered(bytes, None, Jobs::SERIAL).map(|(session, _)| session)
     }
 
     fn open_pe_recovered(
         bytes: &[u8],
         recovered: Option<Analysis>,
+        signature_jobs: Jobs,
     ) -> Result<(Self, Analysis), DecompileError> {
         let started = Instant::now();
         // A malformed import directory only costs the imports, with a warning.
@@ -562,6 +568,15 @@ impl DecompilerSession {
             }
             session.apply_dwarf(&analysis);
             return Ok((session, analysis));
+        }
+        if !cfg!(target_arch = "wasm32")
+            && !signature_jobs.is_serial()
+            && !imports_skipped
+            && batch::needs_compatibility(&analysis)
+        {
+            // Parse the bundled databases together before either path needs the shared CRT.
+            // Compatibility recovery still reports any error from its cached load.
+            let _ = Signatures::embedded_with_options(&AnalysisOptions::with_jobs(signature_jobs));
         }
         let wide = convention.wide();
         let signatures =
@@ -1250,7 +1265,7 @@ impl DecompilerSession {
         } else if bytes.starts_with(b"\x7fELF") {
             Self::open_elf_recovered(bytes, Some(analysis))
         } else {
-            Self::open_pe_recovered(bytes, Some(analysis))
+            Self::open_pe_recovered(bytes, Some(analysis), Jobs::SERIAL)
         }
     }
 
