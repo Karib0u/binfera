@@ -20,7 +20,7 @@ All downloads are on the [Releases page](https://github.com/Karib0u/binfera/rele
     irm https://binfera.io/install.ps1 | iex
     ```
 
-The script downloads the archive for your machine, checks it against the release's `SHA256SUMS`, and installs to `~/.binfera/bin` (`%LOCALAPPDATA%\binfera\bin` on Windows). Nothing outside that folder is touched. Add the folder to your `PATH` as the last line of the output says.
+The script downloads the archive for your machine, checks it against the release's `SHA256SUMS`, and installs to `~/.binfera/bin` (`%LOCALAPPDATA%\binfera\bin` on Windows). Nothing else is installed. On macOS and Linux, add the folder to your `PATH` as the output says; on Windows the script adds it to your user `PATH`.
 
 | Variable | Effect |
 |---|---|
@@ -45,7 +45,7 @@ Download the installer for your system from the [latest release](https://github.
 |---|---|
 | macOS | `.dmg` (Apple silicon or Intel) |
 | Windows | `.exe` (NSIS) or `.msi` |
-| Linux | `.deb`, `.rpm` or `.AppImage` |
+| Linux x86-64 | `.deb`, `.rpm` or `.AppImage` |
 
 ## Code signing
 
@@ -59,7 +59,7 @@ Binfera is a malware analysis tool: it ships capa's detection rules and FLIRT si
 
 ## Build from source
 
-You need Rust 1.87 or newer, a C++ toolchain and git (zlib on macOS and Linux, Visual Studio Build Tools on Windows).
+You need Rust 1.89 or newer, a C++ toolchain and git (zlib on macOS and Linux, Visual Studio Build Tools on Windows).
 
 ```sh
 git clone https://github.com/Karib0u/binfera.git

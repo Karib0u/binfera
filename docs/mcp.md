@@ -42,7 +42,14 @@ When both analyses are ready, functions the signature matcher identified as libr
 
 ## Binfera Desktop
 
-The desktop app opens the same database. An **AI** view in the left rail (next to Overview, Code and Data) has three sections: **Activity** (runs with **Undo**, recent changes), **Reports**, and **Connect** (commands to connect an MCP client, and example requests). Names, variable names and comments an agent saves appear in the existing views within about two seconds. Your own renames, comments and stars are written to the database as human edits, which no agent run can replace. Existing local names, comments and stars are imported once. Press `;` to add or edit a comment at the cursor, or use the context menu. Empty comments remove the annotation. Cmd/Ctrl+Z and the More menu undo your own edits for the current workspace session; text fields keep their normal undo behavior. Browser builds keep these notes in localStorage.
+The desktop app opens the same database. **Agent** (top right, or Cmd/Ctrl+J) opens a panel with two tabs:
+
+- **Chat** runs your own Claude Code or Codex on the open file, if it is installed and signed in. Each turn is one non-interactive run of the agent's command-line tool with `binfera mcp` attached for that run only, so your agent configuration is never edited. The composer picks the agent, model and reasoning level from the agent's own list. Nothing starts until the panel is first opened.
+- **Artifacts** lists agent runs with **Undo**, recent changes and saved reports. **Use another agent** gives the commands to connect OpenCode, Pi or another MCP client.
+
+Names, variable names and comments an agent saves appear in the existing views within about two seconds.
+
+Your own renames, comments and stars are written to the database as human edits, which no agent run can replace. Existing local names, comments and stars are imported once. Press `;` to add or edit a comment at the cursor, or use the context menu. Empty comments remove the annotation. Cmd/Ctrl+Z and the More menu undo your own edits for the current workspace session; text fields keep their normal undo behavior. Browser builds keep these notes in localStorage.
 
 ## Known limits
 
@@ -52,7 +59,3 @@ The desktop app opens the same database. An **AI** view in the left rail (next t
 - `open_binary` accepts any readable file path the agent supplies; rely on the MCP client's tool permissions.
 - Capability matching uses the rules built into the binary. To use your own, copy or fetch them to `<data dir>/rules` (`binfera fetch-rules "<data dir>/rules"`) or set `BINFERA_RULES_DIR`, because the server may start from any directory.
 - The protocol layer is a small hand-written JSON-RPC implementation rather than `rmcp`, to avoid an async runtime in the CLI; tools and structured results are supported.
-
-## Deferred decompilation retries
-
-The engine's decompilation stream announces supplied function names in `start.names`, before bodies are available. Resource-limited attempts retain assembly, calls, references and their name with `retry_pending: true`. `settled` marks completion of ordinary attempts; longer retry attempts can then emit replacement records before `done`. The MCP index uses the last record for each address, including its file offset and updated references, and falls back to inventory names when a function record has none. Existing cached streams without these additive fields remain readable.

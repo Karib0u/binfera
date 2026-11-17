@@ -201,8 +201,8 @@ npm run tauri build       # installers in src-tauri/target/release/bundle/
 ```
 
 - The webview never chooses a command line: `run_engine` only accepts the argument shapes `run.native.ts` builds (`validate_args` in `src-tauri/src/engine.rs`, with tests: `cargo test` there), and the app ships a restrictive CSP (`tauri.conf.json`).
-- Windows builds have no decompiler: `binfera-ghidra/build.rs` builds it on Linux and macOS only, so `prepare-desktop.sh` leaves the feature off there and the UI reports the decompiler as unavailable.
-- `.github/workflows/desktop.yml` builds the installers for macOS (arm64, x64), Linux and Windows. It runs when triggered by hand, and `release.yml` calls it for every `v*` tag.
+- Every platform includes the decompiler: `binfera-ghidra/build.rs` builds it natively on Linux, macOS and Windows (MSVC), so `prepare-desktop.sh` always enables the feature.
+- `.github/workflows/desktop.yml` builds the installers for macOS (arm64, x64), Linux x64 and Windows x64. It runs when triggered by hand, and `release.yml` calls it for every `v*` tag.
 - The macOS app and disk images are signed and notarised. The Windows installers are not signed, so SmartScreen warns on first run.
 
 ## Analyst notes
