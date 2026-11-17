@@ -2,9 +2,9 @@
 
 ## Setup
 
-Build and run: Rust 1.87+ and the rules submodule.
+Build and run: Rust 1.89+ and the rules submodule.
 
-Development uses Rust 1.99.1, pinned in `rust-toolchain.toml` together with rustfmt, Clippy and the WebAssembly target. Rustup selects and installs these when running Rust commands from the checkout. Normal CI and release jobs use the same version; update their pins with the toolchain file. The packages still support Rust 1.87, which the compatibility jobs check independently.
+Development uses Rust 1.99.1, pinned in `rust-toolchain.toml` together with rustfmt, Clippy and the WebAssembly target. Rustup selects and installs these when running Rust commands from the checkout. Normal CI and release jobs use the same version; update their pins with the toolchain file. The packages still support Rust 1.89 (`rust-version` in `Cargo.toml`), which the `msrv` job checks independently.
 
 ```bash
 git clone https://github.com/Karib0u/binfera.git
@@ -51,7 +51,9 @@ cargo test --workspace
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-`cargo test --workspace` takes ~20 s. The slow acceptance and fuzz gates are `#[ignore]`d (about 383 s of a ~402 s suite); CI runs them on all three platforms with `--include-ignored`.
+`cargo test --workspace` takes ~20 s. The slow acceptance and fuzz gates are `#[ignore]`d (about 383 s of a ~402 s suite); CI runs them on Linux with `--include-ignored`; on macOS and Windows it compiles them and runs every other test.
+
+Branch protection requires the `CI result` check. It waits for the web, Rust, determinism, and native decompiler jobs, fails if any required job fails or is cancelled, and accepts jobs skipped by the change filters. Require this check instead of individual matrix jobs, whose platform names are absent when the matrix is skipped.
 
 Before merge or release:
 
@@ -95,14 +97,14 @@ cargo test --release -p binfera-ghidra --features native
 cargo test --release -p binfera-cli --features decompiler --test decompiler
 ```
 
-The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.87. See [decompiler.md](decompiler.md) for source fixture rebuilding, development reference generation and performance measurements.
+The native CI job runs on Linux, macOS and Windows (MSVC) with Rust 1.89, as a single `cargo test --release -p binfera -p binfera-ghidra -p binfera-cli` call with the three features and `--lib --tests`. See [Decompiler design](decompiler-design.md#tests) for source fixture rebuilding, development reference generation and performance measurements.
 
 ## Releasing
 
-1. Set `version` in the workspace `Cargo.toml`, add a `## [X.Y.Z]` section to [`CHANGELOG.md`](https://github.com/Karib0u/binfera/blob/main/CHANGELOG.md) (it becomes the release notes) and check [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md).
+1. Set the version in the workspace `Cargo.toml`, `web/src-tauri/Cargo.toml` and `web/src-tauri/tauri.conf.json`, add a `## [X.Y.Z]` section to [`CHANGELOG.md`](https://github.com/Karib0u/binfera/blob/main/CHANGELOG.md) (it becomes the release notes) and check [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md).
 2. Merge to `main` and wait for CI to pass.
-3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and publishes nothing.
-4. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds again and creates a **draft** release; it fails if the tag differs from the `Cargo.toml` version or `CHANGELOG.md` has no section for it.
+3. Run the **Release** workflow by hand with the tag as its input. It builds every archive and desktop installer and publishes nothing.
+4. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds again and creates a **draft** release; it fails if the tag differs from the version in `Cargo.toml`, `web/src-tauri/Cargo.toml` or `web/src-tauri/tauri.conf.json`, or `CHANGELOG.md` has no section for it.
 5. Open the draft, check the notes and assets, and publish it. Then run `scripts/install.sh` on a clean machine.
 
-The desktop installers are a separate workflow, started by hand or by a `desktop-vX.Y.Z` tag, and also produce a draft release.
+The release holds both the command-line archives and the desktop installers. The **Desktop** workflow, which builds the installers, can also be run on its own by hand; it then publishes nothing.

@@ -14,6 +14,7 @@ Python capa 10.0.0 is the behavioral reference (see [`PINNED.md`](https://github
 | ELF AArch64 | Supported | Pinned Ghidra BinExport2 fixtures (no raw-AArch64 Python oracle) |
 | PE AArch64 | **Extension** | None |
 | Mach-O x86_64 / arm64 / arm64e | **Extension** | None |
+| ARM32/Thumb (PE, ELF), MIPS32 (ELF) | **Extension** | None (source-built fixtures) |
 | External disassembler databases and BinExport | Non-goal | n/a |
 
 Unsupported inputs are rejected with context, never silently accepted or partially analyzed.
@@ -24,13 +25,14 @@ Unsupported inputs are rejected with context, never silently accepted or partial
 |---|---|---|
 | Upstream parity | PE, ELF, shellcode, .NET | Direct comparison with Python capa ([benchmarks](benchmarks.md)) |
 | Cross-backend parity | AArch64 ELF | Feature- and rule-level comparison with Ghidra BinExport2 ([benchmarks](benchmarks.md)) |
-| binfera extension | Mach-O, AArch64 PE | Hand-built structural and feature fixtures; never claimed as upstream parity |
-| Not covered | Evidence-tree identity, other ISAs, dynamic extractors | n/a |
+| binfera extension | Mach-O, AArch64 PE, ARM32/Thumb, MIPS32 | Hand-built or source-built fixtures; never claimed as upstream parity |
+| Not covered | Evidence-tree identity, ISAs not listed above, dynamic extractors | n/a |
 
 ### Format notes
 
-- **Mach-O** is not accepted by pinned capa at all. `-f macho` is therefore an extension, never selected by `-f auto` (which mirrors upstream's PE/ELF/freeze detection order) and must be requested explicitly. Thin and fat binaries are supported; `--arch` selects a slice, `auto` takes the first supported slice in fat-header order.
+- **Mach-O** is not accepted by pinned capa at all, so it is an extension. `-f auto` detects it after PE and ELF and before freeze files, which keeps upstream's order for every format capa knows; `-f macho` forces it. Thin and fat binaries are supported; `--arch` selects a slice, otherwise the first supported slice in fat-header order is used.
 - **AArch64** decoding, recovery, and extraction (`disarm64`, no external disassembler) are shared by ELF, Mach-O, and PE. Only ELF has an oracle.
+- **ARM32/Thumb and MIPS32** use Capstone for decoding. Rules accept `arch: arm` and `arch: mips` (both byte orders). See [Decompiler](decompiler.md#arm32-thumb-and-mips32) for the supported profiles.
 - **.NET**: a CLR PE is auto-detected and routed to the .NET backend. `-f pe` forces the native x86 path, `-f dotnet` forces .NET. Mixed-mode assemblies are analyzed for managed methods only, as in upstream, and carry the "mixed mode" characteristic feature.
 
 Measurements (accuracy, performance, reproduction) are in [benchmarks.md](benchmarks.md).

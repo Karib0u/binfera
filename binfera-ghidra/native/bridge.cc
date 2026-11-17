@@ -323,7 +323,7 @@ public:
 // `DAT_<addr>` for plain data, `PTR_<target>_<addr>` for a pointer cell and
 // `s_<text>_<addr>` / `u_<text>_<addr>` for narrow and wide string literals.
 // The embedded engine has no program database, so the adapter derives the same
-// names from the image bytes, per request (see docs/decompiler.md). Constants
+// names from the image bytes, per request (see docs/decompiler-design.md). Constants
 // copied from Ghidra 12.1.4's observed labels: at most 32 characters of text,
 // every character other than a letter, digit, `_`, `<` or `>` becomes `_`, trailing
 // line breaks are dropped, and the address is lowercase hex padded to 8 digits.
@@ -1016,6 +1016,43 @@ bool binfera_jump_target_valid(LoadImage *loader, uint64_t function, uint64_t ta
   // Reject only an interior target in a different declared unwind range.
   return !source || !destination || source == destination || target == destination->start;
 }
+bool binfera_forwarded_return(Funcdata &fd, const PcodeOp &ret, int slot) {
+  const auto *value = ret.getIn(slot);
+  if (!value->isWritten() || !value->getDef()->isCall() || fd.getFuncProto().isNoReturn()) return false;
+  const auto &arch = static_cast<const ArchitectureX86 &>(*fd.getArch());
+  const auto &spec = arch.language();
+  if (spec.go_pack) return false;
+  const auto &result = arch.translate->getRegister(resultRegister(spec));
+  const auto &translator = *static_cast<const ImageSleigh *>(arch.translate);
+  const auto forwards = [&](const PcodeOp &exit) {
+    const auto *input = exit.getIn(slot);
+    if (input->getAddr() != result.getAddr() || !input->isWritten()) return false;
+    const auto *def = input->getDef();
+    if (def->code() != CPUI_CALL && def->code() != CPUI_CALLIND) return false;
+    const auto *call = fd.getCallSpecs(def);
+    if (!call || !call->isOutputLocked() || call->isNoReturn()) return false;
+    const auto *output = call->getOutput();
+    const auto kind = output->getType()->getMetatype();
+    if (kind != TYPE_INT && kind != TYPE_UINT && kind != TYPE_BOOL && kind != TYPE_PTR && kind != TYPE_UNKNOWN)
+      return false;
+    if (output->getAddress() != result.getAddr() || output->getSize() != input->getSize() ||
+        input->getSize() > result.size) return false;
+    const auto &site = def->getAddr();
+    if (site == exit.getAddr() && fd.getOverride().getFlowOverride(site) == Override::CALL_RETURN) return true;
+    const auto syscall = translator.syscall_targets.find(site.getOffset());
+    return syscall != translator.syscall_targets.end() && syscall->second == call->getEntryAddress().getOffset();
+  };
+  if (!forwards(ret)) return false;
+  // Only preserve this result if it reaches every normal return. An ordinary
+  // call can leave its unused result in the register of a void function.
+  for (auto it = fd.beginOp(CPUI_RETURN); it != fd.endOp(CPUI_RETURN); ++it) {
+    const auto *exit = *it;
+    if (exit == &ret || exit->isDead() || exit->getHaltType() == PcodeOp::noreturn) continue;
+    binfera_check();
+    if (exit->getHaltType() != 0 || slot >= exit->numInput() || !forwards(*exit)) return false;
+  }
+  return true;
+}
 void binfera_check() {
   if (!budget.active) return;
   if (budget.remaining-- == 0) { budget.exhausted = true; budget.reason = "native work limit exceeded"; throw BudgetExceeded(budget.reason); }
@@ -1212,7 +1249,7 @@ public:
     static_cast<StringPrintC *>(arch.print)->c_types = !spec.go_pack;
     // Windows x64 SDK layouts (winnt.h). DWORD and LONG are four bytes;
     // ANYSIZE_ARRAY is one in the declaration, not a runtime allocation bound.
-    // See docs/decompiler.md for the declarations and provenance.
+    // See docs/decompiler-design.md for the declarations and provenance.
     auto *types = arch.types;
     auto set_struct_fields = access_set_struct_fields(SetStructFieldsTag());
     auto *u32 = types->getBase(4, TYPE_UINT);
@@ -2123,6 +2160,79 @@ public:
         if (!parameter) out.context_independent = false;
       }
     }
+  }
+  // Optimized p-code can discard a vector's upper lanes when they are zero.
+  // Check the original instruction for a scalar write to q0 and only zero fills above it.
+  bool writesAarch64Scalar(const PcodeOp *source, const VarnodeData &q0, uint4 width) {
+    struct ScalarWrite : PcodeEmit {
+      const VarnodeData &reg;
+      uint4 width;
+      OpCode expected;
+      bool scalar = false;
+      bool other = false;
+      ScalarWrite(const VarnodeData &reg, uint4 width, OpCode expected)
+          : reg(reg), width(width), expected(expected) {}
+      void dump(const Address &, OpCode code, VarnodeData *out, VarnodeData *in, int4 count) override {
+        if (!out || out->space != reg.space || out->offset >= reg.offset + reg.size ||
+            out->offset + out->size <= reg.offset) return;
+        if (out->offset == reg.offset && out->size == width && code == expected) {
+          scalar = true;
+        } else if (out->offset < reg.offset + width || code != CPUI_COPY || count != 1 ||
+                   in[0].space->getType() != IPTR_CONSTANT || in[0].offset != 0) {
+          other = true;
+        }
+      }
+    } write(q0, width, source->code());
+    try {
+      arch.translate->oneInstruction(write, source->getAddr());
+    } catch (const LowlevelError &) {
+      return false;
+    } catch (const DecoderError &) {
+      return false;
+    }
+    return write.scalar && !write.other;
+  }
+  // Scalar FP writes clear the upper bits of q0. Require that every return
+  // zero-pads a same-width floating-point result before narrowing the ABI type.
+  int4 aarch64ScalarReturnBytes(Funcdata *fd) {
+    const auto &q0 = arch.translate->getRegister("q0");
+    const auto *output = fd->getFuncProto().getOutput();
+    if (output->getAddress() != q0.getAddr() || output->getSize() != q0.size) return 0;
+    const auto strip_copies = [](const Varnode *value) {
+      for (int depth = 0; depth < 8 && value->isWritten(); ++depth) {
+        const auto *def = value->getDef();
+        if (def->code() != CPUI_COPY && def->code() != CPUI_CAST) break;
+        value = def->getIn(0);
+      }
+      return value;
+    };
+    int4 bytes = 0;
+    for (auto it = fd->beginOp(CPUI_RETURN); it != fd->endOp(CPUI_RETURN); ++it) {
+      const auto *ret = *it;
+      if (ret->isDead() || ret->getHaltType() == PcodeOp::noreturn) continue;
+      if (ret->getHaltType() != 0 || ret->numInput() != 2) return 0;
+      const auto *value = strip_copies(ret->getIn(1));
+      if (value->getSize() != q0.size) return 0;
+      const PcodeOp *source = nullptr;
+      for (int depth = 0; depth < 4 && value->isWritten(); ++depth) {
+        const auto *def = value->getDef();
+        if (def->code() == CPUI_INT_ZEXT) {
+          value = strip_copies(def->getIn(0));
+        } else if (def->code() == CPUI_PIECE) {
+          const auto *high = strip_copies(def->getIn(0));
+          if (!high->isConstant() || high->getOffset() != 0) return 0;
+          value = strip_copies(def->getIn(1));
+        } else {
+          source = def;
+          break;
+        }
+      }
+      const int4 width = value->getSize();
+      if (!source || (width != 4 && width != 8) || (bytes && bytes != width) ||
+          source->outputTypeLocal()->getMetatype() != TYPE_FLOAT || !writesAarch64Scalar(source, q0, width)) return 0;
+      bytes = width;
+    }
+    return bytes;
   }
   // A negative stack input has no reaching definition. It cannot establish
   // the high half of an inferred scalar result after a scratch-register pop.
@@ -3734,6 +3844,10 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
       data_ms = elapsed(phase);
       phase = Clock::now();
       Datatype *hinted_return = nullptr;
+      const int4 scalar_float_bytes = result >= 0 && baseline_errors.empty() &&
+          impl->spec.sla == sla_arm64_bytes && !impl->spec.go_pack &&
+          !proto.isOutputLocked() && !proto.isInputLocked() && !proto.isModelLocked()
+          ? impl->aarch64ScalarReturnBytes(fd) : 0;
       const bool boolean_return = return_bytes == 1 && impl->spec.wide &&
           impl->spec.sla == sla_x64_bytes && impl->booleanByteReturns(fd);
       bool forwarded_return = false;
@@ -3775,7 +3889,9 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
       }
       const bool undefined_high = result >= 0 && !impl->spec.wide && return_bytes != 8 &&
           !proto.isOutputLocked() && impl->undefinedHighReturns(fd);
-      if (undefined_high) {
+      if (scalar_float_bytes) {
+        hinted_return = arch.types->getBase(scalar_float_bytes, TYPE_FLOAT);
+      } else if (undefined_high) {
         hinted_return = arch.types->getBase(4, TYPE_UNKNOWN);
       } else if (boolean_return) {
         hinted_return = arch.types->getBase(1, TYPE_BOOL);
@@ -3789,7 +3905,7 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
       }
       if (result >= 0 && hinted_return && !proto.isNoReturn() && !proto.isOutputLocked() &&
           (forwarded_return || (!proto.isInputLocked() && (!proto.isModelLocked() || temporary.cdecl_applied || !impl->spec.wide))) &&
-          (proto.getOutputType()->getMetatype() == TYPE_VOID || boolean_return ||
+          (proto.getOutputType()->getMetatype() == TYPE_VOID || boolean_return || scalar_float_bytes ||
            (!impl->spec.wide && (return_bytes == 4 || undefined_high) && proto.getOutputType()->getSize() == 8))) {
         impl->invalidateTemporary(address, "temporary return hint");
         PrototypePieces pieces;
@@ -3888,7 +4004,9 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
         inferred_go |= impl->go_stack_functions.count(fd->getCallSpecs(i)->getEntryAddress().getOffset()) != 0;
       if (inferred_go)
         response.warnings.push_back("Go ABI0 argument/result storage inferred from pclntab and stack accesses; semantic types remain uncertain.");
-      if (temporary.return_applied)
+      if (temporary.return_applied && scalar_float_bytes)
+        response.notes.push_back("Scalar floating-point return inferred from the AArch64 return register.");
+      else if (temporary.return_applied)
         response.warnings.push_back(forwarded_return
             ? "Return storage inferred from the forwarded callee; its semantic type is uncertain."
             : undefined_high

@@ -26,12 +26,39 @@ fn symbol(bytes: &[u8], name: &str) -> anyhow::Result<u64> {
         .ok_or_else(|| anyhow::anyhow!("missing symbol {name}"))
 }
 
+fn check_inferred_floating_return(bytes: &[u8]) -> anyhow::Result<()> {
+    let mut session = DecompilerSession::from_bytes(bytes)?;
+    let output = session.decompile_function(symbol(bytes, "floating")?)?;
+    assert!(output.text.contains("float8 floating("), "{}", output.text);
+    assert!(output.text.contains("2.0"), "{}", output.text);
+    Ok(())
+}
+
+#[test]
+fn infers_scalar_floating_return_in_elf() -> anyhow::Result<()> {
+    check_inferred_floating_return(EXEC)
+}
+
+#[test]
+fn infers_scalar_floating_return_in_pe() -> anyhow::Result<()> {
+    check_inferred_floating_return(PE)
+}
+
+#[test]
+fn explicit_signature_takes_precedence_over_return_inference() -> anyhow::Result<()> {
+    let mut session = DecompilerSession::from_bytes(EXEC)?;
+    let address = symbol(EXEC, "floating")?;
+    session.set_signature(address, ValueType::Void, &[ValueType::F64, ValueType::F64])?;
+    let output = session.decompile_function(address)?;
+    assert!(output.text.contains("void floating("), "{}", output.text);
+    Ok(())
+}
+
 #[test]
 fn integer_float_stack_arguments_and_named_calls() -> anyhow::Result<()> {
     for bytes in [EXEC, PIE, SHARED, PE] {
         let mut session = DecompilerSession::from_bytes(bytes)?;
-        // Scalar and vector FP returns share v0. Supply the source signature to
-        // test scalar FP storage without guessing an ambiguous return width.
+        // Verify scalar FP storage with the source signature supplied.
         session.set_signature(
             symbol(bytes, "floating")?,
             ValueType::F64,
@@ -82,24 +109,21 @@ fn plt_and_iat_imports_have_platform_prototypes() -> anyhow::Result<()> {
             assert!(output.text.contains("GetTickCount()"), "{}", output.text);
         } else {
             assert!(output.text.contains("puts(__s)"), "{}", output.text);
-            assert!(output.text.contains("strlen(__s)"), "{}", output.text);
             assert!(output.text.contains("char *"), "{}", output.text);
+            let (result, _) = output
+                .text
+                .lines()
+                .find_map(|line| line.trim().split_once(" = strlen(__s);"))
+                .ok_or_else(|| anyhow::anyhow!("missing strlen result in {}", output.text))?;
+            assert!(
+                output.text.contains(&format!("return {result};")),
+                "{}",
+                output.text
+            );
         }
         assert!(!output.unknown_callees, "{:?}", output.warnings);
         assert!(!output.incomplete, "{:?}", output.warnings);
         assert!(output.text.contains("return"), "{}", output.text);
-        if !bytes.starts_with(b"MZ") {
-            // Without caller evidence a tail wrapper's return type can remain void.
-            // With its source contract, verify that x0 forwards the imported result.
-            session.set_signature(
-                symbol(bytes, "imported")?,
-                ValueType::U64,
-                &[ValueType::CharPointer],
-            )?;
-            let typed = session.decompile_function(symbol(bytes, "imported")?)?;
-            assert!(typed.text.contains("= strlen(param_1)"), "{}", typed.text);
-            assert!(!typed.text.contains("void imported"), "{}", typed.text);
-        }
     }
     Ok(())
 }

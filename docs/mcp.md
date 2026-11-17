@@ -42,7 +42,7 @@
     }
     ```
 
-If `binfera` is not on the agent's `PATH`, use the full path, such as `~/.binfera/bin/binfera mcp`. The desktop app's **AI → Connect** shows these commands with the path filled in.
+If `binfera` is not on the agent's `PATH`, use the full path, such as `~/.binfera/bin/binfera mcp`. The desktop app's **Agent → Artifacts → Use another agent** shows these commands with the path filled in.
 
 ## Ask
 
@@ -78,13 +78,16 @@ Library functions recognised by signature (CRT helpers, for example) are named a
 
 ## In the desktop app
 
-The desktop app opens the same projects. Its **AI** view has three sections:
+The desktop app opens the same projects. **Agent** (top right, or Cmd/Ctrl+J) opens a panel with two tabs:
 
-- **Activity**: agent runs, with **Undo**.
-- **Reports**: saved reports.
-- **Connect**: the commands above and example requests.
+- **Chat** runs your own Claude Code or Codex on the open file, if it is installed and signed in. Your agent configuration is never edited.
+- **Artifacts** lists agent runs with **Undo**, recent changes and saved reports. **Use another agent** shows the commands above with the path filled in.
 
 Changes from the agent appear in the code views within about two seconds.
+
+<video src="../images/agent.mp4" poster="../images/ai.webp" autoplay loop muted playsinline controls style="width:100%"></video>
+
+![The report Claude Code saved for WannaCry, open in Artifacts](images/report.webp)
 
 ## What is stored
 

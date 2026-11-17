@@ -46,6 +46,8 @@ npm run build
 npx wrangler deploy
 ```
 
+Publishing a `v*` release deploys the site automatically: `.github/workflows/site.yml` builds the wasm engine from the release tag, builds the site and runs `wrangler deploy`, then checks that binfera.io serves the new bundle, the demos and the install scripts. Run it from the Actions tab to deploy another branch or tag. It needs the `binfera.io` environment's `CLOUDFLARE_API_TOKEN` (a token with the Workers Scripts: Edit permission) and `CLOUDFLARE_ACCOUNT_ID` secrets. CI has no malpedia checkout, so `npm run fetch-demos` downloads the packed demos binfera.io already serves, checks each one's SHA-256, and rebuilds the index from `demo/samples.json`. It fails when a sample is added, removed or replaced: pack that change locally (`npm run pack-demos`) and deploy by hand once.
+
 Run `npm run test:delivery` for cache-header behavior and `npm run test:assets` for compressed pack selection, decompression, and worker buffer ownership. With Wrangler running locally, a real hashed `/assets/` URL should return `immutable`, while a missing URL returns status 404 and `no-store`.
 
 ## CI and wasm size
@@ -201,9 +203,9 @@ npm run tauri build       # installers in src-tauri/target/release/bundle/
 ```
 
 - The webview never chooses a command line: `run_engine` only accepts the argument shapes `run.native.ts` builds (`validate_args` in `src-tauri/src/engine.rs`, with tests: `cargo test` there), and the app ships a restrictive CSP (`tauri.conf.json`).
-- Windows builds have no decompiler: `binfera-ghidra/build.rs` builds it on Linux and macOS only, so `prepare-desktop.sh` leaves the feature off there and the UI reports the decompiler as unavailable.
-- `.github/workflows/desktop.yml` builds the installers for macOS (arm64, x64), Linux and Windows. It runs only when triggered by hand or by a `desktop-v*` tag.
-- Installers are unsigned. Distributing them needs an Apple Developer ID (notarization) and a Windows code-signing certificate, or users meet Gatekeeper and SmartScreen warnings.
+- Every platform includes the decompiler: `binfera-ghidra/build.rs` builds it natively on Linux, macOS and Windows (MSVC), so `prepare-desktop.sh` always enables the feature.
+- `.github/workflows/desktop.yml` builds the installers for macOS (arm64, x64), Linux x64 and Windows x64. It runs when triggered by hand, and `release.yml` calls it for every `v*` tag.
+- The macOS app and disk images are signed and notarised. The Windows installers are not signed, so SmartScreen warns on first run.
 
 ## Analyst notes
 

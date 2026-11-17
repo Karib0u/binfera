@@ -4,11 +4,17 @@ Notable changes to binfera. Format follows [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [1.0.1]
+
 ### Fixed
 
-- **Windows installer:** `install.ps1` found no release under Windows PowerShell 5.1, the version built into Windows, because it passes the whole release list down the pipeline as one object.
-- **Desktop 1.0.1:** opening a file no longer starts the analyst's Claude Code or Codex. The hidden agent panel mounted with every file and asked the agent for its model list, so each file opened made the agent contact its provider, with no file data sent. The panel now mounts the first time it is opened.
-- **Desktop 1.0.1:** the Linux AppImage aborted at start-up on recent Wayland desktops such as Ubuntu 26.04. Its bundled GTK now runs through XWayland. The `.deb` and `.rpm` packages were not affected.
+- **Windows install script:** `install.ps1` found no release under Windows PowerShell 5.1, the version built into Windows, because it passes the whole release list down the pipeline as one object.
+- **Desktop app:** opening a file no longer starts the analyst's Claude Code or Codex. The hidden agent panel mounted with every file and asked the agent for its model list, so each file opened made the agent contact its provider, with no file data sent. The panel now mounts the first time it is opened.
+- **Desktop app:** the Linux AppImage aborted at start-up on recent Wayland desktops such as Ubuntu 26.04. Its bundled GTK now runs through XWayland. The `.deb` and `.rpm` packages were not affected.
+
+### Changed
+
+- **One release per version:** the command-line archives and the desktop installers now ship together in one `vX.Y.Z` release. The desktop app's interim `desktop-v1.0.1` release is replaced by this one.
 
 ## [1.0.0]
 

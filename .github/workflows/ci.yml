@@ -20,6 +20,22 @@ permissions:
   contents: read # checkout
 
 jobs:
+  ci-result:
+    # Difftest-only events must not replace the required check with a skipped result.
+    name: ${{ (github.event_name == 'schedule' || github.event.action == 'labeled') && 'CI result (difftest only)' || 'CI result' }}
+    runs-on: ubuntu-latest
+    needs: [changes, web, web-engine, build, determinism, msrv, python-binding, decompiler]
+    if: always() && github.event_name != 'schedule' && github.event.action != 'labeled'
+    steps:
+      - name: Check job results
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$JOB_RESULTS" | jq -e '
+            .changes.result == "success" and .web.result == "success" and
+            all(.[]; .result == "success" or .result == "skipped")
+          '
+
   web:
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule' && github.event.action != 'labeled'
@@ -52,14 +68,39 @@ jobs:
           npm run test:cache
           node scripts/check-risc-graph.mjs
 
-  web-changes:
+  # Which jobs a pull request needs. The filters run on pull requests only; the `if:` conditions
+  # below run every job on pushes and manual runs regardless of these outputs.
+  changes:
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule' && github.event.action != 'labeled'
     permissions:
       pull-requests: read
     outputs:
       engine: ${{ steps.changes.outputs.engine }}
+      rust: ${{ steps.rust.outputs.rust == 'true' || steps.rust.outputs.ci == 'true' }}
     steps:
+      # Everything except files that cannot affect the Rust workspace. An exclusion list rather
+      # than an allow-list: tests read rules/, sigs/, tests/, scripts/ and PINNED.md, and a new
+      # top-level folder should run the Rust jobs until someone decides it does not need to.
+      # `every` makes a file count only when it matches all patterns, i.e. none of the `!` ones.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: github.event_name == 'pull_request'
+        id: rust
+        with:
+          predicate-quantifier: every
+          filters: |
+            rust:
+              - '**'
+              - '!web/**'
+              - '!docs/**'
+              - '!.github/**'
+              - '!README.md'
+              - '!CHANGELOG.md'
+              - '!CODE_OF_CONDUCT.md'
+              - '!CONTRIBUTING.md'
+              - '!SECURITY.md'
+            ci:
+              - '.github/workflows/ci.yml'
       # PR files come from the API, including fork PRs; no checkout is needed.
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: github.event_name == 'pull_request'
@@ -82,11 +123,11 @@ jobs:
 
   web-engine:
     runs-on: ubuntu-latest
-    needs: web-changes
+    needs: changes
     if: >
       github.event_name != 'schedule' && github.event.action != 'labeled' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
-       needs.web-changes.outputs.engine == 'true')
+       needs.changes.outputs.engine == 'true')
     concurrency:
       group: ${{ github.workflow }}-web-engine-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -140,7 +181,10 @@ jobs:
   build:
     name: build (${{ matrix.os }})
     # Schedules and label events are for difftest only.
-    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    needs: changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true')
     # Keep cancellation at job level: a label event must not cancel builds.
     # Non-PR runs use unique groups so pushes and manual runs never queue.
     concurrency:
@@ -151,6 +195,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # sccache caches compiler output by content, so it survives a fresh checkout. rust-cache
+      # alone cannot: cargo fingerprints workspace crates and build scripts by file mtime, and
+      # every checkout makes the files new, so it rebuilds them.
+      # cc (and cxx-build) pick sccache up from RUSTC_WRAPPER.
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -182,6 +233,7 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Differential harness tests
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -196,23 +248,68 @@ jobs:
       # (cross_product_matrix, aarch64_elf_fuzz, dotnet_dnfile_fuzz -- ~383 s
       # of the suite's ~402 s) are `#[ignore]`d so a local `cargo test` stays
       # a ~20 s inner loop. CI is where they must actually run, so it opts
-      # back in. Dropping this flag silently removes them from coverage.
-      - name: cargo test
-        run: cargo test --workspace -- --include-ignored
-
-      # Gate J2 (docs/benchmarks.md): `--jobs N` output must be byte-identical to
-      # `--jobs 1`. `cargo test` above already runs the library-level half
-      # (binfera/tests/jobs_determinism.rs); this is the CLI half, which
-      # additionally covers argument handling and the rendered JSON.
+      # back in on Linux. Dropping this flag silently removes them from coverage.
       #
-      # Ubuntu only, and five samples: the property is a property of the join,
-      # not of a platform or a corpus. The full 200-sample comparison is a
-      # pre-merge run, not a CI job. Two sample workers bound resource use
-      # while preserving every job-count comparison and repetition.
-      - name: determinism (--jobs 1 vs 2 vs 4)
-        if: matrix.os == 'ubuntu-latest'
+      # Linux only: the gates check parsing robustness and cross-format
+      # agreement, which do not depend on the host OS, and running them three
+      # times added ~4-5 minutes to the macOS and Windows jobs. macOS and
+      # Windows still build them (`--all-targets` clippy, and `cargo test`
+      # compiles ignored tests) and run every other test.
+      - name: cargo test
+        shell: bash
         run: |
-          cargo build --release -p binfera-cli
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            cargo test --workspace -- --include-ignored
+          else
+            cargo test --workspace
+          fi
+
+  # Determinism gate (docs/development.md): `--jobs N` output must be byte-identical to
+  # `--jobs 1`. `cargo test` in `build` already runs the library-level half
+  # (binfera/tests/jobs_determinism.rs); this is the CLI half, which
+  # additionally covers argument handling and the rendered JSON.
+  #
+  # Ubuntu only, and five samples: the property is a property of the join,
+  # not of a platform or a corpus. The full 200-sample comparison is a
+  # pre-merge run, not a CI job. Two sample workers bound resource use
+  # while preserving every job-count comparison and repetition. Its own job
+  # so it runs alongside `build` instead of after its test step.
+  determinism:
+    name: determinism (--jobs 1 vs 2 vs 4)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true')
+    concurrency:
+      group: ${{ github.workflow }}-determinism-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      # sccache caches compiler output by content, so it survives a fresh checkout. rust-cache
+      # alone cannot: cargo fingerprints workspace crates and build scripts by file mtime, and
+      # every checkout makes the files new, so it rebuilds them.
+      # cc (and cxx-build) pick sccache up from RUSTC_WRAPPER.
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Init test submodules
+        run: git submodule update --init --depth 1 rules tests/testfiles
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Build binfera-cli (release)
+        run: cargo build --release -p binfera-cli
+
+      - name: determinism (--jobs 1 vs 2 vs 4)
+        run: |
           python3 scripts/determinism.py \
             --samples scripts/corpus-jobs.txt \
             --capa-cli target/release/binfera \
@@ -224,7 +321,10 @@ jobs:
     # Same reasoning as `build`: the schedule is for the difftest job only.
     # The MSRV cannot change without a commit, so a timer cannot catch
     # anything a push does not.
-    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    needs: changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true')
     concurrency:
       group: ${{ github.workflow }}-msrv-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -283,10 +383,20 @@ jobs:
   python-binding:
     name: python binding (J14)
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    needs: changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true')
     concurrency:
       group: ${{ github.workflow }}-python-binding-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      # sccache caches compiler output by content, so it survives a fresh checkout. rust-cache
+      # alone cannot: cargo fingerprints workspace crates and build scripts by file mtime, and
+      # every checkout makes the files new, so it rebuilds them (Ghidra's C++ core included).
+      # cc (and cxx-build) pick sccache up from RUSTC_WRAPPER.
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -303,6 +413,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -381,9 +492,21 @@ jobs:
 
   decompiler:
     name: native decompiler (${{ matrix.os }})
-    if: github.event_name != 'schedule' && github.event.action != 'labeled'
+    needs: changes
+    if: >
+      github.event_name != 'schedule' && github.event.action != 'labeled' &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true')
+    concurrency:
+      group: ${{ github.workflow }}-decompiler-${{ matrix.os }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     env:
       RUSTUP_TOOLCHAIN: "1.89.0"
+      # sccache caches compiler output by content, so it survives a fresh checkout. rust-cache
+      # alone cannot: cargo fingerprints workspace crates and build scripts by file mtime, and
+      # every checkout makes the files new, so it rebuilds them (Ghidra's C++ core included).
+      # cc (and cxx-build) pick sccache up from RUSTC_WRAPPER.
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     strategy:
       fail-fast: false
       matrix:
@@ -398,6 +521,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@d92bbbb03544f480ed5c7ba4b54020e4ed2c4f65 # 1.89.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: Install native dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev
@@ -407,9 +531,13 @@ jobs:
         run: |
           # tr: tolerate CRLF line endings, which a Windows checkout can add to the list.
           if command -v sha256sum >/dev/null 2>&1; then tr -d '\r' < SHA256SUMS | sha256sum -c -; else tr -d '\r' < SHA256SUMS | shasum -a 256 -c -; fi
-      - name: Native fixture and resource-limit tests
-        run: cargo test --release -p binfera --features decompiler --lib --tests
-      - name: Native boundary robustness tests
-        run: cargo test --release -p binfera-ghidra --features native
-      - name: Optional CLI and deterministic JSON tests
-        run: cargo test --release -p binfera-cli --features decompiler --test decompiler
+      # One cargo invocation: separate ones resolve features per package set, so shared
+      # dependencies (and binfera-ghidra's build script with them) were rebuilt for each.
+      # Covers the native fixture and resource-limit tests (binfera), the boundary robustness
+      # tests (binfera-ghidra) and the CLI and deterministic JSON tests (binfera-cli).
+      - name: Native decompiler tests
+        run: >
+          cargo test --release
+          -p binfera -p binfera-ghidra -p binfera-cli
+          --features binfera/decompiler,binfera-ghidra/native,binfera-cli/decompiler
+          --lib --tests

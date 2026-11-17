@@ -306,6 +306,8 @@ a.xref:hover { background: var(--on); border-bottom-style: solid; border-radius:
 .cp-spacer { flex: 1 1 0; min-width: 0; }
 .cp-caps-inline { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
 .cp-caps-inline .cap { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-caps-expanded { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 6px; max-height: 30%; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.cp-caps-expanded .cap { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .cp-head { border-bottom: 1px solid var(--line); }
 .cp-title h1 { min-width: 0; font: 600 15px var(--mono); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .cp-title .addr { flex: none; }
