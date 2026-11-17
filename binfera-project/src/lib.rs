@@ -16,7 +16,9 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 mod cache;
-pub use cache::{cache_max_bytes, prune_cache, touch_cache_file};
+pub use cache::{
+    cache_max_bytes, cache_tempfile, prune_cache, publish_cache_file, touch_cache_file,
+};
 
 pub const SCHEMA_VERSION: i64 = 3;
 pub const MAX_NAME_LEN: usize = 128;

@@ -123,11 +123,9 @@ impl Cache {
     pub fn record(&self, sha: &str, args: &[String]) -> Option<Recording> {
         let path = self.entry(sha, args)?;
         std::fs::create_dir_all(&self.dir).ok()?;
-        let part = path.with_extension("part");
-        let out = BufWriter::new(File::create(&part).ok()?);
+        let out = BufWriter::new(binfera_project::cache_tempfile(&path).ok()?);
         Some(Recording {
             out: Some(out),
-            part,
             path,
         })
     }
@@ -157,8 +155,7 @@ pub fn forget(sha: &str) {
 }
 
 pub struct Recording {
-    out: Option<BufWriter<File>>,
-    part: PathBuf,
+    out: Option<BufWriter<tempfile::NamedTempFile>>,
     path: PathBuf,
 }
 
@@ -172,21 +169,12 @@ impl Recording {
     }
 
     /// Keeps the recording when the run completed.
-    pub fn finish(mut self, complete: bool) {
-        let flushed = self.out.take().is_some_and(|mut out| out.flush().is_ok());
-        if complete && flushed && std::fs::rename(&self.part, &self.path).is_ok() {
+    pub fn finish(self, complete: bool) {
+        if !complete {
             return;
         }
-        let _ = std::fs::remove_file(&self.part);
-    }
-}
-
-impl Drop for Recording {
-    fn drop(&mut self) {
-        // An early return (an error, a closed window) leaves no partial file behind.
-        if self.out.is_some() {
-            self.out = None;
-            let _ = std::fs::remove_file(&self.part);
+        if let Some(file) = self.out.and_then(|out| out.into_inner().ok()) {
+            let _ = binfera_project::publish_cache_file(file, &self.path);
         }
     }
 }
@@ -279,6 +267,43 @@ mod tests {
         assert!(cache
             .lookup(&sha, &args(&["{sample}", "--image-info"]))
             .is_none());
+    }
+
+    #[test]
+    fn concurrent_recordings_publish_whole_runs_and_cancel_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache {
+            dir: dir.path().into(),
+            version: "test".into(),
+        };
+        let sha = "a".repeat(64);
+        let run = args(&["{sample}", "--decompile-all"]);
+        let read = |file| std::io::read_to_string(file).unwrap();
+
+        let mut first = cache.record(&sha, &run).unwrap();
+        let mut cancelled = cache.record(&sha, &run).unwrap();
+        let long_line = "x".repeat(16384);
+        cancelled.line(&long_line);
+        binfera_project::prune_cache(dir.path(), 0).unwrap();
+        first.line("first complete run");
+        first.finish(true);
+        let reader = cache.lookup(&sha, &run).unwrap();
+        cancelled.line("cancelled");
+        drop(cancelled);
+        assert_eq!(
+            read(cache.lookup(&sha, &run).unwrap()),
+            "first complete run\n"
+        );
+
+        let mut second = cache.record(&sha, &run).unwrap();
+        second.line("second complete run");
+        second.finish(true);
+        assert_eq!(read(reader), "first complete run\n");
+        assert_eq!(
+            read(cache.lookup(&sha, &run).unwrap()),
+            "first complete run\n"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

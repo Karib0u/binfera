@@ -3,6 +3,24 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+/// Each writer owns a same-directory file that can be published atomically on success.
+pub fn cache_tempfile(target: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    let name = target.file_name().unwrap_or_default();
+    tempfile::Builder::new()
+        .prefix(name)
+        .suffix(".part")
+        .tempfile_in(target.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+/// Publish the first completed result for this key and keep it available to readers.
+pub fn publish_cache_file(file: tempfile::NamedTempFile, target: &Path) -> std::io::Result<()> {
+    match file.persist_noclobber(target) {
+        Ok(_) => Ok(()),
+        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists && target.is_file() => Ok(()),
+        Err(e) => Err(e.error),
+    }
+}
+
 /// Default 2 GiB, overridable in MiB with `BINFERA_CACHE_MAX_MB` (zero removes completed results at startup).
 pub fn cache_max_bytes() -> u64 {
     std::env::var("BINFERA_CACHE_MAX_MB")
