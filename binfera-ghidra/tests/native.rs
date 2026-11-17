@@ -1779,6 +1779,42 @@ fn aarch64_platform_specs_translate_the_same_leaf() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn aarch64_infers_single_precision_return() -> Result<(), Box<dyn std::error::Error>> {
+    // fadd s0, s0, s1; ret
+    let bytes = [0x00, 0x28, 0x21, 0x1e, 0xc0, 0x03, 0x5f, 0xd6];
+    let mut session = Session::new(Language::AArch64Linux)?;
+    session.add_section(0x1000, &bytes, true, true)?;
+    session.add_function(0x1000, "sum", false)?;
+    let output = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+    assert!(output.text.contains("float4 sum("), "{}", output.text);
+    Ok(())
+}
+
+#[test]
+fn aarch64_preserves_full_width_vector_returns() -> Result<(), Box<dyn std::error::Error>> {
+    for code in [
+        // fadd v0.2d, v0.2d, v1.2d; ret
+        &[0x4e61_d400u32, 0xd65f_03c0][..],
+        // fadd d0, d0, d1; mov v0.d[1], x0; ret
+        &[0x1e61_2800, 0x4e18_1c00, 0xd65f_03c0][..],
+        // fadd v0.2d, v0.2d, v1.2d; mov v0.d[1], xzr; ret
+        &[0x4e61_d400, 0x4e18_1fe0, 0xd65f_03c0][..],
+    ] {
+        let bytes: Vec<_> = code.iter().flat_map(|word| word.to_le_bytes()).collect();
+        let mut session = Session::new(Language::AArch64Linux)?;
+        session.add_section(0x1000, &bytes, true, true)?;
+        session.add_function(0x1000, "result", false)?;
+        let output = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+        assert!(
+            output.text.contains("[16] result("),
+            "{code:x?}: {}",
+            output.text
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn darwin_archive_decodes_for_both_processors() {
     for language in [
         Language::X86Apple64,
