@@ -538,6 +538,13 @@ impl Matcher<'_> {
     }
 }
 
+fn same_control_flow(left: &FunctionRecord, right: &FunctionRecord) -> bool {
+    // Instruction positions correspond when the normalized instruction streams are equal.
+    let redirected = left.shape == right.shape
+        && matches!((left.branch_hash, right.branch_hash), (Some(a), Some(b)) if a != b);
+    left.cfg == right.cfg && !redirected
+}
+
 /// What differs within a pair once the callees are known. A call counts as unchanged only when it
 /// goes to the match of the old callee, so a redirected call cannot hide behind masked addresses.
 fn reasons(
@@ -546,7 +553,7 @@ fn reasons(
     forward: &BTreeMap<u64, u64>,
 ) -> Vec<ChangeReason> {
     let mut found = BTreeSet::new();
-    if left.shape != right.shape {
+    if left.shape != right.shape || !same_control_flow(left, right) {
         found.insert(ChangeReason::Code);
     }
     let pick = |function: &FunctionRecord, want: fn(&Ref) -> bool| -> Vec<Ref> {
@@ -626,7 +633,7 @@ fn evidence(
     };
     let mut out = Evidence {
         same_instructions: left.shape == right.shape,
-        same_cfg: left.cfg == right.cfg,
+        same_cfg: same_control_flow(left, right),
         blocks: [left.blocks, right.blocks],
         edges: [left.edges, right.edges],
         signals: if weighed {
@@ -707,7 +714,7 @@ pub(super) fn match_functions(a: &[FunctionRecord], b: &[FunctionRecord]) -> Out
             // Whatever the score says, these are not the same function.
             state.score(*x, *y).min(0.999)
         };
-        // An exact unchanged pair is proved by its hash; there is nothing further to weigh.
+        // Only changed or non-exact matches need scoring signals.
         let weighed = !why.is_empty() || *method != Method::Exact;
         matches.push(FunctionMatch {
             evidence: evidence(&state, (*x, *y), (left, right), &forward, weighed),
