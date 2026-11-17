@@ -20,6 +20,22 @@ permissions:
   contents: read # checkout
 
 jobs:
+  ci-result:
+    # Difftest-only events must not replace the required check with a skipped result.
+    name: ${{ (github.event_name == 'schedule' || github.event.action == 'labeled') && 'CI result (difftest only)' || 'CI result' }}
+    runs-on: ubuntu-latest
+    needs: [changes, web, web-engine, build, determinism, msrv, python-binding, decompiler]
+    if: always() && github.event_name != 'schedule' && github.event.action != 'labeled'
+    steps:
+      - name: Check job results
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$JOB_RESULTS" | jq -e '
+            .changes.result == "success" and .web.result == "success" and
+            all(.[]; .result == "success" or .result == "skipped")
+          '
+
   web:
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule' && github.event.action != 'labeled'
