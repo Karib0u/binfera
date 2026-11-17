@@ -4,6 +4,7 @@ import { useNotes } from "../names";
 import { hex } from "../workspace/labels";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { IndicatorGroups } from "./IndicatorGroups";
+import { FunctionReferences } from "./FunctionReferences";
 import { revealIn } from "../workspace/panels";
 
 const PAGE = 300;
@@ -73,7 +74,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
               </div>
               {isOpen && (
                 <div className="str-actions" onClick={(e) => e.stopPropagation()}>
-                  {r?.slice(0, 6).map((ad) => <button key={ad} onClick={() => onGoto(ad, x.a)}>{fnName(ad)}</button>)}
+                  {r && <FunctionReferences addresses={r} limit={6} label={fnName} onSelect={(ad) => onGoto(ad, x.a)} />}
                   <button className="primary" onClick={() => onPeek?.(x.a, x.w ? x.s.length * 2 : x.s.length)}>View bytes</button>
                 </div>
               )}
@@ -90,7 +91,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
             </div>
             <div className="str-text">{x.s}</div>
             <div className="addrs used">
-              {r ? <><small>Used in</small>{r.slice(0, 12).map((ad) => <button key={ad} onClick={(e) => { e.stopPropagation(); onGoto(ad, x.a); }}>{fnName(ad)}</button>)}{r.length > 12 && <small>+{r.length - 12}</small>}</>
+              {r ? <><small>Used in</small><FunctionReferences addresses={r} limit={12} label={fnName} onSelect={(ad) => onGoto(ad, x.a)} /></>
                 : <small>{a.done ? "No function references found" : "Looking for references…"}</small>}
             </div>
           </div>
