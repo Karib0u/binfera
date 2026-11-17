@@ -102,6 +102,8 @@ const WANNACRY = "#demo=wannacry";
 const AGENT_VIEW = `${WANNACRY}&fn=0x401fe7&view=c`;
 /** The agent panel's width, as the workspace stores it after a drag (it allows 300 to 720). */
 const WIDE_AGENT = `try { localStorage.setItem("binfera-ui:agent-width", "640"); } catch {}`;
+/** The mock project opens without the agent's names, which then appear as the replay saves them. */
+const FRESH = `try { localStorage.setItem("binfera-mock:fresh", "1"); } catch {}`;
 
 /** Stills, light theme unless `dark`. `mock` runs in the agent design mode. */
 const shots = [
@@ -226,13 +228,16 @@ const videos = [
     },
   },
   {
-    name: "agent", mock: true, wide: true, about: "Triage this binary, answered by Claude Code through Binfera's tools",
+    name: "agent", mock: true, wide: true, fresh: true, gif: true, about: "Triage this binary: Claude Code reads the file through Binfera's tools, names the key functions and answers",
     go: async (p, b) => {
       await open(p, b, AGENT_VIEW);
       p.startHere();
       await pause(600);
+      // The names it saves appear in the function list while it works (the mock reveals them).
       await agentTriage(p, { visible: true });
-      await pause(2500);
+      await pause(1500);
+      // Addresses in the answer are links into the code.
+      await glide(p, p.locator("button.md-addr", { hasText: /^0x401ce8$/ }), { wait: 2800 });
     },
   },
 ];
@@ -287,6 +292,7 @@ try {
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, colorScheme: "light", recordVideo: { dir, size: VIEWPORT } });
     await context.addInitScript(CURSOR);
     if (video.wide) await context.addInitScript(WIDE_AGENT);
+    if (video.fresh) await context.addInitScript(FRESH);
     const page = await context.newPage();
     // Recordings start when the page does; a video can skip its own loading with `page.startHere()`.
     const opened = Date.now();

@@ -66,7 +66,7 @@ Two files give one sentence on what changed, then every difference ranked by wha
 
 ## Your own AI agent
 
-In the desktop app, **Agent** runs your own Claude Code or Codex on the open file through Binfera's tools. The recording below replays a real Claude Code triage of the same sample: it reads the overview and the key functions, names and comments them, and answers with addresses you can click. See [Connect an AI agent](mcp.md).
+In the desktop app, **Agent** runs your own Claude Code or Codex on the open file through Binfera's tools. The recording below replays a real Claude Code triage of the same sample: it reads the overview and the key functions, names and comments them (the names appear in the function list as it saves them), and answers with addresses that open the code. See [Connect an AI agent](mcp.md).
 
 <video src="../images/agent.mp4" poster="../images/ai.webp" autoplay loop muted playsinline controls style="width:100%"></video>
 

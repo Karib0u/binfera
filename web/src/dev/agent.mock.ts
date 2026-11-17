@@ -1,6 +1,7 @@
 // Development only (`vite --mode mock`): an agent that replays a recorded run, tool calls included.
 import type { AgentClient, AgentEvent, ModelInfo } from "../agent/types";
 import replay from "./agent-replay.json";
+import { reveal } from "./project.mock";
 
 // A real Claude Code triage of the WannaCry demo, recorded and converted by scripts/agent-replay.mjs.
 const script = replay.events as [number, AgentEvent][];
@@ -30,9 +31,13 @@ export const agent: AgentClient | null = {
   run(_turn, onEvent) {
     let stopped = false;
     void (async () => {
+      // The ids of the calls that saved names, so the project shows them once each call returns.
+      const saving = new Set<string>();
       for (const [wait, event] of script) {
         await new Promise((r) => setTimeout(r, wait));
         if (stopped) return;
+        if (event.kind === "tool" && event.name === "apply_annotations") saving.add(event.id);
+        if (event.kind === "tool" && event.status === "done" && saving.has(event.id)) reveal();
         onEvent(event);
       }
     })();

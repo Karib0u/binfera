@@ -56,13 +56,13 @@ Every picture is the WannaCry demo from [binfera.io](https://binfera.io), so you
 
 ### With your own AI agent
 
-In the desktop app, **Agent** runs your own Claude Code or Codex through Binfera's tools. Below is a real Claude Code triage of the same sample: it read the overview and the key functions, named and commented them, and answered with addresses you can click. Then it saved a report with evidence. Every run can be undone.
+In the desktop app, **Agent** runs your own Claude Code or Codex through Binfera's tools. This is a real Claude Code triage of the same sample, replayed: it reads the overview, the capabilities and the key functions, names and comments them as it goes, and answers with addresses that open the code.
 
-| The triage, in the Agent panel | The report it saved |
-|---|---|
-| ![Claude Code's triage of WannaCry in the Agent panel, with the functions it named](docs/images/ai.webp) | ![The analysis report Claude Code saved, open in Artifacts](docs/images/report.webp) |
+![Claude Code triaging WannaCry in the Agent panel: tool calls, functions renamed in the list as it saves them, the verdict, and an address in the answer opening the code](docs/images/agent.gif)
 
-[Watch the run](https://docs.binfera.io/mcp/#binfera-desktop) (20 seconds).
+Asked for a report, it saves one with evidence, next to every run's names and comments. Every run can be undone.
+
+![The analysis report Claude Code saved for WannaCry, open in Artifacts](docs/images/report.webp)
 
 ## How it compares
 
