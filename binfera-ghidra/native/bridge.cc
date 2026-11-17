@@ -1016,6 +1016,43 @@ bool binfera_jump_target_valid(LoadImage *loader, uint64_t function, uint64_t ta
   // Reject only an interior target in a different declared unwind range.
   return !source || !destination || source == destination || target == destination->start;
 }
+bool binfera_forwarded_return(Funcdata &fd, const PcodeOp &ret, int slot) {
+  const auto *value = ret.getIn(slot);
+  if (!value->isWritten() || !value->getDef()->isCall() || fd.getFuncProto().isNoReturn()) return false;
+  const auto &arch = static_cast<const ArchitectureX86 &>(*fd.getArch());
+  const auto &spec = arch.language();
+  if (spec.go_pack) return false;
+  const auto &result = arch.translate->getRegister(resultRegister(spec));
+  const auto &translator = *static_cast<const ImageSleigh *>(arch.translate);
+  const auto forwards = [&](const PcodeOp &exit) {
+    const auto *input = exit.getIn(slot);
+    if (input->getAddr() != result.getAddr() || !input->isWritten()) return false;
+    const auto *def = input->getDef();
+    if (def->code() != CPUI_CALL && def->code() != CPUI_CALLIND) return false;
+    const auto *call = fd.getCallSpecs(def);
+    if (!call || !call->isOutputLocked() || call->isNoReturn()) return false;
+    const auto *output = call->getOutput();
+    const auto kind = output->getType()->getMetatype();
+    if (kind != TYPE_INT && kind != TYPE_UINT && kind != TYPE_BOOL && kind != TYPE_PTR && kind != TYPE_UNKNOWN)
+      return false;
+    if (output->getAddress() != result.getAddr() || output->getSize() != input->getSize() ||
+        input->getSize() > result.size) return false;
+    const auto &site = def->getAddr();
+    if (site == exit.getAddr() && fd.getOverride().getFlowOverride(site) == Override::CALL_RETURN) return true;
+    const auto syscall = translator.syscall_targets.find(site.getOffset());
+    return syscall != translator.syscall_targets.end() && syscall->second == call->getEntryAddress().getOffset();
+  };
+  if (!forwards(ret)) return false;
+  // Only preserve this result if it reaches every normal return. An ordinary
+  // call can leave its unused result in the register of a void function.
+  for (auto it = fd.beginOp(CPUI_RETURN); it != fd.endOp(CPUI_RETURN); ++it) {
+    const auto *exit = *it;
+    if (exit == &ret || exit->isDead() || exit->getHaltType() == PcodeOp::noreturn) continue;
+    binfera_check();
+    if (exit->getHaltType() != 0 || slot >= exit->numInput() || !forwards(*exit)) return false;
+  }
+  return true;
+}
 void binfera_check() {
   if (!budget.active) return;
   if (budget.remaining-- == 0) { budget.exhausted = true; budget.reason = "native work limit exceeded"; throw BudgetExceeded(budget.reason); }

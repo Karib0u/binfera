@@ -488,6 +488,12 @@ mod native {
                 );
             }
             if name == "coreaction" {
+                // A verified tail call or modeled syscall can define the ABI return value.
+                replace(
+                    &mut code,
+                    "\tif (ancestorReal.execute(op,slot,&trial,false))\n\t  if (data.ancestorOpUse(maxancestor,vn,op,trial,0,0))\n\t    trial.markActive();",
+                    "\tif ((ancestorReal.execute(op,slot,&trial,false) && data.ancestorOpUse(maxancestor,vn,op,trial,0,0))\n\t    || binfera_forwarded_return(data,*op,slot))\n\t  trial.markActive();",
+                );
                 // Justifying a small stack input to an ABI slot can overlap an
                 // input that starts later and extends beyond that slot. The
                 // upstream walk only extends the container to the left.
