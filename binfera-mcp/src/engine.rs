@@ -53,6 +53,7 @@ pub struct Index {
     /// Data address to the functions referencing it.
     pub refs_to: HashMap<u64, Vec<u64>>,
     file: PathBuf,
+    reader: Mutex<File>,
 }
 
 impl Index {
@@ -68,8 +69,9 @@ impl Index {
     }
     /// The full decompiler record of one function, read back from the cache file.
     pub fn record(&self, entry: &FunctionEntry) -> Result<Value, String> {
-        let mut file = File::open(&self.file).map_err(|e| e.to_string())?;
         binfera_project::touch_cache_file(&self.file);
+        // Offsets belong to the file that was indexed, even after an atomic replacement.
+        let mut file = self.reader.lock().unwrap();
         file.seek(SeekFrom::Start(entry.offset))
             .map_err(|e| e.to_string())?;
         let mut buffer = vec![0u8; entry.length];
@@ -654,14 +656,13 @@ fn build_index(file: &PathBuf) -> Result<Index, String> {
         callers,
         refs_to,
         file: file.clone(),
+        reader: Mutex::new(reader.into_inner()),
     })
 }
 
 fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), String> {
-    let tmp = target.with_extension("tmp");
-    let err_path = target.with_extension("err");
-    let out = File::create(&tmp).map_err(|e| e.to_string())?;
-    let err = File::create(&err_path).map_err(|e| e.to_string())?;
+    let out = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
+    let mut err = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
     let mut command = Command::new(exe);
     // `BINFERA_RULES_DIR` is clap's environment fallback for `--rules`, which conflicts with the
     // decompile and image modes, so only the capability run may see it. The server may start from
@@ -692,26 +693,30 @@ fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), Strin
     let mut child = command
         .arg(path)
         .stdin(Stdio::null())
-        .stdout(out)
-        .stderr(err)
+        .stdout(out.reopen().map_err(|e| e.to_string())?)
+        .stderr(err.reopen().map_err(|e| e.to_string())?)
         .spawn()
         .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
     let started = Instant::now();
     let status = loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => break status,
-            None if started.elapsed() > JOB_TIMEOUT => {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() <= JOB_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            result => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = std::fs::remove_file(&tmp);
-                return Err("timed out".into());
+                return Err(result
+                    .err()
+                    .map_or_else(|| "timed out".into(), |e| e.to_string()));
             }
-            None => std::thread::sleep(Duration::from_millis(200)),
         }
     };
     if !status.success() {
-        let message = std::fs::read_to_string(&err_path).unwrap_or_default();
-        let _ = std::fs::remove_file(&tmp);
+        let mut message = String::new();
+        let _ = err.seek(SeekFrom::Start(0));
+        let _ = err.read_to_string(&mut message);
         let tail: Vec<&str> = message.lines().rev().take(3).collect();
         return Err(format!(
             "exit {}: {}",
@@ -719,7 +724,7 @@ fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), Strin
             tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
         ));
     }
-    std::fs::rename(&tmp, target).map_err(|e| e.to_string())
+    binfera_project::publish_cache_file(out, target).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -770,5 +775,103 @@ mod tests {
         assert_eq!(index.functions[index.by_address[&8192]].name, "failed.init");
         assert!(!index.callers.contains_key(&8192));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_jobs_publish_only_completed_output() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("engine");
+        std::fs::write(
+            &exe,
+            r#"#!/bin/sh
+case "$3" in
+    */first)
+        printf 'first start\n'
+        touch "$3.started"
+        for i in $(seq 500); do
+            [ -f "${3%/*}/second.started" ] && break
+            sleep 0.01
+        done
+        printf 'first done\n'
+        ;;
+    */second)
+        printf 'second start\n'
+        touch "$3.started"
+        for i in $(seq 500); do
+            [ -f "${3%/*}/release" ] && break
+            sleep 0.01
+        done
+        printf 'second error\n' >&2
+        printf 'second partial\n'
+        exit 1
+        ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let target = dir.path().join("sample-test.decomp.jsonl");
+        let run = |name: &str| {
+            let (exe, target, sample) = (exe.clone(), target.clone(), dir.path().join(name));
+            std::thread::spawn(move || run_job(&exe, &sample, Job::Decompile, &target))
+        };
+        let first = run("first");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dir.path().join("first.started").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(dir.path().join("first.started").exists());
+        let second = run("second");
+        let completed = first.join().unwrap();
+        std::fs::write(dir.path().join("release"), []).unwrap();
+        let failed = second.join().unwrap();
+        completed.unwrap();
+        assert!(failed.unwrap_err().contains("second error"));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "first start\nfirst done\n"
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_none_or(|ext| ext != "part")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn indexed_records_keep_their_offsets_across_atomic_replacement() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.decomp.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"function","address":4096,"text":"original"}"#,
+        )
+        .unwrap();
+        let index = build_index(&path).unwrap();
+        let mut replacement = binfera_project::cache_tempfile(&path).unwrap();
+        writeln!(replacement, r#"{{"type":"start"}}"#).unwrap();
+        writeln!(
+            replacement,
+            r#"{{"type":"function","address":4096,"text":"replacement"}}"#
+        )
+        .unwrap();
+        replacement.persist(&path).unwrap();
+        assert_eq!(
+            index.record(index.get(4096).unwrap()).unwrap()["text"],
+            "original"
+        );
+        let new = build_index(&path).unwrap();
+        assert_eq!(
+            new.record(new.get(4096).unwrap()).unwrap()["text"],
+            "replacement"
+        );
     }
 }
