@@ -129,18 +129,26 @@ pub(super) fn select_analysis(
         // Keep compatibility coverage, but use the native graph for shared functions:
         // it includes validated compiler continuations and corrected block boundaries.
         for (address, function) in std::mem::take(&mut native.functions) {
+            let kinds = native.seeds.get(&address);
+            // Compatibility can stop before this unwind row, even when it found the function.
+            if kinds.is_some_and(|kinds| kinds.contains(&SeedKind::Unwind)) {
+                listed
+                    .seeds
+                    .entry(address)
+                    .or_default()
+                    .insert(SeedKind::Unwind);
+            }
             if let Some(existing) = listed.functions.get_mut(&address) {
                 *existing = function;
             } else if table_reachable.contains(&address)
                 || session.is_named_function(address)
-                || native.seeds.get(&address).is_some_and(|kinds| {
+                || kinds.is_some_and(|kinds| {
                     // `.pdata` entries too: compatibility recovery, like Vivisect, gives up on
                     // the whole directory at the first entry it cannot read (Delphi x64).
-                    kinds.contains(&crate::extract::recovery::SeedKind::EhFrame)
-                        || kinds.contains(&crate::extract::recovery::SeedKind::Vtable)
-                        || kinds.contains(&crate::extract::recovery::SeedKind::Unwind)
-                        || (kinds.contains(&crate::extract::recovery::SeedKind::Relocation)
-                            && straight_line_leaf(&function))
+                    kinds.contains(&SeedKind::EhFrame)
+                        || kinds.contains(&SeedKind::Vtable)
+                        || kinds.contains(&SeedKind::Unwind)
+                        || (kinds.contains(&SeedKind::Relocation) && straight_line_leaf(&function))
                 })
             {
                 // Declared ELF entries must not depend on speculative callee
