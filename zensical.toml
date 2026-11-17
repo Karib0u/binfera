@@ -25,7 +25,7 @@ nav = [
     ] },
 
     { "Reference" = [
-        { "Decompiler scope and limits" = "decompiler.md" },
+        { "Decompiler" = "decompiler.md" },
         { "Compatibility with capa" = "compatibility.md" },
         { "Benchmarks" = "benchmarks.md" },
     ] },

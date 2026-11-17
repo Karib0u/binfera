@@ -1,6 +1,6 @@
 # Function emulation
 
-Build with `cargo build -p binfera-cli --features decompiler`. Emulation runs SLEIGH p-code against private image memory. Sample instructions never execute on the host CPU. Import calls are recorded stubs with fixed scalar return values, defaulting to zero.
+Emulation needs the decompiler, which released builds include (from source: `--features decompiler`). It runs SLEIGH p-code against private image memory. Sample instructions never execute on the host CPU. Import calls are recorded stubs with fixed scalar return values, defaulting to zero.
 
 ## CLI
 

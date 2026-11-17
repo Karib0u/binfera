@@ -33,8 +33,8 @@ esac
 
 version="${BINFERA_VERSION:-}"
 if [ -z "$version" ]; then
-  # Not GitHub's "latest release": the desktop app is released under `desktop-v*` tags, can become
-  # the latest, and carries no command-line archives. Take the newest release tagged `v<number>`.
+  # The newest release tagged `v<number>`, not GitHub's "latest release" flag, which a
+  # maintainer can move by hand.
   api="${BINFERA_API_URL:-https://api.github.com/repos/$repo/releases?per_page=50}"
   version="$(curl -fsSL "$api" | tr ',' '\n' | sed -n 's/.*"tag_name": *"\(v[0-9][^"]*\)".*/\1/p' | head -1)"
   [ -n "$version" ] || die "could not find a command-line release of binfera"

@@ -248,7 +248,7 @@ jobs:
             cargo test --workspace
           fi
 
-  # Gate J2 (docs/benchmarks.md): `--jobs N` output must be byte-identical to
+  # Determinism gate (docs/development.md): `--jobs N` output must be byte-identical to
   # `--jobs 1`. `cargo test` in `build` already runs the library-level half
   # (binfera/tests/jobs_determinism.rs); this is the CLI half, which
   # additionally covers argument handling and the rendered JSON.

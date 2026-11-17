@@ -22,7 +22,7 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 |---|---|---|
 | Try it now, with nothing to install | Browser | [1](#1-in-a-browser) |
 | Analyze files day to day and keep my notes | Desktop app | [2](#2-desktop-app) |
-| Let Claude Code or Codex do the analysis | Command line and MCP | [3](#3-ai-agent-without-the-desktop-app) |
+| Let Claude Code or Codex do the analysis | Desktop app, or command line and MCP | [2](#2-desktop-app), [3](#3-ai-agent-without-the-desktop-app) |
 | Check builds in a script or CI | Command line | [4](#4-in-a-script-or-ci) |
 
 ## What it does
@@ -35,9 +35,9 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 - **Bring your own AI agent.** An [MCP server](docs/mcp.md) lets Claude Code, Codex or any MCP client name functions, comment code and save reports with evidence. binfera runs no model, and every agent run can be undone.
 - **Local by design.** Nothing is uploaded; the static site can be served from any host.
 
-| Overview | Compare two builds | Connect an AI agent |
+| Overview | Compare two builds | Work with an AI agent |
 |---|---|---|
-| ![Capabilities grouped by ATT&CK tactic](docs/images/overview.webp) | ![Changed functions between two builds](docs/images/compare.webp) | ![Requests to paste into an AI agent](docs/images/ai.webp) |
+| ![Capabilities grouped by ATT&CK tactic](docs/images/overview.webp) | ![Changed functions between two builds](docs/images/compare.webp) | ![Claude Code working on a file in the Agent panel](docs/images/ai.webp) |
 
 ## How it compares
 
@@ -61,10 +61,10 @@ Open [Binfera in your browser](https://binfera.io), pick a sample or drop a file
 
 ### 2. Desktop app
 
-Download the installer for your OS (the `desktop-v*` releases) and run it. The macOS app is signed and notarised; the Windows installer is not signed, so SmartScreen warns on first run ([details](https://docs.binfera.io/installation/#code-signing)).
+Download the installer for your OS from the [latest release](https://github.com/Karib0u/binfera/releases/latest) and run it. The macOS app is signed and notarised; the Windows installer is not signed, so SmartScreen warns on first run ([details](https://docs.binfera.io/installation/#code-signing)).
 
-1. **Open a file…** or drop one on the window. Recent files and your renames and comments are kept.
-2. To bring in an AI agent, open **AI → Connect**, copy the one-line command into Claude Code or Codex, then paste a request such as **Full analysis**.
+1. **Choose a file** or drop one on the window. Recent files and your renames and comments are kept.
+2. To bring in an AI agent, click **Agent** (Cmd/Ctrl+J). The app runs your own Claude Code or Codex against the open file; pick a request such as **Triage this binary** or ask your own.
 
 ### 3. AI agent without the desktop app
 
@@ -87,7 +87,7 @@ For Claude Code, Codex or any MCP client, with nothing but the command-line tool
 
 3. Ask: *"Open `sample.exe` with Binfera and write a full analysis report."*
 
-Everything the agent saves is kept in a local project database, and the desktop app opens the same one, so you can review an agent's work there later. See [function emulation](docs/emulation.md), [Binfera MCP server](docs/mcp.md) for the tools and limits.
+Everything the agent saves is kept in a local project database, and the desktop app opens the same one, so you can review an agent's work there later. See [Binfera MCP server](docs/mcp.md) for the tools and limits, and [function emulation](docs/emulation.md).
 
 ### 4. In a script or CI
 
@@ -105,7 +105,7 @@ You need Rust, a C++ toolchain and git.
 ```sh
 git clone https://github.com/Karib0u/binfera.git
 cd binfera
-git submodule update --init                      # capa rules and the decompiler sources
+git submodule update --init rules                # the capa rules (Ghidra's sources are vendored)
 ```
 
 **Command line** (add `--features decompiler` for decompiled code; Rust 1.89+ and a C++ compiler: zlib on macOS and Linux, Visual Studio Build Tools on Windows):
@@ -118,7 +118,7 @@ target/release/binfera sample.exe --emulate 0x140001000 --emulate-arg 42 # isola
 claude mcp add --scope user binfera -- "$PWD/target/release/binfera" mcp   # or: codex mcp add binfera -- ...
 ```
 
-With the rules submodule present, the build embeds the rules in the binary, so it runs from any folder; to use your own, pass `-r` or set `BINFERA_RULES_DIR`. See [Binfera MCP server](docs/mcp.md) and [`docs/decompiler.md`](docs/decompiler.md) for the decompiler's API, resource limits and current limitations.
+With the rules submodule present, the build embeds the rules in the binary, so it runs from any folder; to use your own, pass `-r` or set `BINFERA_RULES_DIR`. See [Binfera MCP server](docs/mcp.md) and [`docs/decompiler.md`](docs/decompiler.md) for the decompiler's scope and limits ([`docs/decompiler-design.md`](docs/decompiler-design.md) for its API).
 
 **Web app.** One-time toolchain setup (macOS):
 

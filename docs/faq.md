@@ -14,11 +14,11 @@ Binfera includes an independent Rust implementation of [Mandiant capa](https://g
 
 ## How does it relate to Ghidra?
 
-The decompiler is Ghidra's own C++ decompiler core and SLEIGH processor specifications, embedded without the JVM. Loading, function discovery and everything around the decompiler are Binfera's own Rust code. Binfera is not affiliated with or endorsed by the NSA. See [Binfera and Ghidra](benchmarks.md#binfera-and-ghidra-time-to-a-function-list) for a measured comparison and [Decompiler scope and limits](decompiler.md) for what is supported.
+The decompiler is Ghidra's own C++ decompiler core and SLEIGH processor specifications, embedded without the JVM. Loading, function discovery and everything around the decompiler are Binfera's own Rust code. Binfera is not affiliated with or endorsed by the NSA. See [Speed against Ghidra](benchmarks.md#speed-against-ghidra) for a measured comparison and [Decompiler](decompiler.md) for what is supported.
 
 ## Which files can it read?
 
-PE, ELF and Mach-O executables (including fat Mach-O), raw shellcode, .NET assemblies and capa freeze files. Decompilation covers x86, x86-64, AArch64, ARM32/Thumb and classic MIPS32. Details and limits are in [Decompiler scope and limits](decompiler.md) and [Compatibility](compatibility.md).
+PE, ELF and Mach-O executables (including fat Mach-O), raw shellcode, .NET assemblies and capa freeze files. Decompilation covers x86, x86-64, AArch64, ARM32/Thumb and classic MIPS32. Details and limits are in [Decompiler](decompiler.md) and [Compatibility](compatibility.md).
 
 ## Why does Windows warn me about the installer?
 
@@ -30,7 +30,7 @@ Binfera ships detection rules and signatures for malicious behaviour, and the we
 
 ## Does Binfera include an AI model?
 
-No. The [MCP server](mcp.md) exposes data and actions to an agent you already use, such as Claude Code or Codex. What that agent sends to its provider is governed by the agent, not by Binfera.
+No. The [MCP server](mcp.md) exposes data and actions to an agent you already use, such as Claude Code or Codex, and the desktop app's **Agent** panel runs that same agent's command-line tool. What the agent sends to its provider is governed by the agent, not by Binfera.
 
 ## Where are my notes stored?
 
