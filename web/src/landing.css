@@ -147,6 +147,7 @@
 /* footer */
 .lp-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 32px; margin-top: var(--lp-section); padding-block: 28px 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
 .lp-foot-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+.lp-foot-left .build-version { flex-basis: 100%; }
 .lp-foot .brand { color: var(--text); font-size: 15px; }
 .lp-foot p a { color: inherit; text-underline-offset: 3px; }
 .lp-foot-links { display: flex; gap: 24px; }

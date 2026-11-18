@@ -9,6 +9,7 @@ import ThemeToggle from "./ThemeToggle";
 import RecentFiles from "./RecentFiles";
 import LandingSamples from "./LandingSamples";
 import LandingTour from "./LandingTour";
+import BuildVersion from "./BuildVersion";
 import { desktop } from "./project/client";
 import type { Folder, Recent } from "./project/types";
 import "./landing.css";
@@ -223,6 +224,7 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
         <div className="lp-foot-left">
           <div className="brand sm"><Wordmark /></div>
           <p>Built by <a href="https://github.com/Karib0u" target="_blank" rel="noreferrer">Karib0u</a>, a malware analyst of 10+ years. Decompiler: Ghidra's C++ core. Rules: capa.</p>
+          <BuildVersion />
         </div>
         <div className="lp-foot-links">
           {!desktop && <a href="https://docs.binfera.io/getting-started/">Quickstart</a>}
