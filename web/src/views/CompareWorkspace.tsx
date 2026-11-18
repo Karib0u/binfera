@@ -10,6 +10,7 @@ import Wordmark from "../Wordmark";
 import { Splitter, useStored } from "../workspace/panels";
 import { useMobile } from "../workspace/useMobile";
 import Workspace, { type Embedding } from "../workspace/Workspace";
+import BuildVersion from "../BuildVersion";
 import CompareDetails from "./CompareDetails";
 import FunctionDiff, { hex, stepHunk, StackedDiffs, Tag, type DiffActions } from "./FunctionDiff";
 
@@ -519,6 +520,7 @@ export default function CompareWorkspace({ c, onReset }: { c: Comparison; onRese
         {pane("b")}
       </div>
 
+      <footer className="statusbar"><BuildVersion /></footer>
       {palette !== null && <Palette initial={palette} search={searchAll} onClose={() => setPalette(null)} />}
       {pairing && <Palette initial="" search={pairSearch} placeholder={`Compare this function with one in ${other(pairing.side).toUpperCase()}: name or address`} onClose={() => setPairing(null)} />}
       {help && <Shortcuts extra={[...KEYS, ...CHANGES_KEYS]} onClose={() => setHelp(false)} />}

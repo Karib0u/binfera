@@ -39,6 +39,7 @@ import PaneData from "../views/PaneData";
 import { extractIndicators } from "../indicators";
 import { textAt } from "../engine/strings";
 import Wordmark from "../Wordmark";
+import BuildVersion from "../BuildVersion";
 import { ShellcodeNotice } from "../views/ShellcodeNotice";
 import { NATIVE } from "../engine/assets";
 import type { RawCodeOptions } from "../engine/engine.worker";
@@ -1192,6 +1193,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
               {here.off != null && <span>file offset {hex(here.off)}</span>}
             </>
           ) : <span>No cursor yet</span>}
+          {!embedded && <BuildVersion />}
           <button className="sb-help" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
         </span>
       </footer>

@@ -55,8 +55,15 @@ macro_rules! rules_pin {
 }
 use rules_pin;
 
-/// `binfera --version`: the version and the rules release it uses.
-pub const VERSION_STRING: &str = concat!(env!("CARGO_PKG_VERSION"), " (rules ", rules_pin!(), ")");
+/// `binfera --version`: the version, rules release, and source commit.
+pub const VERSION_STRING: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (rules ",
+    rules_pin!(),
+    ") (commit ",
+    env!("BINFERA_BUILD_COMMIT"),
+    ")"
+);
 
 #[cfg(test)]
 mod tests {
