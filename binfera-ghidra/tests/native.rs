@@ -118,6 +118,59 @@ fn instruction_lookahead_preserves_section_boundaries() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn corroborated_win64_stack_argument_keeps_the_return_unlocked(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let caller = [
+        0x48, 0x83, 0xec, 0x28, // sub rsp, 0x28
+        0xb9, 1, 0, 0, 0, 0xba, 2, 0, 0, 0, 0x41, 0xb8, 3, 0, 0, 0, 0x41, 0xb9, 4, 0, 0, 0, 0x48,
+        0xc7, 0x44, 0x24, 0x20, 5, 0, 0, 0, // mov [rsp+0x20], 5
+        0xe8, 0xd8, 0x0f, 0, 0, // call wrapper
+        0x48, 0x83, 0xc4, 0x28, 0xc3,
+    ];
+    let wrapper = [
+        0x48, 0x83, 0xec, 0x28, // sub rsp, 0x28
+        0x48, 0x01, 0xd1, 0x4c, 0x01, 0xc1, 0x4c, 0x01, 0xc9, 0x48, 0x03, 0x4c, 0x24,
+        0x50, // add rcx, incoming fifth argument
+        0xff, 0x15, 0xe8, 0x0f, 0, 0, // call through an untyped pointer
+        0x48, 0x83, 0xc4, 0x28, 0xc3,
+    ];
+    let mut session = Session::new(Language::X86Windows64)?;
+    session.add_section(0x1000, &caller, true, true)?;
+    session.add_section(0x2000, &wrapper, true, true)?;
+    session.add_section(0x3000, &[0; 8], false, false)?;
+    session.add_function(0x1000, "caller", false)?;
+    session.add_function(0x2000, "wrapper", false)?;
+    let before = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+    assert!(
+        before
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("wrapper (arguments, return)")),
+        "{:?}",
+        before.warnings
+    );
+
+    session.set_win64_fifth_arguments(&[0x2000])?;
+    let after = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+    assert!(after.text.contains("wrapper(1,2,3,4,5)"), "{}", after.text);
+    assert!(
+        after
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("wrapper (return)")),
+        "{:?}",
+        after.warnings
+    );
+
+    session.set_win64_fifth_arguments(&[])?;
+    assert_eq!(
+        session.decompile(0x1000, 5000, 1000, 1_000_000)?.text,
+        before.text
+    );
+    Ok(())
+}
+
+#[test]
 fn frame_lists_stack_symbols_with_their_instructions() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session::new(Language::X86Linux64)?;
     session.add_section(
@@ -244,6 +297,49 @@ fn low_byte_hint_requires_boolean_partial_returns() -> Result<(), Box<dyn std::e
         "{}",
         locked.text
     );
+    Ok(())
+}
+
+#[test]
+fn low_byte_hint_distinguishes_xor_al_from_a_wide_mask() -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = Session::new(Language::X86Windows64)?;
+    for (address, label, clear) in [
+        (0x1000, "byte_result", &[0x30, 0xc0][..]), // xor al, al
+        (
+            0x2000,
+            "wide_result",
+            &[0x48, 0x25, 0, 0xff, 0xff, 0xff][..],
+        ), // and rax, -256
+    ] {
+        let mut code = vec![
+            0x48,
+            0x89,
+            0xc8, // mov rax, rcx
+            0x85,
+            0xd2, // test edx, edx
+            0x74,
+            7, // jz clear
+            0xb8,
+            1,
+            0,
+            0,
+            0, // mov eax, 1
+            0xeb,
+            clear.len() as u8, // jmp return
+        ];
+        code.extend_from_slice(clear);
+        code.push(0xc3);
+        session.add_section(address, &code, true, true)?;
+        session.add_function(address, label, false)?;
+    }
+    let narrowed = session.decompile_with_hints(0x1000, 5000, 1000, 1_000_000, 1, false)?;
+    assert!(
+        narrowed.text.contains("bool byte_result"),
+        "{}",
+        narrowed.text
+    );
+    let wide = session.decompile_with_hints(0x2000, 5000, 1000, 1_000_000, 1, false)?;
+    assert!(!wide.text.contains("bool wide_result"), "{}", wide.text);
     Ok(())
 }
 

@@ -55,6 +55,7 @@ public:
   bool set_go_special(uint64_t address, rust::Str kind);
   rust::String validate_go_pack(rust::Str os, uint32_t minor, uint32_t max_report);
   bool set_callsite_arguments(uint64_t caller, uint64_t site, uint64_t target, uint32_t count);
+  void set_win64_fifth_arguments(rust::Slice<const uint64_t> targets);
   bool set_message_send(uint64_t caller, uint64_t site, uint32_t count);
   bool set_go_stack_layout(uint64_t address, uint32_t inputs, uint32_t results);
   void set_counted_strings(bool enabled);

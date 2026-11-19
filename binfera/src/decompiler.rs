@@ -843,6 +843,7 @@ impl DecompilerSession {
         }
         // Effect models need a name from a validated source, FLIRT or Function ID.
         // An export is only a claim by the image, so it never selects a model.
+        let mut applied_fixups = BTreeMap::new();
         for (address, name) in libraries.iter().chain(recognized.iter()) {
             if let Some(fixup) = effects::call_fixup(name, wide) {
                 session
@@ -853,6 +854,7 @@ impl DecompilerSession {
                             "{fixup} fixup for {name} at {address:#x}: {error}"
                         ))
                     })?;
+                applied_fixups.insert(*address, fixup);
             }
         }
         // Ghidra labels an ambiguous match `FID_conflict:<name>` for every candidate, and its
@@ -872,9 +874,11 @@ impl DecompilerSession {
                                 "{fixup} fixup for {candidates:?} at {address:#x}: {error}"
                             ))
                         })?;
+                    applied_fixups.insert(*address, fixup);
                 }
             }
         }
+        session.inherit_x64_call_fixups(&analysis, &applied_fixups)?;
         if let Some(entry) = dll_entry {
             session.set_signature(
                 entry,
@@ -889,6 +893,39 @@ impl DecompilerSession {
         session.initialization_ms = started.elapsed().as_secs_f64() * 1000.0;
         session.apply_dwarf(&analysis);
         Ok((session, analysis))
+    }
+
+    fn inherit_x64_call_fixups(
+        &mut self,
+        analysis: &Analysis,
+        applied_fixups: &BTreeMap<u64, &str>,
+    ) -> Result<(), DecompileError> {
+        if self.convention != CallingConvention::WindowsX64 || applied_fixups.is_empty() {
+            return Ok(());
+        }
+        // A single direct jump preserves the runtime helper's effects. MSVC
+        // incremental-link stubs can otherwise hide the stack-cookie model.
+        for (address, function) in &analysis.functions {
+            let Some(fixup) =
+                direct_tail_target(function).and_then(|target| applied_fixups.get(&target))
+            else {
+                continue;
+            };
+            if applied_fixups.contains_key(address)
+                || self.funclet_labels.contains_key(address)
+                || !self.in_code(*address)
+            {
+                continue;
+            }
+            self.native
+                .set_call_fixup(*address, fixup)
+                .map_err(|error| {
+                    DecompileError::Initialization(format!(
+                        "{fixup} fixup for jump thunk at {address:#x}: {error}"
+                    ))
+                })?;
+        }
+        Ok(())
     }
 
     /// Classes from RTTI: each a structure holding pointers to its virtual function tables, each
@@ -1777,9 +1814,15 @@ impl DecompilerSession {
                 }
             }
         }
-        for (caller, site, target, count) in variadic::calls(analysis) {
+        let call_arguments = variadic::calls(analysis);
+        for (caller, site, target, count) in call_arguments.variadic {
             native
                 .set_callsite_arguments(caller, site, target, count)
+                .map_err(init)?;
+        }
+        if !call_arguments.fifth_argument.is_empty() {
+            native
+                .set_win64_fifth_arguments(&call_arguments.fifth_argument)
                 .map_err(init)?;
         }
         let mut warnings = image.load_diagnostics.clone();
@@ -2481,7 +2524,8 @@ fn caller_return_uses(analysis: &Analysis) -> BTreeMap<u64, u32> {
         if analysis
             .functions
             .get(address)
-            .is_some_and(direct_tail_thunk)
+            .and_then(direct_tail_target)
+            .is_some()
         {
             *width = 0;
         }
@@ -2489,13 +2533,16 @@ fn caller_return_uses(analysis: &Analysis) -> BTreeMap<u64, u32> {
     uses
 }
 
-fn direct_tail_thunk(function: &recovery::Function) -> bool {
+fn direct_tail_target(function: &recovery::Function) -> Option<u64> {
     let mut insns = function.blocks.iter().flat_map(|block| &block.insns);
-    insns.next().is_some_and(|first| {
-        first.flow == Flow::UnconditionalBranch
-            && first.direct_target.is_some()
-            && insns.next().is_none()
-    })
+    let first = insns.next()?;
+    if first.address != function.addr
+        || first.flow != Flow::UnconditionalBranch
+        || insns.next().is_some()
+    {
+        return None;
+    }
+    first.direct_target
 }
 
 /// Whether an x86 function's first use of ECX, along its straight-line entry, is a read: the `this`
@@ -3707,9 +3754,66 @@ mod tests {
                 }],
             }
         }
-        assert!(direct_tail_thunk(&function(&[0xe9, 0, 0, 0, 0])));
-        assert!(!direct_tail_thunk(&function(&[0xff, 0xe0]))); // jmp rax
-        assert!(!direct_tail_thunk(&function(&[0x90, 0xe9, 0, 0, 0, 0])));
+        assert_eq!(
+            direct_tail_target(&function(&[0xe9, 0, 0, 0, 0])),
+            Some(0x1005)
+        );
+        assert_eq!(direct_tail_target(&function(&[0xff, 0xe0])), None); // jmp rax
+        assert_eq!(
+            direct_tail_target(&function(&[0x90, 0xe9, 0, 0, 0, 0])),
+            None
+        );
+    }
+
+    #[test]
+    fn x64_stack_cookie_jump_thunk_preserves_return() -> anyhow::Result<()> {
+        use crate::extract::image::SHELLCODE_BASE;
+
+        let mut bytes = vec![0xcc; 0x31];
+        let caller = [
+            0x48, 0x83, 0xec, 0x28, // sub rsp, 0x28
+            0xe8, 0x27, 0, 0, 0, // call helper directly, so recovery has its entry
+            0xb8, 0x2a, 0, 0, 0, // mov eax, 42
+            0xe8, 0x0d, 0, 0, 0, // call jump thunk
+            0x48, 0x83, 0xc4, 0x28, // add rsp, 0x28
+            0xc3, // ret
+        ];
+        bytes[..caller.len()].copy_from_slice(&caller);
+        bytes[0x20..0x25].copy_from_slice(&[0xe9, 0x0b, 0, 0, 0]); // jmp helper
+        bytes[0x30] = 0xc3;
+        let mut analysis = recovery::analyze_shellcode(&bytes, Architecture::X64)?;
+        let thunk = SHELLCODE_BASE + 0x20;
+        let function = analysis
+            .functions
+            .get_mut(&thunk)
+            .ok_or_else(|| anyhow::anyhow!("jump thunk was not recovered"))?;
+        // Model a PE jump thunk with its own function boundary. Raw-code
+        // recovery can follow the jump and include the helper in its body.
+        function.blocks.retain(|block| block.addr == thunk);
+        assert_eq!(direct_tail_target(function), Some(SHELLCODE_BASE + 0x30));
+        let mut session = DecompilerSession::from_analysis(
+            &analysis,
+            &BTreeMap::new(),
+            CallingConvention::WindowsX64,
+        )?;
+        let target = SHELLCODE_BASE + 0x30;
+        session
+            .native
+            .set_call_fixup(target, "security_check_cookie")?;
+        let before = session.decompile_function(SHELLCODE_BASE)?;
+        assert!(!before.text.contains("return 0x2a;"), "{}", before.text);
+
+        session.inherit_x64_call_fixups(
+            &analysis,
+            &BTreeMap::from([(target, "security_check_cookie")]),
+        )?;
+        let after = session.decompile_function(SHELLCODE_BASE)?;
+        assert!(after.text.contains("return 0x2a;"), "{}", after.text);
+        assert!(after
+            .notes
+            .iter()
+            .any(|note| note.contains("replaced with injection: security_check_cookie")));
+        Ok(())
     }
 
     #[test]

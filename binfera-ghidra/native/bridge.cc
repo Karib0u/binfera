@@ -1372,6 +1372,7 @@ public:
   std::map<std::string, uint32_t> inference_invalidation_reasons;
   std::map<uint64_t, uint64_t> variadic_forwarders;
   std::set<uint64_t> callsite_argument_functions;
+  std::set<uint64_t> win64_fifth_arguments;
   // Indirect call overrides inserted on purpose (add_tail_call). Every other one was recorded by the
   // analysis of a request, and is removed when the request ends.
   std::map<uint64_t, std::set<uint64_t>> explicit_indirect;
@@ -1919,7 +1920,7 @@ public:
     {
       int4 status = analyze(fd);
       const auto own_errors = errors.str();
-      if (fourHomedInputs(fd)) {
+      if (corroboratedWin64Inputs(fd)) {
         out.usable = status >= 0;
         collect(fd, out);
         if (out.usable && !out.output_known) {
@@ -2093,16 +2094,21 @@ public:
     }
     return mask == 15 ? 4 : 0;
   }
-  bool fourHomedInputs(Funcdata *fd) {
+  bool corroboratedWin64Inputs(Funcdata *fd) {
     const auto &proto = fd->getFuncProto();
-    if (homedParameters(fd) != 4 || proto.numParams() != 4 || proto.isDotdotdot()) return false;
+    if (proto.isDotdotdot()) return false;
+    const bool fifth = proto.numParams() == 5 && win64_fifth_arguments.count(fd->getAddress().getOffset());
+    if (!fifth && (proto.numParams() != 4 || homedParameters(fd) != 4)) return false;
     const char *registers[] = {"RCX", "RDX", "R8", "R9"};
     for (int4 i = 0; i < 4; ++i) {
       const auto *parameter = proto.getParam(i);
       const auto &storage = arch.translate->getRegister(registers[i]);
       if (parameter->getAddress() != storage.getAddr() || parameter->getSize() > storage.size) return false;
     }
-    return true;
+    if (!fifth) return true;
+    const auto *parameter = proto.getParam(4);
+    return parameter->getAddress() == Address(arch.getStackSpace(), 0x28) &&
+        (parameter->getSize() == 4 || parameter->getSize() == 8);
   }
   /// Decide whether \p fd's finished analysis is trustworthy, and if so keep its pieces.
   void collect(Funcdata *fd, Inferred &out) {
@@ -2118,9 +2124,9 @@ public:
       if (!call->isInputLocked() || !call->isOutputLocked()) unknown_calls = true;
     }
     if (unknown_calls) {
-      // A complete four-register home prologue corroborates four recovered
-      // inputs. Keep the return unlocked and its uncertainty visible to callers.
-      if (fourHomedInputs(fd)) out.output_known = false;
+      // Independent ABI evidence can corroborate the inputs. Keep the return
+      // unlocked and its uncertainty visible to callers.
+      if (corroboratedWin64Inputs(fd)) out.output_known = false;
       else out.usable = false;
     }
     if (out.usable) {
@@ -2253,8 +2259,35 @@ public:
     }
     return seen;
   }
-  // A caller consumes AL and every return has a Boolean low byte. Require a
-  // partial AL result too: this is not a general license to narrow integers.
+  bool partialBooleanByte(const Varnode *value, int &remaining) {
+    while (remaining > 0 && value->isWritten()) {
+      --remaining;
+      const auto *def = value->getDef();
+      if (def->code() == CPUI_COPY || def->code() == CPUI_CAST) {
+        value = def->getIn(0);
+        continue;
+      }
+      if (def->code() == CPUI_MULTIEQUAL) {
+        for (int4 i = 0; i < def->numInput() && remaining > 0; ++i) {
+          if (partialBooleanByte(def->getIn(i), remaining)) return true;
+        }
+        return false;
+      }
+      if (def->code() == CPUI_PIECE)
+        return def->getIn(1)->getSize() == 1 && def->getIn(1)->getNZMask() <= 1;
+      if (def->code() == CPUI_INT_AND && def->getIn(1)->isConstant() && value->getSize() == 8 &&
+          def->getIn(1)->getOffset() == 0xffffffffffffff00ULL) {
+        // The optimizer can turn xor al, al into a mask of the full register.
+        // Verify the source instruction, since a true 64-bit AND has the same IR.
+        const auto bytes = arch.image().bytesAt(def->getAddr().getOffset());
+        return bytes.first && bytes.second >= 2 &&
+            (bytes.first[0] == 0x30 || bytes.first[0] == 0x32) && bytes.first[1] == 0xc0;
+      }
+      break;
+    }
+    return false;
+  }
+  // Require a partial AL result as well as a Boolean low byte on every return.
   bool booleanByteReturns(Funcdata *fd) {
     bool partial = false, seen = false;
     for (auto it = fd->beginOpAll(); it != fd->endOpAll(); ++it) {
@@ -2265,11 +2298,8 @@ public:
       const auto *value = op->getIn(1);
       if ((value->getNZMask() & 0xfe) != 0) return false;
       seen = true;
-      if (value->isWritten()) {
-        const auto *def = value->getDef();
-        if (def->code() == CPUI_PIECE && def->getIn(1)->getSize() == 1 &&
-            def->getIn(1)->getNZMask() <= 1) partial = true;
-      }
+      int remaining = 32;
+      partial = partial || partialBooleanByte(value, remaining);
     }
     return seen && partial;
   }
@@ -2683,6 +2713,15 @@ bool Session::set_callsite_arguments(uint64_t caller, uint64_t site, uint64_t ta
     impl->callsite_argument_functions.insert(target);
     impl->invalidateInferred();
     return true;
+  });
+}
+void Session::set_win64_fifth_arguments(rust::Slice<const uint64_t> targets) {
+  std::lock_guard<std::mutex> lock(engine_mutex);
+  checked([&] {
+    impl->ready();
+    if (impl->spec.cspec != cspec_x64_bytes) return;
+    impl->win64_fifth_arguments = {targets.begin(), targets.end()};
+    impl->invalidateInferred();
   });
 }
 bool Session::set_message_send(uint64_t caller, uint64_t site, uint32_t count) {
