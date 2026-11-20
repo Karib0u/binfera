@@ -97,7 +97,7 @@ Sources, pinned. Download once, outside the repository; nothing is downloaded at
 | `Windows.Win32.winmd`, from [microsoft/windows-rs](https://github.com/microsoft/windows-rs) at commit `2670070e0a7d31ff6309d61890fcbc9a5799e456` (release 71, 2025-10-06), path `crates/libs/bindgen/default/Windows.Win32.winmd`, 24 MB | `https://raw.githubusercontent.com/microsoft/windows-rs/2670070e0a7d31ff6309d61890fcbc9a5799e456/crates/libs/bindgen/default/Windows.Win32.winmd` | `97d24cf1a9dc3e50782bbf1dba0952bf6a025fa583d8b3ae6c5ef713b463c869` |
 | `windows-metadata` crate 0.100.0 (reads the file) | `Cargo.toml` pins `=0.100.0`; `Cargo.lock` in `win32_metadata/` has the checksums | |
 
-windows-rs publishes the file under MIT OR Apache-2.0. The Microsoft NuGet package `Microsoft.Windows.SDK.Win32Metadata` carries the same data (more functions in some namespaces) under the Windows SDK license terms, which require acceptance, so it is not used. The data describes the Windows SDK headers: confirm the licensing before a pack with this data ships.
+windows-rs publishes the file under MIT OR Apache-2.0. The Microsoft NuGet package `Microsoft.Windows.SDK.Win32Metadata` carries the same data (more functions in some namespaces) under the Windows SDK license terms, which require acceptance, so it is not used. The data describes the Windows SDK headers; Microsoft redistributes this file under MIT OR Apache-2.0, which binfera relies on (see `NOTICE`).
 
 ```sh
 curl -fsSL -o "$work_dir/Windows.Win32.winmd" https://raw.githubusercontent.com/microsoft/windows-rs/2670070e0a7d31ff6309d61890fcbc9a5799e456/crates/libs/bindgen/default/Windows.Win32.winmd
