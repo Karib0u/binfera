@@ -96,6 +96,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "binfera-ghidra",
+ "binfera-project",
  "capstone",
  "cpp_demangle",
  "disarm64",
