@@ -1,10 +1,8 @@
-//! Runs the analyst's own coding agent (Claude Code or Codex) inside the app.
+//! Runs the analyst's own agent inside the app.
 //!
-//! Binfera runs no model. One chat turn is one non-interactive run of the agent's CLI, with
-//! Binfera's MCP server (`binfera mcp`, the bundled sidecar) attached for that run only, so the
-//! user's own agent configuration is never edited. The CLI's JSON event stream is translated into
-//! the one [`AgentEvent`] shape the panel understands, and a conversation continues by resuming
-//! the session id the CLI reports.
+//! Each chat turn starts an agent process and attaches Binfera's MCP server (`binfera mcp`, the
+//! bundled sidecar) for that run. The process's events are translated into [`AgentEvent`],
+//! and a conversation continues by resuming the session id the agent reports.
 //!
 //! The prompt goes in on stdin: Claude's `--allowedTools` and `--mcp-config` are variadic and
 //! would swallow a positional prompt, and stdin has no length or quoting limits.
@@ -18,6 +16,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
+
+mod vibe;
 
 /// Longest tool output kept for display; the agent itself always sees all of it.
 const OUTPUT_CHARS: usize = 4000;
@@ -92,7 +92,7 @@ pub struct AgentInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequest {
     id: u64,
-    /// `claude` or `codex`.
+    /// The desktop provider id.
     provider: String,
     prompt: String,
     /// The session id of an earlier turn, to continue that conversation.
@@ -202,12 +202,19 @@ pub async fn agent_detect() -> Vec<AgentInfo> {
     tauri::async_runtime::spawn_blocking(|| {
         [("claude", "Claude Code"), ("codex", "Codex")]
             .into_iter()
+            .chain([("vibe", "Mistral Vibe")])
             .map(|(id, name)| {
-                let path = find(id);
+                let path = find_provider(id);
                 AgentInfo {
                     id,
                     name,
-                    version: path.as_ref().and_then(version_of),
+                    version: path.as_ref().and_then(|path| {
+                        if id == "vibe" {
+                            vibe::version(path.clone())
+                        } else {
+                            version_of(path)
+                        }
+                    }),
                     path: path.map(|p| p.to_string_lossy().into_owned()),
                 }
             })
@@ -215,6 +222,14 @@ pub async fn agent_detect() -> Vec<AgentInfo> {
     })
     .await
     .unwrap_or_default()
+}
+
+fn find_provider(provider: &str) -> Option<PathBuf> {
+    if provider == "vibe" {
+        vibe::find_server()
+    } else {
+        find(provider)
+    }
 }
 
 // ----- the models an agent offers ------------------------------------------------------------
@@ -293,18 +308,8 @@ fn ask_agent<T: Send + 'static>(
     requests: Vec<String>,
     wanted: fn(&Value) -> Option<T>,
 ) -> Result<T, String> {
-    let mut command = Command::new(&program);
-    command
-        .args(args)
-        .current_dir(work_dir()?)
-        .env("PATH", child_path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    let mut command = agent_command(&program, &work_dir()?);
+    command.args(args).stderr(Stdio::null());
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;
@@ -371,12 +376,15 @@ fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
 #[tauri::command]
 pub async fn agent_models(provider: String) -> Result<Vec<ModelInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let program = find(&provider).ok_or_else(|| format!("{provider} is not installed"))?;
-        match provider.as_str() {
-            "claude" => claude_models(program),
-            "codex" => codex_models(program),
-            other => Err(format!("unknown agent: {other}")),
-        }
+        let list = match provider.as_str() {
+            "claude" => claude_models,
+            "codex" => codex_models,
+            "vibe" => vibe::models,
+            other => return Err(format!("unknown agent: {other}")),
+        };
+        let program =
+            find_provider(&provider).ok_or_else(|| format!("{provider} is not installed"))?;
+        list(program)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -638,36 +646,10 @@ fn work_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Starts one turn and returns at once; the run's events arrive on `on_event` and end with
-/// `Done` or `Error`.
-#[tauri::command]
-pub fn agent_run(
-    state: State<'_, Agents>,
-    request: AgentRequest,
-    on_event: Channel<AgentEvent>,
-) -> Result<(), String> {
-    let (program_name, parse): (&str, fn(&str) -> Vec<AgentEvent>) = match request.provider.as_str()
-    {
-        "claude" => ("claude", parse_claude),
-        "codex" => ("codex", parse_codex),
-        other => return Err(format!("unknown agent: {other}")),
-    };
-    let program = find(program_name).ok_or_else(|| format!("{program_name} is not installed"))?;
-    let engine = crate::engine::sidecar()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "binfera".into());
-    let session = request.session.as_deref();
-    let pick = choice(request.model.as_deref(), request.effort.as_deref())?;
-    let args = if program_name == "claude" {
-        claude_args(&engine, session, &pick)
-    } else {
-        codex_args(&engine, session, &pick)
-    };
-
-    let mut command = Command::new(&program);
+fn agent_command(program: &std::path::Path, cwd: &std::path::Path) -> Command {
+    let mut command = Command::new(program);
     command
-        .args(&args)
-        .current_dir(work_dir()?)
+        .current_dir(cwd)
         .env("PATH", child_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -676,6 +658,43 @@ pub fn agent_run(
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    command
+}
+
+/// Starts one turn and returns at once; the run's events arrive on `on_event` and end with
+/// `Done` or `Error`.
+#[tauri::command]
+pub fn agent_run(
+    state: State<'_, Agents>,
+    request: AgentRequest,
+    on_event: Channel<AgentEvent>,
+) -> Result<(), String> {
+    let parse: Option<fn(&str) -> Vec<AgentEvent>> = match request.provider.as_str() {
+        "claude" => Some(parse_claude),
+        "codex" => Some(parse_codex),
+        "vibe" => None,
+        other => return Err(format!("unknown agent: {other}")),
+    };
+    let provider = request.provider.as_str();
+    let program = find_provider(provider).ok_or_else(|| format!("{provider} is not installed"))?;
+    let engine = crate::engine::sidecar()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "binfera".into());
+    let session = request.session.as_deref();
+    let pick = choice(request.model.as_deref(), request.effort.as_deref())?;
+    let cwd = work_dir()?;
+    let mut command = agent_command(&program, &cwd);
+    match provider {
+        "claude" => {
+            command.args(claude_args(&engine, session, &pick));
+        }
+        "vibe" => {
+            vibe::configure(&mut command);
+        }
+        _ => {
+            command.args(codex_args(&engine, session, &pick));
+        }
+    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;
@@ -691,13 +710,7 @@ pub fn agent_run(
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
-    let prompt = request.prompt;
-
     std::thread::spawn(move || {
-        // Feed the prompt from its own thread so a full pipe can never block the reader below.
-        let feeder = std::thread::spawn(move || {
-            let _ = stdin.write_all(prompt.as_bytes());
-        });
         let stderr_thread = std::thread::spawn(move || {
             let mut text = String::new();
             let _ = stderr.read_to_string(&mut text);
@@ -705,17 +718,29 @@ pub fn agent_run(
             lines[lines.len().saturating_sub(STDERR_LINES)..].join("\n")
         });
 
+        let mut emit = |event| {
+            if on_event.send(event).is_err() {
+                // The panel is gone: nothing is listening, so stop the agent.
+                crate::engine::kill_tree(pid);
+            }
+        };
         let mut ended = false;
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            for event in parse(&line) {
-                ended |= matches!(event, AgentEvent::Done | AgentEvent::Error { .. });
-                if on_event.send(event).is_err() {
-                    // The panel is gone: nothing is listening, so stop the agent.
-                    crate::engine::kill_tree(pid);
+        let mut run_error = None;
+        if let Some(parse) = parse {
+            // Feed the prompt from its own thread so a full pipe can never block the reader below.
+            let feeder = std::thread::spawn(move || {
+                let _ = stdin.write_all(request.prompt.as_bytes());
+            });
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                for event in parse(&line) {
+                    ended |= matches!(event, AgentEvent::Done | AgentEvent::Error { .. });
+                    emit(event);
                 }
             }
+            let _ = feeder.join();
+        } else {
+            run_error = vibe::run(stdin, stdout, &cwd, &engine, &request, &mut emit).err();
         }
-        let _ = feeder.join();
         let status = child.wait();
         let stderr_text = stderr_thread.join().unwrap_or_default();
         let cancelled = inner.cancelled.lock().unwrap().remove(&id);
@@ -723,7 +748,11 @@ pub fn agent_run(
 
         if !ended {
             let failed = status.as_ref().map(|s| !s.success()).unwrap_or(true);
-            let event = if cancelled || !failed {
+            let event = if cancelled {
+                AgentEvent::Done
+            } else if let Some(message) = run_error {
+                AgentEvent::Error { message }
+            } else if !failed {
                 AgentEvent::Done
             } else {
                 let tail = stderr_text.trim();

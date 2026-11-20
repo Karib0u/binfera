@@ -105,6 +105,7 @@ name = "binfera-desktop"
 version = "1.0.1"
 dependencies = [
  "binfera-project",
+ "json-patch",
  "magika",
  "ort",
  "serde",

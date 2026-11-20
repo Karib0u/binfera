@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agent } from "../agent/client";
 import { project } from "../project/client";
 import { buildPrompt, TRIAGE, type AgentContext } from "../agent/prompt";
-import type { AgentId, AgentInfo, AgentRun } from "../agent/types";
+import { AGENT_NAMES, type AgentId, type AgentInfo, type AgentRun } from "../agent/types";
 import { apply, ARTIFACT_TOOLS, blocks, brief, callsThisTurn, toolSummary, type Item, type Tool } from "../agent/transcript";
 import { slim, titleOf, upsert, type Conversation } from "../agent/history";
 import { EFFECTS, FULL, GROUPS, request } from "./aiWorkflows";
@@ -102,7 +102,7 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
 
   const run = useRef<{ handle: AgentRun | null; token: number }>({ handle: null, token: 0 });
   const sessions = useRef<Partial<Record<AgentId, string>>>({});
-  const conv = useRef<string | null>(null);
+  const conv = useRef<{ id: string; provider: AgentId } | null>(null);
   const busyRef = useRef(false);
   const queueRef = useRef<string[]>([]);
   const stopped = useRef(false);
@@ -131,9 +131,9 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
   // The conversation is kept as it grows, so it can be read again and resumed.
   useEffect(() => {
     if (!items.length || !conv.current) return;
-    const provider = (Object.keys(sessions.current)[0] as AgentId | undefined) ?? pref;
+    const { id, provider } = conv.current;
     const first = items.find((i) => i.k === "user");
-    setHistory(upsert(history, { id: conv.current, provider, session: sessions.current[provider] ?? null, title: titleOf(first && first.k === "user" ? first.text : "Conversation"), updated: Date.now(), items: slim(items) }));
+    setHistory(upsert(history, { id, provider, session: sessions.current[provider] ?? null, title: titleOf(first && first.k === "user" ? first.text : "Conversation"), updated: Date.now(), items: slim(items) }));
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const installed = useMemo(() => (agents ?? []).filter((a) => a.path), [agents]);
@@ -150,9 +150,12 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
     const asked = { ...context, path, address: withSelection ? context.address : null };
     const prompt = buildPrompt(msg, asked, !sessions.current[provider]);
     const token = ++run.current.token;
-    if (!conv.current) conv.current = newId();
+    const newConversation = conv.current?.provider !== provider;
+    if (newConversation) {
+      conv.current = { id: newId(), provider };
+    }
     stopped.current = false;
-    setItems((prev) => [...prev, { k: "user", text: shown ?? msg }]);
+    setItems((prev) => [...(newConversation ? [] : prev), { k: "user", text: shown ?? msg }]);
     setText("");
     setBusy(true);
     setStarted(Date.now());
@@ -194,7 +197,7 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
   const resume = (c: Conversation) => {
     run.current.handle?.cancel(); run.current.token++;
     sessions.current = c.session ? { [c.provider]: c.session } : {};
-    conv.current = c.id;
+    conv.current = { id: c.id, provider: c.provider };
     setPref(c.provider); setItems(c.items); setBusy(false); setQueue([]); setUsage({ input: 0, output: 0, cost: 0 }); setShowHistory(false); setTab("chat");
   };
   const showArtifact = (where: "reports" | "changes") => { setFocus({ tab: where, n: (focus?.n ?? 0) + 1 }); setTab("artifacts"); };
@@ -235,7 +238,7 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
                   <li key={c.id} className="has-act">
                     <button type="button" className="ag-hist" onClick={() => resume(c)}>
                       <b>{c.title}</b>
-                      <span>{c.provider === "claude" ? "Claude Code" : "Codex"} · {c.items.filter((i) => i.k === "user").length} messages · {c.id === conv.current ? "current" : ago(c.updated)}</span>
+                      <span>{AGENT_NAMES[c.provider]} · {c.items.filter((i) => i.k === "user").length} messages · {c.id === conv.current?.id ? "current" : ago(c.updated)}</span>
                     </button>
                     <button type="button" className="ag-link" aria-label="Delete this conversation" onClick={() => setHistory(history.filter((h) => h.id !== c.id))}>Delete</button>
                   </li>
@@ -244,11 +247,12 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
             </div>
           ) : (
             <>
-              {agents === null && <p className="ag-empty">Looking for Claude Code and Codex…</p>}
+              {agents === null && <p className="ag-empty">Looking for installed agents…</p>}
               {agents && !provider && (
                 <div className="ag-empty">
-                  <p><b>No agent found.</b> Binfera runs no model. Install Claude Code or Codex and sign in once in a terminal, then reopen this panel.</p>
+                  <p><b>No agent found.</b> Install one of the supported agents and sign in from a terminal, then reopen this panel.</p>
                   <p><code>claude auth login</code>  <code>codex login</code></p>
+                  <p><code>vibe --setup</code></p>
                 </div>
               )}
               {provider && empty && (
@@ -264,10 +268,11 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
                   if (b.k === "tools") return <ToolGroup key={b.index} tools={b.tools} live={busy && n === blocksNow.length - 1} onArtifact={showArtifact} />;
                   const item = b.item;
                   if (item.k === "user") {
+                    const canRetry = b.index === lastUser || items[b.index + 1]?.k === "error";
                     return (
                       <li key={b.index} className="ag-user">
                         <span>{item.text}</span>
-                        {b.index === lastUser && !busy && <button type="button" className="ag-act" onClick={() => send(item.text)} title="Ask again">Retry</button>}
+                        {canRetry && !busy && <button type="button" className="ag-act" onClick={() => send(item.text)} title="Ask again">Retry</button>}
                       </li>
                     );
                   }

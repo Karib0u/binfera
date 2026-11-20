@@ -30,7 +30,7 @@ Binfera ships detection rules and signatures for malicious behaviour, and the we
 
 ## Does Binfera include an AI model?
 
-No. The [MCP server](mcp.md) exposes data and actions to an agent you already use, such as Claude Code or Codex, and the desktop app's **Agent** panel runs that same agent's command-line tool. What the agent sends to its provider is governed by the agent, not by Binfera.
+No. The [MCP server](mcp.md) exposes data and actions to an agent you already use. The desktop app's **Agent** panel connects to supported local agent installations. What the agent sends to its provider is governed by the agent, not by Binfera.
 
 ## Where are my notes stored?
 
