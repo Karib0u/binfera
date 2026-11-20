@@ -126,6 +126,31 @@ fn phnt_types_a_native_api_call() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `msvcrt.dll` exports `operator new` and `operator delete` under their decorated names, which no
+/// pack holds. The decoration (`??2@YAPAXI@Z`: cdecl, `void *` result, one `unsigned int`) gives the
+/// prototype, so the result needs no cast and the argument is a pointer.
+#[test]
+fn decorated_cpp_imports_of_a_system_dll_are_typed_from_their_names() -> anyhow::Result<()> {
+    let sample = include_bytes!(
+        "../../tests/testfiles/98c37c3c23bbfb362dac7754c6ba48e75cf24d73bc963a4cdfca557b9e016909.exe_"
+    );
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x401199)?;
+    let text = squeeze(&output.text);
+    for expected in [
+        "_Dest=msvcrt___2_YAPAXI_Z(sVar2+1);",
+        "msvcrt___3_YAXPAX_Z(*(void**)(param_1+0x18));",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{}", output.text);
+    }
+    assert!(
+        !text.contains("(char*)msvcrt___2_YAPAXI_Z"),
+        "{}",
+        output.text
+    );
+    Ok(())
+}
+
 #[test]
 fn explicitly_selected_unrecovered_wrapper_keeps_its_boundary() -> anyhow::Result<()> {
     let sample = include_bytes!("../../tests/testfiles/03b236b23b1ec37c663527c1f53af3fe.dll_");

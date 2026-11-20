@@ -154,6 +154,10 @@ Not covered: the phnt headers that need NDIS or window-system types (`ntnsi.h`, 
 
 The pack is looked up by function name, never by DLL: the API-set DLLs of the UCRT (`api-ms-win-crt-*-l1-1-0.dll`, which arrive from the importer as `api_ms_win_crt_*`) are accepted by their prefix in `system_import_function`, and the CRT DLLs `msvcr70` to `msvcr120`, `msvcr100d` to `msvcr120d`, `ucrtbased`, `vcruntime140`, `vcruntime140d` and `crtdll` are listed there with the rest. Data exports (`_acmdln`, `_iob`, `_fmode`, `_adjust_fdiv`) are not functions and stay untyped.
 
+## Decorated C++ imports
+
+No pack holds the decorated names that `msvcrt.dll` and the other CRT DLLs export (`??2@YAPAXI@Z`, `operator new`; `?terminate@@YAXXZ`). When the pack has no entry for an import, `binfera/src/decompiler.rs` takes the prototype from the decoration, through the Microsoft demangler (`demangle::Prototype`): calling convention, `this` for a method, and the result and parameter types, only when every type is a scalar or a pointer. Imports of a DLL outside the allow-list already took this path; the fallback now also applies to the listed DLLs. Decorated names whose types are classes, references to classes or by-value structures stay untyped: they need the class's declaration, which no pack has. Itanium names carry no result type and are not used for a result.
+
 ## Coverage
 
 `coverage.py` measures how many named PE imports reach the decompiler without a prototype, over `tests/testfiles` (or `--corpus DIR`), per DLL and per API. It separates a missing pack entry from a DLL missing in the allow-list above. It needs a built `binfera` (`--binfera PATH`).

@@ -1661,13 +1661,21 @@ impl DecompilerSession {
                         || import_symbol(name).is_some_and(rust::noreturn),
                 )
                 .map_err(init)?;
-            if let Some(function) = import_function(convention, name) {
-                // Unknown names are fine: the call keeps its warning.
-                native.apply_prototype(*address, function).map_err(init)?;
-            } else if let Some(prototype) = import_symbol(name)
-                .and_then(demangle::demangle)
-                .and_then(|demangled| demangled.prototype)
-            {
+            // Unknown names are fine: the call keeps its warning. A listed system DLL's
+            // decorated C++ name (`msvcrt.??2@YAPAXI@Z`, `operator new`) is in no pack, and its
+            // decoration then gives the prototype, as for an import of any other DLL.
+            let typed = match import_function(convention, name) {
+                Some(function) => native.apply_prototype(*address, function).map_err(init)?,
+                None => false,
+            };
+            let demangled = if typed {
+                None
+            } else {
+                import_symbol(name)
+                    .and_then(demangle::demangle)
+                    .and_then(|demangled| demangled.prototype)
+            };
+            if let Some(prototype) = demangled {
                 // A C++ import's decoration gives its prototype, `this` first for a method.
                 apply_demangled(&mut native, *address, &prototype);
             }
