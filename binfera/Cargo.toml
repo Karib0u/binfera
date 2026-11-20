@@ -96,6 +96,8 @@ capstone = { version = "0.14.0", default-features = false, features = ["std", "f
 
 [dev-dependencies]
 anyhow = "1"
+# The analyst-type proof of concept checks what the project store can persist.
+binfera-project = { path = "../binfera-project" }
 tempfile = "3"
 # Snapshot tests for gnarly parsed rules.
 insta = "1"
