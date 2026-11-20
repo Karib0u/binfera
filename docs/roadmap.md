@@ -1,23 +1,16 @@
 # Roadmap
 
-Updated: 2026-11-20. Planned work, plus what already exists so it is not
-re-planned. Priorities describe relative value, not delivery dates.
+Updated: 2026-11-20. Planned work, plus what already exists so it is not re-planned. Priorities describe relative value, not delivery dates.
 
-Scope rule: binfera answers "what does this one executable do?" by reading
-code. File-format parsing, unpacking, installer and bytecode script analysis,
-and verdicts belong in the File Analysis Bus project.
+Scope rule: binfera answers "what does this one executable do?" by reading code. File-format parsing, unpacking, installer and bytecode script analysis, and verdicts belong in the File Analysis Bus project.
 
 ## Already covered (do not re-plan)
 
-- PE: resources, version info, manifest, Authenticode, Rich header, imphash,
-  compiler traces, COFF/object loading, packer detection.
+- PE: resources, version info, manifest, Authenticode, Rich header, imphash, compiler traces, COFF/object loading, packer detection.
 - Mach-O code signatures; ELF and Mach-O detail views.
-- Go `pclntab`, DWARF, MSVC RTTI and exceptions, Delphi VMTs/RTTI, Nim and
-  Itanium/MS demangling, FLIRT and Function ID.
+- Go `pclntab`, DWARF, MSVC RTTI and exceptions, Delphi VMTs/RTTI, Nim and Itanium/MS demangling, FLIRT and Function ID.
 - Hex view with header-field coloring for PE, ELF and Mach-O.
-- Decompilation for x86, x86-64, AArch64, ARM32/Thumb and MIPS32; capa;
-  function emulation; diffing; entropy; hex, strings and imports views;
-  zip and 7z with known-password probing; .NET IL listing; MCP/agent.
+- Decompilation for x86, x86-64, AArch64, ARM32/Thumb and MIPS32; capa; function emulation; diffing; entropy; hex, strings and imports views; zip and 7z with known-password probing; .NET IL listing; MCP/agent.
 
 ## P1: gaps listed in binfera's own docs
 
@@ -49,6 +42,4 @@ and verdicts belong in the File Analysis Bus project.
 
 ## Handled by the File Analysis Bus project
 
-NSIS and Inno Setup script analysis, AutoIt, PyInstaller/py2exe/Nuitka
-unpacking, minidump, archives beyond zip/7z, documents, SQLite and media
-parsers.
+NSIS and Inno Setup script analysis, AutoIt, PyInstaller/py2exe/Nuitka unpacking, minidump, archives beyond zip/7z, documents, SQLite and media parsers.
