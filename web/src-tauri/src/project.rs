@@ -202,6 +202,7 @@ pub struct McpSetup {
     command: String,
     opencode: String,
     pi: String,
+    vibe: String,
     database: String,
 }
 
@@ -220,6 +221,7 @@ pub fn mcp_setup() -> McpSetup {
     McpSetup {
         opencode: format!("opencode mcp add binfera --global -- {quoted} mcp"),
         pi: format!("pi mcp add binfera -- {quoted} mcp"),
+        vibe: format!("vibe mcp add binfera --transport stdio --command {quoted} --arg mcp"),
         command: exe,
         database: binfera_project::data_dir()
             .join("projects.sqlite3")

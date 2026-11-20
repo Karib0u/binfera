@@ -1,10 +1,8 @@
-//! Runs the analyst's own coding agent (Claude Code or Codex) inside the app.
+//! Runs the analyst's own agent inside the app.
 //!
-//! Binfera runs no model. One chat turn is one non-interactive run of the agent's CLI, with
-//! Binfera's MCP server (`binfera mcp`, the bundled sidecar) attached for that run only, so the
-//! user's own agent configuration is never edited. The CLI's JSON event stream is translated into
-//! the one [`AgentEvent`] shape the panel understands, and a conversation continues by resuming
-//! the session id the CLI reports.
+//! Each chat turn starts an agent process and attaches Binfera's MCP server (`binfera mcp`, the
+//! bundled sidecar) for that run. The process's events are translated into [`AgentEvent`],
+//! and a conversation continues by resuming the session id the agent reports.
 //!
 //! The prompt goes in on stdin: Claude's `--allowedTools` and `--mcp-config` are variadic and
 //! would swallow a positional prompt, and stdin has no length or quoting limits.
@@ -18,6 +16,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
+
+mod vibe;
 
 /// Longest tool output kept for display; the agent itself always sees all of it.
 const OUTPUT_CHARS: usize = 4000;
@@ -92,7 +92,7 @@ pub struct AgentInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequest {
     id: u64,
-    /// `claude` or `codex`.
+    /// The desktop provider id.
     provider: String,
     prompt: String,
     /// The session id of an earlier turn, to continue that conversation.
@@ -140,6 +140,12 @@ fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
+    // Where uv installs tools such as the Vibe CLI when its default (~/.local/bin) is moved.
+    for var in ["UV_TOOL_BIN_DIR", "XDG_BIN_HOME"] {
+        if let Some(dir) = std::env::var_os(var).filter(|d| !d.is_empty()) {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         let home = PathBuf::from(home);
         for rel in [
@@ -202,12 +208,19 @@ pub async fn agent_detect() -> Vec<AgentInfo> {
     tauri::async_runtime::spawn_blocking(|| {
         [("claude", "Claude Code"), ("codex", "Codex")]
             .into_iter()
+            .chain([("vibe", "Mistral Vibe")])
             .map(|(id, name)| {
-                let path = find(id);
+                let path = find_provider(id);
                 AgentInfo {
                     id,
                     name,
-                    version: path.as_ref().and_then(version_of),
+                    version: path.as_ref().and_then(|path| {
+                        if id == "vibe" {
+                            vibe::version(path.clone())
+                        } else {
+                            version_of(path)
+                        }
+                    }),
                     path: path.map(|p| p.to_string_lossy().into_owned()),
                 }
             })
@@ -215,6 +228,14 @@ pub async fn agent_detect() -> Vec<AgentInfo> {
     })
     .await
     .unwrap_or_default()
+}
+
+fn find_provider(provider: &str) -> Option<PathBuf> {
+    if provider == "vibe" {
+        vibe::find_server()
+    } else {
+        find(provider)
+    }
 }
 
 // ----- the models an agent offers ------------------------------------------------------------
@@ -236,10 +257,18 @@ pub struct ModelInfo {
 
 /// The answer to Claude Code's `initialize` control request.
 fn parse_claude_models(response: &Value) -> Vec<ModelInfo> {
-    response["response"]["response"]["models"]
+    let models = response["response"]["response"]["models"]
         .as_array()
-        .into_iter()
-        .flatten()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    // The "default" row names the model the user's settings resolve to.
+    let resolved = models
+        .iter()
+        .find(|m| m["value"] == "default")
+        .and_then(|m| m["resolvedModel"].as_str());
+    let mut default_marked = false;
+    models
+        .iter()
         // "default" stands for whatever the user's settings say; the panel's own Default row does that.
         .filter(|m| m["value"] != "default")
         .filter_map(|m| {
@@ -254,10 +283,88 @@ fn parse_claude_models(response: &Value) -> Vec<ModelInfo> {
                     .filter_map(|e| e.as_str().map(String::from))
                     .collect(),
                 default_effort: None,
-                is_default: false,
+                is_default: {
+                    let is = !default_marked
+                        && resolved.is_some()
+                        && (m["resolvedModel"].as_str() == resolved
+                            || m["value"].as_str() == resolved);
+                    default_marked |= is;
+                    is
+                },
             })
         })
         .collect()
+}
+
+/// What the agent uses when the panel leaves a choice blank, from the agent's own configuration.
+#[derive(Debug, Default, PartialEq)]
+struct Configured {
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+fn config_dir(var: &str, default: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join(default))
+        })
+}
+
+/// Claude Code's effort: `CLAUDE_CODE_EFFORT_LEVEL`, else `effortLevel` in its user settings.
+fn claude_configured(env: Option<String>, settings: Option<&str>) -> Configured {
+    let effort = env.filter(|e| !e.trim().is_empty()).or_else(|| {
+        let settings: Value = serde_json::from_str(settings?).ok()?;
+        settings["effortLevel"].as_str().map(String::from)
+    });
+    Configured {
+        model: None,
+        effort: effort.map(|e| e.trim().to_lowercase()),
+    }
+}
+
+/// Codex's `model` and `model_reasoning_effort` from its config.toml.
+fn codex_configured(config: Option<&str>) -> Configured {
+    let Some(table) = config.and_then(|c| c.parse::<toml::Table>().ok()) else {
+        return Configured::default();
+    };
+    // The selected profile's values replace the top-level ones.
+    let profile = table
+        .get("profile")
+        .and_then(|p| p.as_str())
+        .and_then(|name| table.get("profiles")?.get(name));
+    let get = |key: &str| {
+        profile
+            .and_then(|p| p.get(key))
+            .or_else(|| table.get(key))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    };
+    Configured {
+        model: get("model"),
+        effort: get("model_reasoning_effort"),
+    }
+}
+
+/// Marks the model and reasoning level the agent falls back to, so the panel can name them.
+fn apply_configured(models: &mut [ModelInfo], configured: &Configured) {
+    if let Some(model) = &configured.model {
+        if models.iter().any(|m| &m.id == model) {
+            for m in models.iter_mut() {
+                m.is_default = &m.id == model;
+            }
+        }
+    }
+    if let Some(effort) = &configured.effort {
+        for m in models.iter_mut() {
+            if m.efforts.is_empty() || m.efforts.contains(effort) {
+                m.default_effort = Some(effort.clone());
+            }
+        }
+    }
 }
 
 /// The answer to Codex app-server's `model/list`.
@@ -285,26 +392,21 @@ fn parse_codex_models(response: &Value) -> Vec<ModelInfo> {
         .collect()
 }
 
+/// How long a model list may take: the agents start their own services first.
+const LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Starts the agent's protocol mode, sends it `requests` and returns the first reply for which
-/// `wanted` gives something, then stops the process. It asks for a list, so no model runs.
+/// `wanted` gives something within `timeout`, then stops the process. It asks for a list or a
+/// version, so no model runs.
 fn ask_agent<T: Send + 'static>(
     program: PathBuf,
     args: &[&str],
     requests: Vec<String>,
+    timeout: std::time::Duration,
     wanted: fn(&Value) -> Option<T>,
 ) -> Result<T, String> {
-    let mut command = Command::new(&program);
-    command
-        .args(args)
-        .current_dir(work_dir()?)
-        .env("PATH", child_path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    let mut command = agent_command(&program, &work_dir()?);
+    command.args(args).stderr(Stdio::null());
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;
@@ -325,14 +427,20 @@ fn ask_agent<T: Send + 'static>(
     for request in requests {
         let _ = writeln!(stdin, "{request}");
     }
-    let found = rx.recv_timeout(std::time::Duration::from_secs(30));
+    let found = rx.recv_timeout(timeout);
     crate::engine::kill_tree(pid);
     let _ = child.wait();
     found.map_err(|_| format!("{} did not list its models", program.display()))
 }
 
 fn claude_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
-    ask_agent(
+    let settings = config_dir("CLAUDE_CONFIG_DIR", ".claude")
+        .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok());
+    let configured = claude_configured(
+        std::env::var("CLAUDE_CODE_EFFORT_LEVEL").ok(),
+        settings.as_deref(),
+    );
+    let mut models = ask_agent(
         program,
         &[
             "-p",
@@ -347,15 +455,20 @@ fn claude_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             "--no-session-persistence",
         ],
         vec![json!({"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}).to_string()],
+        LIST_TIMEOUT,
         |v| {
             (v["type"] == "control_response" && v["response"]["request_id"] == "models")
                 .then(|| parse_claude_models(v))
         },
-    )
+    )?;
+    apply_configured(&mut models, &configured);
+    Ok(models)
 }
 
 fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
-    ask_agent(
+    let config = config_dir("CODEX_HOME", ".codex")
+        .and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok());
+    let mut models = ask_agent(
         program,
         &["app-server"],
         vec![
@@ -363,20 +476,26 @@ fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             json!({"jsonrpc": "2.0", "method": "initialized"}).to_string(),
             json!({"jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {}}).to_string(),
         ],
+        LIST_TIMEOUT,
         |v| (v["id"] == 2).then(|| parse_codex_models(v)),
-    )
+    )?;
+    apply_configured(&mut models, &codex_configured(config.as_deref()));
+    Ok(models)
 }
 
 /// The models the agent says it can run, with the reasoning levels each one supports.
 #[tauri::command]
 pub async fn agent_models(provider: String) -> Result<Vec<ModelInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let program = find(&provider).ok_or_else(|| format!("{provider} is not installed"))?;
-        match provider.as_str() {
-            "claude" => claude_models(program),
-            "codex" => codex_models(program),
-            other => Err(format!("unknown agent: {other}")),
-        }
+        let list = match provider.as_str() {
+            "claude" => claude_models,
+            "codex" => codex_models,
+            "vibe" => vibe::models,
+            other => return Err(format!("unknown agent: {other}")),
+        };
+        let program =
+            find_provider(&provider).ok_or_else(|| format!("{provider} is not installed"))?;
+        list(program)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -638,36 +757,10 @@ fn work_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Starts one turn and returns at once; the run's events arrive on `on_event` and end with
-/// `Done` or `Error`.
-#[tauri::command]
-pub fn agent_run(
-    state: State<'_, Agents>,
-    request: AgentRequest,
-    on_event: Channel<AgentEvent>,
-) -> Result<(), String> {
-    let (program_name, parse): (&str, fn(&str) -> Vec<AgentEvent>) = match request.provider.as_str()
-    {
-        "claude" => ("claude", parse_claude),
-        "codex" => ("codex", parse_codex),
-        other => return Err(format!("unknown agent: {other}")),
-    };
-    let program = find(program_name).ok_or_else(|| format!("{program_name} is not installed"))?;
-    let engine = crate::engine::sidecar()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "binfera".into());
-    let session = request.session.as_deref();
-    let pick = choice(request.model.as_deref(), request.effort.as_deref())?;
-    let args = if program_name == "claude" {
-        claude_args(&engine, session, &pick)
-    } else {
-        codex_args(&engine, session, &pick)
-    };
-
-    let mut command = Command::new(&program);
+fn agent_command(program: &std::path::Path, cwd: &std::path::Path) -> Command {
+    let mut command = Command::new(program);
     command
-        .args(&args)
-        .current_dir(work_dir()?)
+        .current_dir(cwd)
         .env("PATH", child_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -676,6 +769,43 @@ pub fn agent_run(
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    command
+}
+
+/// Starts one turn and returns at once; the run's events arrive on `on_event` and end with
+/// `Done` or `Error`.
+#[tauri::command]
+pub fn agent_run(
+    state: State<'_, Agents>,
+    request: AgentRequest,
+    on_event: Channel<AgentEvent>,
+) -> Result<(), String> {
+    let parse: Option<fn(&str) -> Vec<AgentEvent>> = match request.provider.as_str() {
+        "claude" => Some(parse_claude),
+        "codex" => Some(parse_codex),
+        "vibe" => None,
+        other => return Err(format!("unknown agent: {other}")),
+    };
+    let provider = request.provider.as_str();
+    let program = find_provider(provider).ok_or_else(|| format!("{provider} is not installed"))?;
+    let engine = crate::engine::sidecar()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "binfera".into());
+    let session = request.session.as_deref();
+    let pick = choice(request.model.as_deref(), request.effort.as_deref())?;
+    let cwd = work_dir()?;
+    let mut command = agent_command(&program, &cwd);
+    match provider {
+        "claude" => {
+            command.args(claude_args(&engine, session, &pick));
+        }
+        "vibe" => {
+            vibe::configure(&mut command);
+        }
+        _ => {
+            command.args(codex_args(&engine, session, &pick));
+        }
+    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;
@@ -691,13 +821,7 @@ pub fn agent_run(
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
-    let prompt = request.prompt;
-
     std::thread::spawn(move || {
-        // Feed the prompt from its own thread so a full pipe can never block the reader below.
-        let feeder = std::thread::spawn(move || {
-            let _ = stdin.write_all(prompt.as_bytes());
-        });
         let stderr_thread = std::thread::spawn(move || {
             let mut text = String::new();
             let _ = stderr.read_to_string(&mut text);
@@ -705,17 +829,51 @@ pub fn agent_run(
             lines[lines.len().saturating_sub(STDERR_LINES)..].join("\n")
         });
 
+        let mut emit = |event| {
+            if on_event.send(event).is_err() {
+                // The panel is gone: nothing is listening, so stop the agent.
+                crate::engine::kill_tree(pid);
+            }
+        };
         let mut ended = false;
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            for event in parse(&line) {
-                ended |= matches!(event, AgentEvent::Done | AgentEvent::Error { .. });
-                if on_event.send(event).is_err() {
-                    // The panel is gone: nothing is listening, so stop the agent.
-                    crate::engine::kill_tree(pid);
+        if let Some(parse) = parse {
+            // Feed the prompt from its own thread so a full pipe can never block the reader below.
+            let feeder = std::thread::spawn(move || {
+                let _ = stdin.write_all(request.prompt.as_bytes());
+            });
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                for event in parse(&line) {
+                    ended |= matches!(event, AgentEvent::Done | AgentEvent::Error { .. });
+                    emit(event);
                 }
             }
+            let _ = feeder.join();
+        } else {
+            // Requests are written from their own thread so a long prompt never blocks the reading.
+            let (input, lines) = std::sync::mpsc::channel::<String>();
+            let writer = std::thread::spawn(move || {
+                for line in lines {
+                    if writeln!(stdin, "{line}")
+                        .and_then(|_| stdin.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            let result = vibe::run(input, stdout, &cwd, &engine, &request, &mut emit);
+            // The app server and the Binfera server it started stay up until told otherwise; the
+            // turn is settled here, so end them rather than wait on how they shut down.
+            crate::engine::kill_tree(pid);
+            let _ = writer.join();
+            let cancelled = inner.cancelled.lock().unwrap().contains(&id);
+            match result {
+                Ok(()) => emit(AgentEvent::Done),
+                Err(_) if cancelled => emit(AgentEvent::Done),
+                Err(message) => emit(AgentEvent::Error { message }),
+            }
+            ended = true;
         }
-        let _ = feeder.join();
         let status = child.wait();
         let stderr_text = stderr_thread.join().unwrap_or_default();
         let cancelled = inner.cancelled.lock().unwrap().remove(&id);
@@ -917,6 +1075,50 @@ mod tests {
         assert!(models[0].is_default);
         assert_eq!(models[0].default_effort.as_deref(), Some("low"));
         assert_eq!(models[0].efforts, ["low", "ultra"]);
+    }
+
+    #[test]
+    fn defaults_come_from_each_agents_own_configuration() {
+        let claude = json!({"response": {"response": {"models": [
+            {"value": "default", "resolvedModel": "claude-opus-5-5"},
+            {"value": "opus", "resolvedModel": "claude-opus-5-5", "supportedEffortLevels": ["low", "medium", "high"]},
+            {"value": "haiku", "resolvedModel": "claude-haiku-5-5", "supportedEffortLevels": ["low"]}
+        ]}}});
+        let mut models = parse_claude_models(&claude);
+        assert!(models[0].is_default && !models[1].is_default);
+        let configured = claude_configured(None, Some(r#"{"effortLevel": "medium"}"#));
+        assert_eq!(configured.effort.as_deref(), Some("medium"));
+        apply_configured(&mut models, &configured);
+        assert_eq!(models[0].default_effort.as_deref(), Some("medium"));
+        assert_eq!(models[1].default_effort, None, "haiku has no medium level");
+        // The environment wins over the settings file.
+        assert_eq!(
+            claude_configured(Some("HIGH".into()), Some(r#"{"effortLevel": "low"}"#)).effort,
+            Some("high".into())
+        );
+
+        let codex = json!({"result": {"data": [
+            {"id": "a", "isDefault": true, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]},
+            {"id": "b", "isDefault": false, "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}
+        ]}});
+        let mut models = parse_codex_models(&codex);
+        let configured = codex_configured(Some(
+            "model = \"b\"\nmodel_reasoning_effort = \"high\"\n[profiles.x]\nmodel = \"a\"\n",
+        ));
+        apply_configured(&mut models, &configured);
+        assert!(!models[0].is_default && models[1].is_default);
+        assert_eq!(models[0].default_effort.as_deref(), Some("high"));
+        assert_eq!(
+            codex_configured(Some(
+                "model = \"a\"\nprofile = \"x\"\n[profiles.x]\nmodel = \"b\"\n"
+            ))
+            .model,
+            Some("b".into())
+        );
+        // A model the agent does not list leaves its own default in place.
+        let mut models = parse_codex_models(&codex);
+        apply_configured(&mut models, &codex_configured(Some("model = \"gone\"")));
+        assert!(models[0].is_default);
     }
 
     /// Needs the real CLIs, signed in: `cargo test -- --ignored real_model_lists`.

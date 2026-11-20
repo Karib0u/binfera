@@ -56,6 +56,7 @@ export const project: ProjectClient = {
   setup: async () => ({
     command: "/Applications/Binfera.app/Contents/MacOS/binfera",
     opencode: "opencode mcp add binfera --global -- /Applications/Binfera.app/Contents/MacOS/binfera mcp",
+    vibe: "vibe mcp add binfera --transport stdio --command /Applications/Binfera.app/Contents/MacOS/binfera --arg mcp",
     pi: "pi mcp add binfera -- /Applications/Binfera.app/Contents/MacOS/binfera mcp",
     database: "~/Library/Application Support/binfera/projects.sqlite3",
   }),

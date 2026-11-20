@@ -11,9 +11,9 @@ const hex = (n: number) => "0x" + n.toString(16);
  * The message box of the agent dock: "/" opens the commands and canned requests, "@" a function or address
  * to mention, Enter sends (or queues, while the agent works) and Esc interrupts.
  */
-export default function Composer({ text, onText, onSend, onInterrupt, busy, disabled, placeholder, chips, queue, onUnqueue, symbols, slash, bar, inputRef }: {
+export default function Composer({ text, onText, onSend, onInterrupt, busy, disabled, placeholder, queue, onUnqueue, symbols, slash, bar, inputRef }: {
   text: string; onText: (t: string) => void; onSend: (t: string) => void; onInterrupt: () => void;
-  busy: boolean; disabled: boolean; placeholder: string; chips: ReactNode;
+  busy: boolean; disabled: boolean; placeholder: string;
   queue: string[]; onUnqueue: (i: number) => void;
   symbols: () => SymbolRef[]; slash: SlashItem[]; bar: ReactNode; inputRef: RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -96,7 +96,6 @@ export default function Composer({ text, onText, onSend, onInterrupt, busy, disa
           ))}
         </ul>
       )}
-      <div className="ag-ctx" aria-label="What the agent is told about">{chips}</div>
       <textarea ref={inputRef} value={text} rows={Math.min(8, Math.max(2, text.split("\n").length))} placeholder={placeholder} disabled={disabled}
         onChange={(e) => { onText(e.target.value); setCaret(e.target.selectionStart); }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}

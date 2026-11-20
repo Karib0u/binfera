@@ -6,7 +6,7 @@ export interface Run { run_id: string; workflow: string; started: number; change
 export interface Change { run_id: string | null; kind: string; target: string; before: string | null; after: string | null; source: "human" | "ai"; confidence: string; revision: number; ts: number; undone: boolean }
 export interface Activity { revision: number; runs: Run[]; changes: Change[]; counts: Counts }
 export interface ReportInfo { id: number; version: number; title: string; created: number }
-export interface McpSetup { command: string; opencode: string; pi: string; database: string }
+export interface McpSetup { command: string; opencode: string; pi: string; vibe: string; database: string }
 
 /** The persistent project database shared with `binfera mcp`; only the desktop build has one. */
 export interface ProjectClient {

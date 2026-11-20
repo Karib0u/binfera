@@ -145,9 +145,10 @@ export default function Artifacts({ sha, notes, tick, focus, onOpen }: { sha: st
 
       <details className="ag-more ag-connect">
         <summary>Use another agent</summary>
-        <p>Connect OpenCode, Pi, or another MCP-compatible agent to work on this file. Register Binfera once, then use your agent in its own terminal.</p>
+        <p>Register Binfera to use these agents from your terminal.</p>
         <CopyLine label="OpenCode" text={setup?.opencode ?? "opencode mcp add binfera --global -- binfera mcp"} />
         <CopyLine label="Pi" text={setup?.pi ?? "pi mcp add binfera -- binfera mcp"} />
+        <CopyLine label="Mistral Vibe CLI" text={setup?.vibe ?? "vibe mcp add binfera --transport stdio --command binfera --arg mcp"} />
       </details>
     </div>
   );

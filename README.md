@@ -27,7 +27,7 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 |---|---|---|
 | Try it now, with nothing to install | Browser | [1](#1-in-a-browser) |
 | Analyze files day to day and keep my notes | Desktop app | [2](#2-desktop-app) |
-| Let Claude Code or Codex do the analysis | Desktop app, or command line and MCP | [2](#2-desktop-app), [3](#3-ai-agent-without-the-desktop-app) |
+| Analyze with an AI agent | Desktop app, or command line and MCP | [2](#2-desktop-app), [3](#3-ai-agent-without-the-desktop-app) |
 | Check builds in a script or CI | Command line | [4](#4-in-a-script-or-ci) |
 
 ## What it does
@@ -37,8 +37,8 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 - **Compare two binaries.** Which capabilities, functions and file contents changed, down to the instruction. See [comparing binaries](docs/comparison.md).
 - **Read it your way.** Control-flow graph, assembly, strings, imports and sections; FLIRT signatures and Function ID packs name library code.
 - **Keep your work.** The desktop app saves your renames and comments and remembers the files you opened.
-- **Bring your own AI agent.** An [MCP server](docs/mcp.md) lets Claude Code, Codex or any MCP client name functions, comment code and save reports with evidence. binfera runs no model, and every agent run can be undone.
-- **Local by design.** Nothing is uploaded; the static site can be served from any host.
+- **Bring your own AI agent.** The [MCP server](docs/mcp.md) lets agents name functions, comment code and save reports with evidence. Every agent run can be undone.
+- **Local analysis.** The browser and desktop analyze files on your machine. Connected agents use their own model providers.
 
 ## A closer look
 
@@ -65,7 +65,7 @@ Every picture is the WannaCry demo from [binfera.io](https://binfera.io), so you
 
 ### With your own AI agent
 
-In the desktop app, **Agent** runs your own Claude Code or Codex through Binfera's tools. This is a real Claude Code triage of the same sample, replayed: it reads the overview, the capabilities and the key functions, names and comments them as it goes, and answers with addresses that open the code.
+In the desktop app, **Agent** connects your installed agent to Binfera's tools. This is a real Claude Code triage of the same sample, replayed: it reads the overview, the capabilities and the key functions, names and comments them as it goes, and answers with addresses that open the code.
 
 ![Claude Code triaging WannaCry in the Agent panel: tool calls, functions renamed in the list as it saves them, the verdict, and an address in the answer opening the code](docs/images/agent.gif)
 
@@ -98,11 +98,11 @@ Open [Binfera in your browser](https://binfera.io), pick a sample or drop a file
 Download the installer for your OS from the [latest release](https://github.com/Karib0u/binfera/releases/latest) and run it. The macOS app is signed and notarised; the Windows installer is not signed, so SmartScreen warns on first run ([details](https://docs.binfera.io/installation/#code-signing)).
 
 1. **Choose a file** or drop one on the window. Recent files and your renames and comments are kept.
-2. To bring in an AI agent, click **Agent** (Cmd/Ctrl+J). The app runs your own Claude Code or Codex against the open file; pick a request such as **Triage this binary** or ask your own.
+2. Click **Agent** (Cmd/Ctrl+J) and choose an installed agent in the chat composer. Ask a question or select **Triage this binary**. [Desktop agent setup](docs/mcp.md#in-the-desktop-app)
 
 ### 3. AI agent without the desktop app
 
-For Claude Code, Codex or any MCP client, with nothing but the command-line tool.
+The command-line tool serves MCP over stdio.
 
 1. Install `binfera`. It is one file and includes the capa rules:
 
@@ -119,7 +119,9 @@ For Claude Code, Codex or any MCP client, with nothing but the command-line tool
    codex mcp add binfera -- ~/.binfera/bin/binfera mcp
    ```
 
-3. Ask: *"Open `sample.exe` with Binfera and write a full analysis report."*
+   For Mistral Vibe, see [terminal setup](docs/mcp.md#mistral-vibe-cli).
+
+3. Ask your agent to open `sample.exe` with Binfera and write an analysis report.
 
 Everything the agent saves is kept in a local project database, and the desktop app opens the same one, so you can review an agent's work there later. See [Binfera MCP server](docs/mcp.md) for the tools and limits, and [function emulation](docs/emulation.md).
 

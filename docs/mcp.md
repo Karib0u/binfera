@@ -44,6 +44,24 @@
 
 If `binfera` is not on the agent's `PATH`, use the full path, such as `~/.binfera/bin/binfera mcp`. The desktop app's **Agent → Artifacts → Use another agent** shows these commands with the path filled in.
 
+### Mistral Vibe CLI
+
+Install the Vibe CLI and run `vibe --setup` to sign in. [Vibe CLI installation guide](https://docs.mistral.ai/vibe/code/cli/install-setup)
+
+```sh
+vibe mcp add binfera --transport stdio --command binfera --arg mcp
+```
+
+Use the full path to `binfera` if it is outside your PATH. If your version of the CLI lacks `vibe mcp add` for stdio servers, add this block to `~/.vibe/config.toml`.
+
+```toml
+[[mcp_servers]]
+name = "binfera"
+transport = "stdio"
+command = "binfera"
+args = ["mcp"]
+```
+
 ## Ask
 
 There are no workflows to learn. Ask in plain words:
@@ -80,8 +98,10 @@ Library functions recognised by signature (CRT helpers, for example) are named a
 
 The desktop app opens the same projects. **Agent** (top right, or Cmd/Ctrl+J) opens a panel with two tabs:
 
-- **Chat** runs your own Claude Code or Codex on the open file, if it is installed and signed in. Your agent configuration is never edited.
+- **Chat** runs your selected agent on the open file. Sign in with your provider before sending a message.
 - **Artifacts** lists agent runs with **Undo**, recent changes and saved reports. **Use another agent** shows the commands above with the path filled in.
+
+For **Mistral Vibe**, Binfera detects `vibe-app-server` from the CLI installation or from `Vibe.app` on macOS. For hosted models, install the CLI if needed and sign in with `vibe --setup`, or provide `MISTRAL_API_KEY` in Binfera's launch environment. Binfera attaches its MCP server automatically for each session.
 
 Changes from the agent appear in the code views within about two seconds.
 

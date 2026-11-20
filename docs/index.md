@@ -14,7 +14,7 @@ Binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 |---|---|---|
 | Try it now, with nothing to install | Browser | [binfera.io](https://binfera.io) |
 | Analyze files day to day and keep my notes | Desktop app | [Installation](installation.md#desktop-app) |
-| Let Claude Code or Codex do the analysis | Desktop app, or command line and MCP | [Connect an AI agent](mcp.md) |
+| Analyze with an AI agent | Desktop app, or command line and MCP | [Connect an AI agent](mcp.md) |
 | Check builds in a script or CI | Command line | [Command line](cli.md) |
 
 ## What it does

@@ -1,5 +1,11 @@
-/** The agents the desktop app can run, one per supported CLI. */
-export type AgentId = "claude" | "codex";
+/** The agents the desktop app can run. */
+export const AGENT_NAMES = {
+  claude: "Claude Code",
+  codex: "Codex",
+  vibe: "Mistral Vibe",
+} as const;
+
+export type AgentId = keyof typeof AGENT_NAMES;
 
 export interface AgentInfo {
   id: AgentId;
@@ -49,7 +55,7 @@ export interface AgentRun {
   started: Promise<void>;
 }
 
-/** Desktop only: Binfera runs no model, so this drives the analyst's own Claude Code or Codex. */
+/** Desktop only: this drives the analyst's own agent. */
 export interface AgentClient {
   detect(): Promise<AgentInfo[]>;
   /** The models the agent can run, as it lists them. */

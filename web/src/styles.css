@@ -1464,12 +1464,6 @@ button.fv-finding:hover { background: var(--hover); }
 
 .ag-compose { position: relative; flex: none; margin: 0 10px 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); transition: border-color .12s; }
 .ag-compose:focus-within { border-color: color-mix(in srgb, var(--muted) 70%, var(--line)); }
-.ag-ctx { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px 0; }
-.ag-ctx > span, .ag-ctx-add { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 7px; border-radius: 5px; background: var(--soft); color: var(--muted); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ag-ctx > span button { color: var(--muted); font-size: 9px; }
-.ag-ctx > span button:hover { color: var(--text); }
-.ag-ctx-add { background: none; border: 1px dashed var(--line); }
-.ag-ctx-add:hover { color: var(--text); }
 .ag-compose textarea { display: block; width: 100%; resize: none; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; padding: 8px 12px 4px; border: 0; background: none; color: var(--text); font: inherit; line-height: 1.5; outline: none; }
 .ag-compose textarea:disabled { opacity: .5; }
 .ag-bar { display: flex; align-items: center; gap: 4px; padding: 2px 6px 6px 8px; }
@@ -1547,6 +1541,7 @@ button.fv-finding:hover { background: var(--hover); }
 .ag-menu b { flex: none; font: 600 12px var(--mono); }
 .ag-menu span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .ag-menu span.mono { margin-left: auto; font: 11.5px var(--mono); }
+.ag-switch { margin: 0; padding: 8px 12px 0; color: var(--muted); font-size: 12px; line-height: 1.45; text-wrap: pretty; }
 .ag-queue { list-style: none; margin: 0; padding: 8px 10px 0; display: flex; flex-direction: column; gap: 4px; }
 .ag-queue li { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); }
 .ag-queue span { flex: none; text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }

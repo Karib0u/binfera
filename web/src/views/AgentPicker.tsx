@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agent } from "../agent/client";
-import type { AgentId, AgentInfo, ModelInfo } from "../agent/types";
+import { AGENT_NAMES, type AgentId, type AgentInfo, type ModelInfo } from "../agent/types";
 
 /** The models an agent lists change rarely, so the last list shows at once and a fresh one replaces it. */
 function useModels(provider: AgentId | null) {
@@ -19,8 +19,6 @@ function useModels(provider: AgentId | null) {
   }, [provider]);
   return { models, failed };
 }
-
-const AGENT_NAMES: Record<AgentId, string> = { claude: "Claude Code", codex: "Codex" };
 
 /**
  * One chip in the composer that says which agent, model and reasoning level answer, and opens a menu to
@@ -47,10 +45,14 @@ export default function Picker({ agents, provider, onProvider, model, effort, on
   }, [open]);
 
   const chosen = models?.find((m) => m.id === model);
+  // What the agent runs when the model is left blank, as its own configuration says.
+  const fallback = models?.find((m) => m.isDefault);
   // The levels to offer: the chosen model's, else the agent's default model's, else the first listed.
-  const shown = chosen ?? models?.find((m) => m.isDefault) ?? models?.[0];
+  const shown = chosen ?? fallback ?? models?.[0];
   const efforts = shown?.efforts ?? [];
-  const label = [AGENT_NAMES[provider], model ? (chosen?.name ?? model) : null, effort || null].filter(Boolean).join(" · ");
+  // A custom model the agent does not list has no known default level.
+  const defaultEffort = model && !chosen ? null : shown?.defaultEffort ?? null;
+  const label = [AGENT_NAMES[provider], model ? (chosen?.name ?? model) : fallback?.name, effort || defaultEffort].filter(Boolean).join(" · ");
   const known = useMemo(() => new Set((models ?? []).map((m) => m.id)), [models]);
 
   const pick = (m: ModelInfo | null) => {
@@ -84,7 +86,7 @@ export default function Picker({ agents, provider, onProvider, model, effort, on
             <h5>Model</h5>
             <div className="ag-opts">
               <button type="button" className={"ag-opt" + (!model ? " on" : "")} onClick={() => pick(null)}>
-                <b>Default</b><span>What {AGENT_NAMES[provider]} is set to</span>{!model && <i aria-hidden>✓</i>}
+                <b>Default{fallback ? ` · ${fallback.name}` : ""}</b><span>What {AGENT_NAMES[provider]} is set to</span>{!model && <i aria-hidden>✓</i>}
               </button>
               {(models ?? []).map((m) => (
                 <button key={m.id} type="button" className={"ag-opt" + (m.id === model ? " on" : "")} onClick={() => pick(m)} title={m.id}>
@@ -105,7 +107,7 @@ export default function Picker({ agents, provider, onProvider, model, effort, on
             <section>
               <h5>Reasoning</h5>
               <div className="ag-seg" role="radiogroup" aria-label="Reasoning">
-                <button type="button" role="radio" aria-checked={!effort} className={!effort ? "on" : ""} onClick={() => onEffort("")}>Default</button>
+                <button type="button" role="radio" aria-checked={!effort} className={!effort ? "on" : ""} onClick={() => onEffort("")} title={defaultEffort ? `What ${AGENT_NAMES[provider]} is set to` : `${AGENT_NAMES[provider]}'s own default`}>{defaultEffort ? `Default · ${defaultEffort}` : "Default"}</button>
                 {efforts.map((x) => <button key={x} type="button" role="radio" aria-checked={effort === x} className={effort === x ? "on" : ""} onClick={() => onEffort(x)}>{x}</button>)}
               </div>
             </section>
