@@ -15,6 +15,12 @@ if [ "$size" -gt 26214400 ]; then
   echo "binfera.wasm is $size bytes, over the 25 MiB (26214400 bytes) a deployed asset can be" >&2
   exit 1
 fi
+# Without data files the module is about 24.2 MB; the 4 MB Windows prototype packs embedded twice took it
+# to 29 MB. Fail well before the asset limit if a pack is embedded again.
+if [ "$size" -gt 25000000 ]; then
+  echo "binfera.wasm is $size bytes; it is about 24.2 MB without data files. Is a pack embedded again?" >&2
+  exit 1
+fi
 if [ "$size" -ge 25690112 ]; then
   message="binfera.wasm is $size bytes, at least 98% of the 25 MiB asset limit"
   if [ -n "${GITHUB_ACTIONS:-}" ]; then
