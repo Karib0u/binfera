@@ -789,16 +789,18 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     return { sec: sec?.name, fn: o ? `${o.label}${cursor > o.address ? " +0x" + (cursor - o.address).toString(16) : ""}` : undefined, off };
   })();
 
+  /** The function whose Listing shows va: its owner, else the open or last function. None before recovery finds any. */
+  const listingTarget = (va: number) => codeOwner(va) ?? (typeof sel === "number" ? sel : lastFn.current ?? a.order[0]);
   /** Tapping the strip: place the cursor, and show it in the listing unless the Data lists are open. */
   const navigate = (va: number) => {
     setCursor(va); setHexSel(null);
     if (mode === "data") return; // the bytes beside the list already follow the cursor
-    const t = codeOwner(va) ?? (typeof sel === "number" ? sel : lastFn.current ?? a.order[0]);
+    const t = listingTarget(va);
     if (t !== undefined) { const panes = panesOf(layout); if (!panes.includes("listing")) setLayout([...panes.slice(0, -1), "listing"].join("+")); setListingReq((n) => n + 1); setSel(t, true); } else setSel(lastData.current);
   };
   /** Following a string or data label out of the code: to the Listing, which has its neighbours and references. Back returns from it. */
   const showData = (va: number) => {
-    if (!image) { showHex(va); return; }
+    if (!image || listingTarget(va) === undefined) { showHex(va); return; } // no Listing to show it in yet
     const newPlace = va !== cursorRef.current && (codeOwner(va) ?? sel) === sel;
     navigate(va);
     if (newPlace) push(loc);

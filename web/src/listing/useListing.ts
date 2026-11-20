@@ -5,6 +5,8 @@ import { packRows, type BuildRequest, type ListingIndex, type ListingModel } fro
 
 type Input = Pick<Analysis, "functions" | "strings" | "settled">;
 type Snapshot = ListingModel | "failed" | null;
+/** How long the worker outlives the last Listing pane. */
+const IDLE_MS = 60_000;
 
 /** One worker and row index for all Listing panes showing the same analysis. */
 class ListingStore {
@@ -15,6 +17,8 @@ class ListingStore {
   private worker: Worker | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
+  private failed = false;
+  private idle: ReturnType<typeof setTimeout> | null = null;
   private lastBuild = -Infinity;
 
   constructor(private image: ImageInfo) {}
@@ -23,9 +27,19 @@ class ListingStore {
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
+    if (this.idle !== null) clearTimeout(this.idle);
+    this.idle = null;
+    this.schedule(); // input may have arrived before this pane subscribed
     return () => {
       this.listeners.delete(listener);
-      if (!this.listeners.size) this.stop();
+      if (this.listeners.size) return;
+      if (this.timer !== null) clearTimeout(this.timer);
+      this.timer = null;
+      // Keep the worker's index for a while so reopening a pane only sends what changed.
+      this.idle = setTimeout(() => {
+        this.idle = null;
+        if (!this.listeners.size) this.stop();
+      }, IDLE_MS);
     };
   };
 
@@ -35,7 +49,7 @@ class ListingStore {
   }
 
   private schedule() {
-    if (!this.input || !this.listeners.size || this.busy || this.timer !== null) return;
+    if (!this.input || !this.listeners.size || this.failed || this.busy || this.timer !== null) return;
     // While records are streaming in, batch updates to leave resources for decompilation.
     const delay = this.input.settled ? 0 : Math.max(0, 300 - (performance.now() - this.lastBuild));
     this.timer = setTimeout(() => {
@@ -120,10 +134,12 @@ class ListingStore {
     }
   }
 
+  /** The index depends on the image, which does not change: retrying would fail the same way. */
   private fail() {
     this.stop();
-    this.publish("failed");
+    this.failed = true;
     this.indexed = null;
+    this.publish("failed");
   }
 }
 
