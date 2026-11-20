@@ -5,7 +5,7 @@ re-planned. Priorities describe relative value, not delivery dates.
 
 Scope rule: binfera answers "what does this one executable do?" by reading
 code. File-format parsing, unpacking, installer and bytecode script analysis,
-and verdicts belong in filebus.
+and verdicts belong in the File Analysis Bus project.
 
 ## Already covered (do not re-plan)
 
@@ -34,21 +34,21 @@ and verdicts belong in filebus.
 | Area | Remaining work |
 |---|---|
 | Unpacking | Static unpacking for the common cases (UPX first); today packers are only flagged, so the decompiler shows the stub. |
-| Dumped images | Open memory-dumped or injected PE images (unaligned sections, rebuilt imports) so modules recovered by filebus from minidumps can be read. |
-| YARA in the workbench | Scan the open file with YARA-X rules and jump from a hit to its hex offset or function; reuse filebus rules. |
+| Dumped images | Open memory-dumped or injected PE images (unaligned sections, rebuilt imports) so modules recovered by the File Analysis Bus project from minidumps can be read. |
+| YARA in the workbench | Scan the open file with YARA-X rules and jump from a hit to its hex offset or function; reuse the File Analysis Bus project's rules. |
 | .NET decompilation | C# pseudocode; only IL is listed today. |
-| filebus hand-off | Open-from-link by SHA-256, and align capa rule/engine versions with filebus. |
+| File Analysis Bus hand-off | Open-from-link by SHA-256, and align capa rule/engine versions with the File Analysis Bus project. |
 
 ## P3: demand-gated
 
 | Area | Remaining work |
 |---|---|
-| Bytecode viewers | Python 2.7/3.6+, pickle and VB P-code disassembly views. filebus does the triage parsing; build these only if analysts need to read the code. |
+| Bytecode viewers | Python 2.7/3.6+, pickle and VB P-code disassembly views. The File Analysis Bus project does the triage parsing; build these only if analysts need to read the code. |
 | Architectures | PowerPC, RISC-V, MIPS64. |
 | Hex structure templates | Partly done: PE, ELF and Mach-O headers (DOS/NT headers, data directories, section, program and segment headers) are colored by field in the hex view with a field tooltip. Remaining: import/export tables, resource tree, certificate, debug and TLS directories, overlay and embedded-file boundaries, and a way to add custom templates. |
 
-## Moved to filebus
+## Handled by the File Analysis Bus project
 
 NSIS and Inno Setup script analysis, AutoIt, PyInstaller/py2exe/Nuitka
 unpacking, minidump, archives beyond zip/7z, documents, SQLite and media
-parsers. See `docs/roadmap/modules.md` in filebus.
+parsers.
