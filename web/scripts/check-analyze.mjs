@@ -136,10 +136,13 @@ left.emit({ type: "settled" });
 await delay(100);
 assert.equal(stagedUpdates.at(-1).settled, false);
 assert.equal(stagedUpdates.at(-1).names.get(10), "named.before.decompilation");
+const beforeSettled = stagedUpdates.at(-1);
 right.emit({ type: "done" });
 await delay(100);
 assert.equal(stagedUpdates.at(-1).settled, true);
 assert.equal(stagedUpdates.at(-1).done, false);
+assert.equal(stagedUpdates.at(-1).functions, beforeSettled.functions);
+assert.equal(stagedUpdates.at(-1).names, beforeSettled.names);
 // A longer attempt replaces the pending record. Later shard duplicates cannot replace it.
 left.emit({ type: "function", address: 20, text: "void large_init(void) {}" });
 right.emit({ type: "function", address: 20, error: "duplicate" });
@@ -147,6 +150,7 @@ left.emit({ type: "function", address: 10, error: "native work limit exceeded", 
 left.resolve(); right.resolve();
 await stagedRun;
 assert.equal(stagedUpdates.at(-1).functions.get(20).text, "void large_init(void) {}");
+assert.equal(beforeSettled.functions.get(20).retry_pending, true);
 const retry = stagedUpdates.at(-1).retryFunction(10);
 await setImmediate();
 assert.equal(requests.at(-1).resourceRetry, true);

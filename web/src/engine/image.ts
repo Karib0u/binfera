@@ -51,13 +51,17 @@ export interface ImageInfo extends ImageMetadata {
   sectionAt(va: number): Section | undefined;
 }
 
+export function mappedOffset(regions: Region[], va: number): number | null {
+  for (const r of regions) if (va >= r.va && va < r.va + r.size) return r.off + va - r.va;
+  return null;
+}
+
 export function createImage(bytes: Uint8Array, metadata: ImageMetadata): ImageInfo {
   const { sections, regions } = metadata;
   return {
     ...metadata, bytes,
     vaToOff(va) {
-      for (const r of regions) if (va >= r.va && va < r.va + r.size) return r.off + va - r.va;
-      return null;
+      return mappedOffset(regions, va);
     },
     offToVa(off) {
       for (const r of regions) if (off >= r.off && off < r.off + r.size) return r.va + off - r.off;

@@ -798,7 +798,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   };
   /** Following a string or data label out of the code: to the Listing, which has its neighbours and references. Back returns from it. */
   const showData = (va: number) => {
-    if (!a.settled) { showHex(va); return; } // the Listing is built once ordinary attempts settle
+    if (!image) { showHex(va); return; }
     const newPlace = va !== cursorRef.current && (codeOwner(va) ?? sel) === sel;
     navigate(va);
     if (newPlace) push(loc);

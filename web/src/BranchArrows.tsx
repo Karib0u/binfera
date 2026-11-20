@@ -3,7 +3,8 @@ import { rowFlow, type Arch, type AsmRow } from "./graph";
 /** A branch to another instruction of the same function, as IDA draws them beside its text views. */
 export interface Arrow { from: number; to: number; kind: "jump" | "cond"; lane: number }
 
-const LANE = 8, MAX_LANES = 8, PAD = 12;
+const LANE = 8, PAD = 12;
+export const MAX_ARROW_LANES = 8;
 export const gutterWidth = (lanes: number) => (lanes ? PAD + lanes * LANE : 0);
 
 /** The branches inside one function. Shorter ones take the lanes nearest the text, so nested branches do not cross. */
@@ -18,10 +19,20 @@ export function functionArrows(rows: AsmRow[], arch: Arch): Arrow[] {
   return found.map((b) => {
     const lo = Math.min(b.from, b.to), hi = Math.max(b.from, b.to);
     let lane = lanes.findIndex((l) => !l.some(([p, q]) => lo <= q && p <= hi));
-    if (lane < 0) lane = Math.min(lanes.length, MAX_LANES - 1);
+    if (lane < 0) lane = Math.min(lanes.length, MAX_ARROW_LANES - 1);
     (lanes[lane] ??= []).push([lo, hi]);
     return { ...b, lane };
   });
+}
+
+const arrowCache = new WeakMap<AsmRow[], { arch: Arch; arrows: Arrow[] }>();
+
+export function cachedFunctionArrows(rows: AsmRow[], arch: Arch): Arrow[] {
+  const cached = arrowCache.get(rows);
+  if (cached?.arch === arch) return cached.arrows;
+  const arrows = functionArrows(rows, arch);
+  arrowCache.set(rows, { arch, arrows });
+  return arrows;
 }
 
 /** Draws arrows between rows, given each one's y; clicking an arrow goes to its other end. */

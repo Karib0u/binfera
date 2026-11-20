@@ -652,7 +652,7 @@ button.cap { cursor: pointer; border: 0; }
 .l-bar, .cg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .l-bar label, .cg-bar label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
 .l-bar select, .cg-bar select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; }
-.l-scroll { flex: 1; overflow: auto; min-height: 0; font: 12px/20px var(--mono); }
+.l-scroll { flex: 1; overflow: auto; overflow-anchor: none; min-height: 0; font: 12px/20px var(--mono); }
 .lrow { position: absolute; left: 0; right: 0; height: 20px; padding: 0 14px 0 calc(14px + var(--arrow-gutter, 0px)); white-space: pre; overflow: hidden; }
 .lrow .asm { font-size: 12px; line-height: 20px; }
 .l-sec { color: var(--c-kw); font-weight: 600; padding-top: 4px; }

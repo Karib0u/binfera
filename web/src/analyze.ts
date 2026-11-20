@@ -49,11 +49,18 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     fileName: file.name, size: file.size, strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, order: [], functions: new Map(), names: new Map(),
     capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: false, done: false,
   };
+  let functions = new Map(a.functions), names = new Map(a.names);
+  let functionsChanged = false, namesChanged = false;
+  const publish = () => {
+    if (functionsChanged) { functions = new Map(a.functions); functionsChanged = false; }
+    if (namesChanged) { names = new Map(a.names); namesChanged = false; }
+    onUpdate({ ...a, functions, names });
+  };
   let pending = false;
   const flush = () => {
     if (pending) return;
     pending = true;
-    setTimeout(() => { pending = false; if (!signal.aborted) onUpdate({ ...a, functions: new Map(a.functions), names: new Map(a.names) }); }, 80);
+    setTimeout(() => { pending = false; if (!signal.aborted) publish(); }, 80);
   };
 
   const functionAddresses = new Set<number>();
@@ -66,7 +73,13 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       // A later shard can start after another has already discovered extra callees.
       for (const address of e.functions) functionAddresses.add(address);
       a.order = [...functionAddresses].sort((x, y) => x - y);
-      for (const [address, name] of Object.entries(e.names ?? {})) a.names.set(Number(address), name);
+      for (const [address, name] of Object.entries(e.names ?? {})) {
+        const at = Number(address);
+        if (a.names.get(at) !== name) {
+          a.names.set(at, name);
+          namesChanged = true;
+        }
+      }
       a.arch = e.arch ?? null;
       a.packed = e.packed ?? null;
     }
@@ -81,6 +94,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       // A callee several shards found (one recovery never listed) arrives more than once: keep the first.
       if (a.functions.has(e.address) && !a.functions.get(e.address)?.retry_pending) return;
       a.functions.set(e.address, e);
+      functionsChanged = true;
       // A callee the decompiler found that recovery never listed: make it a navigable function.
       if (!functionAddresses.has(e.address)) {
         functionAddresses.add(e.address);
@@ -132,6 +146,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       if (signal.aborted) return;
       a.functions.set(address, { ...previous, error: message(e), retry_pending: true });
     }
+    functionsChanged = true;
     flush();
   };
   const cached = sha256 && engineId && !again ? await readResults(sha256, engineId) : null;
@@ -150,7 +165,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       a.capa = capa;
       a.settled = true;
       a.done = true;
-      onUpdate({ ...a, functions: new Map(a.functions), names: new Map(a.names) });
+      publish();
       return;
     } catch {
       // A corrupt entry is disposable. Start from clean state before running the engine.
@@ -158,6 +173,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       raw = undefined;
       a.functions.clear();
       a.names.clear();
+      functionsChanged = namesChanged = true;
       a.settled = false;
       settledShards.clear();
       functionAddresses.clear();
@@ -235,5 +251,5 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
   }
   if (signal.aborted) return;
   a.done = true;
-  onUpdate({ ...a, functions: new Map(a.functions), names: new Map(a.names) });
+  publish();
 }

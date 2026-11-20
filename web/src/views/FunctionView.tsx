@@ -5,7 +5,7 @@ import GraphView from "../GraphView";
 import { linesWithSetup } from "../graph";
 import { useNotes } from "../names";
 import Asm, { type AsmHandle } from "../Asm";
-import { functionArrows } from "../BranchArrows";
+import { cachedFunctionArrows } from "../BranchArrows";
 import { applyNames, Code } from "../highlight";
 import MoreMenu, { type MenuItem } from "../MoreMenu";
 import { panesOf, VIEW_NAMES, type CodeView, type Layout } from "../workspace/location";
@@ -228,7 +228,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const [railWidth, setRailWidth] = useStored("rail-width", 240);
   const hasAsm = !!f?.asm?.length;
   // Phones wrap long instructions, so rows have no fixed height to draw arrows against.
-  const arrows = useMemo(() => (hasAsm && !mobile ? functionArrows(f!.asm!, a.arch) : undefined), [f, a.arch, mobile]);
+  const arrows = hasAsm && !mobile && paneView === "asm" ? cachedFunctionArrows(f!.asm!, a.arch) : undefined;
 
   // Clicking a C line or an instruction highlights its counterpart(s) on the other side.
   const [focus, setFocus] = useState<{ kind: "c"; line: number } | { kind: "a"; ad: number; group?: boolean } | null>(null);
