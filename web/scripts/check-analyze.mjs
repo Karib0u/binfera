@@ -29,6 +29,7 @@ const mocks = moduleUrl(`
   export const NATIVE = false;
   export const digest = async () => null;
   export const loadEngineId = async () => null;
+  export const winApiFor = () => null;
   export const readResults = async () => null;
   export const writeResults = async () => {};
   export const forgetResults = async () => {};

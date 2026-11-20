@@ -92,6 +92,7 @@ const mocksUrl = moduleUrl(`
   export let engineId = "wasm1:rules1";
   export const setEngineId = value => { engineId = value; };
   export const loadEngineId = async () => engineId;
+  export const winApiFor = () => null;
   export let abortAfterFunction = null;
   export const setAbortAfterFunction = controller => { abortAfterFunction = controller; };
   export let fail = null;
