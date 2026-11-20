@@ -2960,3 +2960,152 @@ fn incremental_link_thunks_name_every_function() {
     text[5 * (entries as usize - 1)] = 0xcc;
     assert!(incremental_link_thunks(&image(&text)).is_empty());
 }
+
+/// One `.pdata` row (image-relative begin, end and unwind info).
+fn unwind_row(begin: u32, end: u32, info: u32) -> Vec<u8> {
+    [begin, end, info]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+#[test]
+fn pointer_runs_inside_an_unwind_row_are_jump_tables() {
+    // 0x1000: xor eax, eax; or ebx, eax; mov eax, 1; or ebx, eax; mov eax, 2; ret.
+    // The arms at 0x1004 and 0x100b follow a `c3` byte, the ModRM of `or ebx, eax`.
+    let mut text = vec![0xcc; 0x80];
+    text[..0x11].copy_from_slice(&[
+        0x31, 0xc0, 0x09, 0xc3, 0xb8, 1, 0, 0, 0, 0x09, 0xc3, 0xb8, 2, 0, 0, 0, 0xc3,
+    ]);
+    text[0x40..0x46].copy_from_slice(&[0xb8, 1, 0, 0, 0, 0xc3]);
+    let image = |targets: [u64; 2], pdata: &[u8]| {
+        let mut bytes = text.clone();
+        for target in targets {
+            bytes.extend_from_slice(&target.to_le_bytes());
+        }
+        bytes.extend_from_slice(pdata);
+        let section = |name: &str, address, size, offset, execute| MappedSection {
+            name: name.into(),
+            address,
+            virtual_size: size,
+            file_offset: offset,
+            file_size: size,
+            permissions: Permissions {
+                read: true,
+                write: false,
+                execute,
+            },
+        };
+        LoadedImage::for_test(
+            ImageFormat::Pe,
+            Architecture::X64,
+            0x1000,
+            vec![
+                section(".text", 0x1000, 0x80, 0, true),
+                section(".rdata", 0x2000, 16, 0x80, false),
+                section(".pdata", 0x3000, pdata.len() as u64, 0x90, false),
+            ],
+            BTreeMap::new(),
+            bytes,
+        )
+    };
+    let row = unwind_row(0, 0x11, 0x4000);
+    // Without unwind data the raw byte check cannot tell the arms from entries.
+    assert_eq!(
+        vtable_targets(&image([0x1004, 0x100b], &[])),
+        BTreeSet::from([0x1004, 0x100b])
+    );
+    assert!(vtable_targets(&image([0x1004, 0x100b], &row)).is_empty());
+    // A row's begin and code outside every row remain entries.
+    assert_eq!(
+        vtable_targets(&image([0x1000, 0x1040], &row)),
+        BTreeSet::from([0x1000, 0x1040])
+    );
+}
+
+#[test]
+fn unwind_handlers_ignore_padding_rows() {
+    // A zero `.pdata` row points its unwind info at the DOS header. `MZ\x90\0` reads as
+    // version 5 with a handler after 0x90 codes, at offset 0x124 (`SizeOfCode`).
+    const BASE: u64 = 0x10000;
+    let mut bytes = vec![0; 0x200];
+    bytes[..4].copy_from_slice(b"MZ\x90\0");
+    bytes[0x124..0x128].copy_from_slice(&0x1020u32.to_le_bytes());
+    let mut text = vec![0xcc; 0x40];
+    text[0x10] = 0xc3;
+    text[0x20] = 0xc3;
+    bytes.extend_from_slice(&text);
+    // Version 1, UNW_FLAG_EHANDLER, no codes, then the handler.
+    bytes.extend_from_slice(&[0x09, 0, 0, 0]);
+    bytes.extend_from_slice(&0x1010u32.to_le_bytes());
+    let mut pdata = unwind_row(0, 0, 0);
+    pdata.extend(unwind_row(0x1000, 0x1030, 0x2000));
+    bytes.extend_from_slice(&pdata);
+    let section = |name: &str, address, size, offset, execute| MappedSection {
+        name: name.into(),
+        address,
+        virtual_size: size,
+        file_offset: offset,
+        file_size: size,
+        permissions: Permissions {
+            read: true,
+            write: false,
+            execute,
+        },
+    };
+    let mut image = LoadedImage::for_test(
+        ImageFormat::Pe,
+        Architecture::X64,
+        BASE,
+        vec![
+            section("", BASE, 0x200, 0, false),
+            section(".text", BASE + 0x1000, 0x40, 0x200, true),
+            section(".rdata", BASE + 0x2000, 8, 0x240, false),
+            section(".pdata", BASE + 0x3000, 24, 0x248, false),
+        ],
+        BTreeMap::new(),
+        bytes,
+    );
+    image.pe_exception_directory = Some((BASE + 0x3000, 24));
+    assert_eq!(msvc_x64_eh_entries(&image), BTreeSet::from([BASE + 0x1010]));
+}
+
+#[test]
+fn starts_inside_an_unwind_row_need_a_name_or_a_call() {
+    // 0x1000: call 0x1010; call 0x1001; ret; padding; 0x1010: xor eax, eax; ret.
+    // One row covers all of it, so 0x1010 is a second entry that a call names, 0x1001 is
+    // called but lies inside the first call, and the `ret` at 0x100a is only a block.
+    let mut text = vec![0xe8, 0x0b, 0, 0, 0, 0xe8, 0xf7, 0xff, 0xff, 0xff, 0xc3];
+    text.resize(0x10, 0xcc);
+    text.extend_from_slice(&[0x33, 0xc0, 0xc3]);
+    text.resize(0x20, 0xcc);
+    text.extend_from_slice(&[0x33, 0xc0, 0xc3]);
+    let mut analysis = native_x64(&text, &[], &unwind_row(0, 0x13, 0x4000));
+    let starts = [0x1000, 0x1001, 0x100a, 0x1010, 0x1020];
+    assert_eq!(
+        interior_unwind_starts(&analysis, starts),
+        InteriorStarts {
+            rejected: BTreeSet::from([0x1001, 0x100a]),
+            kept: BTreeSet::from([0x1010]),
+        }
+    );
+    // An export names an entry whatever its position.
+    analysis
+        .seeds
+        .entry(0x100a)
+        .or_default()
+        .insert(SeedKind::Export);
+    assert_eq!(
+        interior_unwind_starts(&analysis, starts),
+        InteriorStarts {
+            rejected: BTreeSet::from([0x1001]),
+            kept: BTreeSet::from([0x100a, 0x1010]),
+        }
+    );
+    // Other formats and architectures have no x64 unwind rows to apply.
+    analysis.image.format = ImageFormat::Elf;
+    assert_eq!(
+        interior_unwind_starts(&analysis, starts),
+        InteriorStarts::default()
+    );
+}

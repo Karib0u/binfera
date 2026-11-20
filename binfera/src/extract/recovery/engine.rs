@@ -3,10 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 mod flow;
 mod functions;
+mod interior;
 mod leaves;
 mod seeds;
 use flow::*;
 use functions::*;
+pub use interior::{interior_unwind_starts, InteriorStarts};
 use seeds::*;
 #[cfg(test)]
 mod tests;
@@ -1609,6 +1611,9 @@ fn vtable_targets(image: &LoadedImage) -> BTreeSet<u64> {
         return targets;
     }
     let scope_blocks = seh_scope_blocks(image);
+    // A run of absolute code pointers is also how compilers lay out a jump table. Its arms lie
+    // inside the switching function's unwind row, where no function begins.
+    let unwound = unwind_extents(image);
     for section in &image.sections {
         if !section.permissions.read
             || section.permissions.write
@@ -1621,11 +1626,9 @@ fn vtable_targets(image: &LoadedImage) -> BTreeSet<u64> {
         let mut run_start = section.address;
         let mut flush = |run: &mut Vec<u64>, run_start: u64| {
             if run.len() >= 2 && !scope_record(image, run_start, run.len()) {
-                targets.extend(
-                    run.iter()
-                        .copied()
-                        .filter(|&t| pointer_entry_boundary(image, t)),
-                );
+                targets.extend(run.iter().copied().filter(|&t| {
+                    pointer_entry_boundary(image, t) && !interior::inside_unwind_row(&unwound, t)
+                }));
             }
             run.clear();
         };
