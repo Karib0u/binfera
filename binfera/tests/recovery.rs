@@ -368,3 +368,33 @@ fn native_unwind_boundaries_differ_from_reference_fallthrough() {
     assert!(analysis.functions.contains_key(&0x1400e1360));
     assert!(!analysis.is_noreturn_va(0x1400e1300));
 }
+
+/// x64 `.pdata` bounds each function: native seeding names no entry strictly inside a row.
+#[test]
+fn native_seeds_no_entry_inside_an_unwind_row() {
+    use binfera::extract::recovery::{analyze_with_backend, RecoveryBackend};
+    // A 64-bit absolute jump table of the switch in 0x140001490 is not a vtable: its arms follow
+    // the `c3` ModRM byte of `or ebx, eax`, not a `ret`.
+    let bytes = std::fs::read(root().join("tests/testfiles/29a76e413ffe0f78b62926b8455082d6.exe_"))
+        .unwrap();
+    let analysis = analyze_with_backend(&bytes, RecoveryBackend::Native).unwrap();
+    assert!(analysis.functions.contains_key(&0x140001490));
+    for arm in [0x140004d6f, 0x1400052c3, 0x1400065f1] {
+        assert!(!analysis.functions.contains_key(&arm), "{arm:#x}");
+        assert!(analysis
+            .seeds
+            .get(&arm)
+            .is_none_or(|kinds| !kinds.contains(&SeedKind::Vtable)));
+    }
+    // Zero `.pdata` padding rows do not make the DOS header an `UNWIND_INFO` whose "handler" is
+    // `SizeOfCode`, the `ret` ending 0x1400b48f0.
+    let bytes = std::fs::read(root().join("tests/testfiles/82bf6347acf15e5d883715dc289d8a2b.exe_"))
+        .unwrap();
+    let analysis = analyze_with_backend(&bytes, RecoveryBackend::Native).unwrap();
+    assert!(analysis.functions.contains_key(&0x1400b48f0));
+    assert!(!analysis.functions.contains_key(&0x1400b4a00));
+    assert!(analysis
+        .seeds
+        .get(&0x1400b4a00)
+        .is_none_or(|kinds| !kinds.contains(&SeedKind::MsvcThrowMetadata)));
+}

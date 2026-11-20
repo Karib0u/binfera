@@ -195,12 +195,51 @@ pub(super) fn select_analysis(
         for address in zero_filled {
             listed.functions.remove(&address);
         }
+        reject_interior_starts(&native, &listed, &mut rejected, session);
         drop(native);
         listed
     } else {
+        reject_interior_starts(&native, &native, &mut rejected, session);
         native
     };
     Ok((analysis, rejected))
+}
+
+/// x64 unwind rows bound their functions: a listed start strictly inside a row, where no row
+/// begins, is a block of that function (see [`crate::extract::recovery::interior_unwind_starts`]).
+/// Compatibility recovery names many such blocks for capa (`/GS` cookie tails, catch
+/// continuations, FLIRT local labels), and data pointer runs can be jump tables. One that an
+/// export, image table or direct call names stays listed, with a warning.
+fn reject_interior_starts(
+    native: &Analysis,
+    listed: &Analysis,
+    rejected: &mut BTreeSet<u64>,
+    session: &mut DecompilerSession,
+) {
+    let interior = crate::extract::recovery::interior_unwind_starts(
+        native,
+        listed
+            .functions
+            .keys()
+            .copied()
+            .filter(|address| !rejected.contains(address)),
+    );
+    rejected.extend(interior.rejected);
+    if !interior.kept.is_empty() {
+        let shown: Vec<String> = interior
+            .kept
+            .iter()
+            .take(8)
+            .map(|address| format!("{address:#x}"))
+            .collect();
+        let more = interior.kept.len().saturating_sub(shown.len());
+        session.warnings.push(format!(
+            "{} function start(s) inside another function's unwind row, kept because an export, image table or direct call names them: {}{}",
+            interior.kept.len(),
+            shown.join(", "),
+            if more > 0 { format!(" and {more} more") } else { String::new() },
+        ));
+    }
 }
 
 /// Show recovered Win64 jump stubs with a direct call from a listed function.

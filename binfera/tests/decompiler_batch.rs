@@ -498,3 +498,39 @@ fn start_evidence_reports_unwind_rows_and_their_chains() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// The listing keeps no start strictly inside an x64 unwind row that nothing names: compatibility
+/// recovery's `/GS` cookie blocks, catch continuations and FLIRT local labels are blocks of the
+/// enclosing function, which stays listed.
+#[test]
+fn batch_lists_no_block_inside_an_unwind_row() -> anyhow::Result<()> {
+    let bytes = include_bytes!("../../tests/testfiles/03b236b23b1ec37c663527c1f53af3fe.dll_");
+    let options = BatchOptions {
+        shard: Some((0, 65536)),
+        ..Default::default()
+    };
+    let mut start = None;
+    decompile_all(bytes, &options, |event| {
+        if let BatchEvent::Start {
+            functions,
+            warnings,
+            ..
+        } = event
+        {
+            start.get_or_insert((functions, warnings));
+        }
+        Ok(())
+    })?;
+    let (functions, warnings) = start.ok_or_else(|| anyhow::anyhow!("no start record"))?;
+    let functions: BTreeSet<u64> = functions.into_iter().collect();
+    for (row, block) in [
+        (0x180036898, 0x1800368b6), // `/GS` cookie block (MsvcCookieBlock)
+        (0x1800039f0, 0x180003a85), // catch continuation (Emulated `lea rax`)
+        (0x180033c80, 0x180033e6c), // `memcpy` jump-table arm (FlirtLocal)
+    ] {
+        assert!(functions.contains(&row), "{row:#x}");
+        assert!(!functions.contains(&block), "{block:#x}");
+    }
+    assert!(!warnings.iter().any(|w| w.contains("unwind row")));
+    Ok(())
+}

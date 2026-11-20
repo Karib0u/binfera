@@ -585,8 +585,10 @@ pub(super) fn msvc_x64_eh_entries(image: &LoadedImage) -> BTreeSet<u64> {
             let Some(header) = image.bytes_at(info, 4).filter(|header| header.len() == 4) else {
                 continue;
             };
+            // `UNWIND_INFO` versions are 1 and 2. A padding row (all zero) points at the DOS
+            // header, whose `MZ\x90\0` reads as version 5 with a handler and 0x90 codes.
             let flags = header[0] >> 3;
-            if header[0] & 7 == 0 || flags & 4 != 0 || flags & 3 == 0 {
+            if !matches!(header[0] & 7, 1 | 2) || flags & 4 != 0 || flags & 3 == 0 {
                 continue;
             }
             let codes = (u64::from(header[2]) + 1) & !1;
