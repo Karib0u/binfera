@@ -81,6 +81,16 @@ The goal assumes binaries that are often packed. Until these exist, recovery wor
 | Static unpacking | UPX first (PE, ELF, Mach-O), with the original file and the unpacked image both kept in the project. Then the next packers by frequency in the malware corpus. |
 | Dumped images | Open PE images dumped from memory or injected into a process (unaligned sections, rebuilt imports). Reuse an intact `.pdata`. This lets binfera read modules the File Analysis Bus project recovers from minidumps. |
 
+### Type knowledge
+
+The Windows packs come from Ghidra's Visual Studio 2012 archives plus a driver-header supplement, and keep only types a prototype refers to. Over the 365 PEs in `tests/testfiles`, 16.3% of named imports (6,948 of 42,677) have no prototype. In malware, the APIs most often left untyped are Toolhelp (`CreateToolhelp32Snapshot` in 84 files, `Process32*`), WinINet (`InternetReadFile` in 45, `InternetOpenA`, `HttpSendRequestA`), WinHTTP and undocumented `ntdll` exports (`NtQuerySystemInformation`, `Ldr*`, `NtCreateThreadEx`).
+
+| Item | Work |
+|---|---|
+| Malware type library | A current Windows SDK export (WinINet, WinHTTP, Toolhelp, BCrypt, netapi and the APIs added after Windows 8), the native API with its structures (`_PEB`, `_TEB`, `_PEB_LDR_DATA`, `_LDR_DATA_TABLE_ENTRY`), PE header structures (`IMAGE_NT_HEADERS`, `IMAGE_EXPORT_DIRECTORY`), and the CRT and UCRT startup exports. Keep types no prototype references, so analysts and later passes can apply them. Ships as a type library in the format of semantic-editing step 2. |
+| Mangled imports | Derive prototypes for MSVC- and Itanium-mangled imports (`msvcp*`, `mfc*`, Qt) from the mangled name, which encodes the parameter and return types. |
+| Measure | Report untyped imports per file in the benchmark; a release does not increase it. |
+
 ### Analyst-editable semantics
 
 Step 1 does not depend on the measurement work and can start alongside P0.
