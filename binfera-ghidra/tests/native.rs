@@ -150,7 +150,7 @@ fn corroborated_win64_stack_argument_keeps_the_return_unlocked(
         before.warnings
     );
 
-    session.set_win64_fifth_arguments(&[0x2000])?;
+    session.set_win64_stack_arguments(&[0x2000], &[1])?;
     let after = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
     assert!(after.text.contains("wrapper(1,2,3,4,5)"), "{}", after.text);
     assert!(
@@ -162,7 +162,7 @@ fn corroborated_win64_stack_argument_keeps_the_return_unlocked(
         after.warnings
     );
 
-    session.set_win64_fifth_arguments(&[])?;
+    session.set_win64_stack_arguments(&[], &[])?;
     assert_eq!(
         session.decompile(0x1000, 5000, 1000, 1_000_000)?.text,
         before.text
@@ -301,16 +301,18 @@ fn low_byte_hint_requires_boolean_partial_returns() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn low_byte_hint_distinguishes_xor_al_from_a_wide_mask() -> Result<(), Box<dyn std::error::Error>> {
+fn low_byte_hint_distinguishes_al_clears_from_a_wide_mask() -> Result<(), Box<dyn std::error::Error>>
+{
     let mut session = Session::new(Language::X86Windows64)?;
-    for (address, label, clear) in [
-        (0x1000, "byte_result", &[0x30, 0xc0][..]), // xor al, al
-        (
-            0x2000,
-            "wide_result",
-            &[0x48, 0x25, 0, 0xff, 0xff, 0xff][..],
-        ), // and rax, -256
-    ] {
+    let cases: [(u64, &[u8], bool); 6] = [
+        (0x1000, &[0x30, 0xc0], true),                       // xor al, al
+        (0x2000, &[0x40, 0x32, 0xc0], true),                 // xor al, al with an empty REX prefix
+        (0x3000, &[0x28, 0xc0], true),                       // sub al, al
+        (0x4000, &[0x24, 0], true),                          // and al, 0
+        (0x5000, &[0x80, 0xe0, 0], true),                    // and al, 0 (group 1 form)
+        (0x6000, &[0x48, 0x25, 0, 0xff, 0xff, 0xff], false), // and rax, -256
+    ];
+    for (address, clear, _) in cases {
         let mut code = vec![
             0x48,
             0x89,
@@ -330,16 +332,109 @@ fn low_byte_hint_distinguishes_xor_al_from_a_wide_mask() -> Result<(), Box<dyn s
         code.extend_from_slice(clear);
         code.push(0xc3);
         session.add_section(address, &code, true, true)?;
-        session.add_function(address, label, false)?;
+        session.add_function(address, &format!("result_{address:x}"), false)?;
     }
-    let narrowed = session.decompile_with_hints(0x1000, 5000, 1000, 1_000_000, 1, false)?;
-    assert!(
-        narrowed.text.contains("bool byte_result"),
-        "{}",
-        narrowed.text
-    );
-    let wide = session.decompile_with_hints(0x2000, 5000, 1000, 1_000_000, 1, false)?;
-    assert!(!wide.text.contains("bool wide_result"), "{}", wide.text);
+    for (address, _, boolean) in cases {
+        let output = session.decompile_with_hints(address, 5000, 1000, 1_000_000, 1, false)?;
+        assert_eq!(
+            output.text.contains(&format!("bool result_{address:x}")),
+            boolean,
+            "{}",
+            output.text
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn corroborated_win64_stack_arguments_cover_six_inputs_and_float_positions(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Four register positions, then `stores` (each already encoded), then a call to 0x2000.
+    fn caller(registers: &[u8], stores: &[&[u8]]) -> Vec<u8> {
+        let mut code = vec![0x48, 0x83, 0xec, 0x38]; // sub rsp, 0x38
+        code.extend_from_slice(registers);
+        for store in stores {
+            code.extend_from_slice(store);
+        }
+        let next = 0x1000 + code.len() as u32 + 5;
+        code.push(0xe8);
+        code.extend_from_slice(&(0x2000u32.wrapping_sub(next)).to_le_bytes());
+        code.extend_from_slice(&[0x48, 0x83, 0xc4, 0x38, 0xc3]); // add rsp, 0x38; ret
+        code
+    }
+    // sub rsp, 0x28; body; call [rip -> 0x3000]; add rsp, 0x28; ret
+    fn wrapper(body: &[u8]) -> Vec<u8> {
+        let mut code = vec![0x48, 0x83, 0xec, 0x28];
+        code.extend_from_slice(body);
+        let next = 0x2000 + code.len() as u32 + 6;
+        code.extend_from_slice(&[0xff, 0x15]);
+        code.extend_from_slice(&(0x3000u32.wrapping_sub(next)).to_le_bytes());
+        code.extend_from_slice(&[0x48, 0x83, 0xc4, 0x28, 0xc3]);
+        code
+    }
+    let integers = [
+        0xb9, 1, 0, 0, 0, 0xba, 2, 0, 0, 0, 0x41, 0xb8, 3, 0, 0, 0, 0x41, 0xb9, 4, 0, 0, 0,
+    ];
+    let fifth: &[u8] = &[0x48, 0xc7, 0x44, 0x24, 0x20, 5, 0, 0, 0]; // mov qword [rsp+0x20], 5
+    let sixth: &[u8] = &[0x48, 0xc7, 0x44, 0x24, 0x28, 6, 0, 0, 0]; // mov qword [rsp+0x28], 6
+    let sum = [
+        0x48, 0x01, 0xd1, 0x4c, 0x01, 0xc1, 0x4c, 0x01, 0xc9, // add rcx, rdx/r8/r9
+        0x48, 0x03, 0x4c, 0x24, 0x50, // add rcx, [rsp+0x50], the fifth argument
+        0x48, 0x03, 0x4c, 0x24, 0x58, // add rcx, [rsp+0x58], the sixth argument
+    ];
+    // The second position is a double: xorps xmm1, xmm1 at the call site and
+    // cvttsd2si rax, xmm1 in the callee.
+    let mixed = [
+        0xb9, 1, 0, 0, 0, 0x0f, 0x57, 0xc9, 0x41, 0xb8, 3, 0, 0, 0, 0x41, 0xb9, 4, 0, 0, 0,
+    ];
+    let float_sum = [
+        0xf2, 0x48, 0x0f, 0x2c, 0xc1, 0x48, 0x01, 0xc1, // cvttsd2si rax, xmm1; add rcx, rax
+        0x4c, 0x01, 0xc1, 0x4c, 0x01, 0xc9, // add rcx, r8/r9
+        0x48, 0x03, 0x4c, 0x24, 0x50, // add rcx, [rsp+0x50]
+    ];
+    for (registers, stores, body, count, expected) in [
+        (
+            &integers[..],
+            vec![fifth, sixth],
+            &sum[..],
+            2,
+            "wrapper(1,2,3,4,5,6)",
+        ),
+        (&mixed[..], vec![fifth], &float_sum[..], 1, "wrapper(1,"),
+    ] {
+        let mut session = Session::new(Language::X86Windows64)?;
+        session.add_section(0x1000, &caller(registers, &stores), true, true)?;
+        session.add_section(0x2000, &wrapper(body), true, true)?;
+        session.add_section(0x3000, &[0; 8], false, false)?;
+        session.add_function(0x1000, "caller", false)?;
+        session.add_function(0x2000, "wrapper", false)?;
+        let before = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+        assert!(
+            before
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("wrapper (arguments, return)")),
+            "{:?}",
+            before.warnings
+        );
+        // A count that disagrees with the inferred prototype corroborates nothing.
+        session.set_win64_stack_arguments(&[0x2000], &[count + 1])?;
+        assert_eq!(
+            session.decompile(0x1000, 5000, 1000, 1_000_000)?.text,
+            before.text
+        );
+        session.set_win64_stack_arguments(&[0x2000], &[count])?;
+        let after = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+        assert!(after.text.contains(expected), "{}", after.text);
+        assert!(
+            after
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("wrapper (return)")),
+            "{:?}",
+            after.warnings
+        );
+    }
     Ok(())
 }
 

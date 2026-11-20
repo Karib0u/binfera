@@ -1372,7 +1372,8 @@ public:
   std::map<std::string, uint32_t> inference_invalidation_reasons;
   std::map<uint64_t, uint64_t> variadic_forwarders;
   std::set<uint64_t> callsite_argument_functions;
-  std::set<uint64_t> win64_fifth_arguments;
+  // Fixed Win64 callees and the stack arguments their callers and body agree on.
+  std::map<uint64_t, uint32_t> win64_stack_arguments;
   // Indirect call overrides inserted on purpose (add_tail_call). Every other one was recorded by the
   // analysis of a request, and is removed when the request ends.
   std::map<uint64_t, std::set<uint64_t>> explicit_indirect;
@@ -2097,18 +2098,28 @@ public:
   bool corroboratedWin64Inputs(Funcdata *fd) {
     const auto &proto = fd->getFuncProto();
     if (proto.isDotdotdot()) return false;
-    const bool fifth = proto.numParams() == 5 && win64_fifth_arguments.count(fd->getAddress().getOffset());
-    if (!fifth && (proto.numParams() != 4 || homedParameters(fd) != 4)) return false;
-    const char *registers[] = {"RCX", "RDX", "R8", "R9"};
+    const auto found = win64_stack_arguments.find(fd->getAddress().getOffset());
+    const int4 stack = found == win64_stack_arguments.end() ? 0 : static_cast<int4>(found->second);
+    if (stack > 0 ? proto.numParams() != 4 + stack : proto.numParams() != 4 || homedParameters(fd) != 4)
+      return false;
+    const char *integers[] = {"RCX", "RDX", "R8", "R9"};
+    const char *floats[] = {"XMM0", "XMM1", "XMM2", "XMM3"};
     for (int4 i = 0; i < 4; ++i) {
       const auto *parameter = proto.getParam(i);
-      const auto &storage = arch.translate->getRegister(registers[i]);
-      if (parameter->getAddress() != storage.getAddr() || parameter->getSize() > storage.size) return false;
+      const auto &integer = arch.translate->getRegister(integers[i]);
+      if (parameter->getAddress() == integer.getAddr() && parameter->getSize() <= integer.size) continue;
+      // Callers corroborate a position written through either register class.
+      if (stack > 0 && parameter->getAddress() == arch.translate->getRegister(floats[i]).getAddr() &&
+          parameter->getSize() <= 8)
+        continue;
+      return false;
     }
-    if (!fifth) return true;
-    const auto *parameter = proto.getParam(4);
-    return parameter->getAddress() == Address(arch.getStackSpace(), 0x28) &&
-        (parameter->getSize() == 4 || parameter->getSize() == 8);
+    for (int4 i = 0; i < stack; ++i) {
+      const auto *parameter = proto.getParam(4 + i);
+      if (parameter->getAddress() != Address(arch.getStackSpace(), 0x28 + 8 * i) || parameter->getSize() > 8)
+        return false;
+    }
+    return true;
   }
   /// Decide whether \p fd's finished analysis is trustworthy, and if so keep its pieces.
   void collect(Funcdata *fd, Inferred &out) {
@@ -2275,17 +2286,30 @@ public:
       }
       if (def->code() == CPUI_PIECE)
         return def->getIn(1)->getSize() == 1 && def->getIn(1)->getNZMask() <= 1;
-      if (def->code() == CPUI_INT_AND && def->getIn(1)->isConstant() && value->getSize() == 8 &&
-          def->getIn(1)->getOffset() == 0xffffffffffffff00ULL) {
-        // The optimizer can turn xor al, al into a mask of the full register.
-        // Verify the source instruction, since a true 64-bit AND has the same IR.
-        const auto bytes = arch.image().bytesAt(def->getAddr().getOffset());
-        return bytes.first && bytes.second >= 2 &&
-            (bytes.first[0] == 0x30 || bytes.first[0] == 0x32) && bytes.first[1] == 0xc0;
+      if (def->code() == CPUI_INT_AND && def->getIn(1)->isConstant() &&
+          (value->getSize() == 8 || value->getSize() == 4) &&
+          def->getIn(1)->getOffset() == (calc_mask(value->getSize()) & ~uintb(0xff))) {
+        // The optimizer can turn a clear of AL into a mask of the full register.
+        // Verify the source instruction, since a true wide AND has the same IR.
+        return clearsAl(def->getAddr().getOffset());
       }
       break;
     }
     return false;
+  }
+  /// xor al, al; sub al, al; and al, 0, with an optional REX prefix that keeps AL.
+  bool clearsAl(uint64_t address) {
+    const auto bytes = arch.image().bytesAt(address);
+    if (!bytes.first) return false;
+    size_t at = 0;
+    if (bytes.second > 0 && (bytes.first[0] & 0xf0) == 0x40 && (bytes.first[0] & 0x05) == 0) at = 1;
+    const auto *code = bytes.first + at;
+    const size_t size = bytes.second - at;
+    if (size >= 2 && (code[0] == 0x30 || code[0] == 0x32 || code[0] == 0x28 || code[0] == 0x2a) &&
+        code[1] == 0xc0)
+      return true;
+    if (size >= 2 && code[0] == 0x24 && code[1] == 0) return true;
+    return size >= 3 && code[0] == 0x80 && code[1] == 0xe0 && code[2] == 0;
   }
   // Require a partial AL result as well as a Boolean low byte on every return.
   bool booleanByteReturns(Funcdata *fd) {
@@ -2715,12 +2739,17 @@ bool Session::set_callsite_arguments(uint64_t caller, uint64_t site, uint64_t ta
     return true;
   });
 }
-void Session::set_win64_fifth_arguments(rust::Slice<const uint64_t> targets) {
+void Session::set_win64_stack_arguments(rust::Slice<const uint64_t> targets,
+                                        rust::Slice<const uint32_t> counts) {
   std::lock_guard<std::mutex> lock(engine_mutex);
   checked([&] {
     impl->ready();
     if (impl->spec.cspec != cspec_x64_bytes) return;
-    impl->win64_fifth_arguments = {targets.begin(), targets.end()};
+    if (targets.size() != counts.size()) throw LowlevelError("stack argument targets and counts differ");
+    impl->win64_stack_arguments.clear();
+    for (size_t i = 0; i < targets.size(); ++i) {
+      if (counts[i] > 0 && counts[i] <= 28) impl->win64_stack_arguments[targets[i]] = counts[i];
+    }
     impl->invalidateInferred();
   });
 }
