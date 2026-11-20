@@ -118,6 +118,10 @@ def main():
                 if found and reachable:
                     continue
                 cause = "no_prototype" if not found else "module_not_listed"
+                if not found and function.startswith(("?", "_Z")):
+                    # Typed at analysis time from the decoration when every type is a scalar or
+                    # pointer (`demangle::Prototype`); no pack holds these.
+                    totals["mangled"] += 1
                 totals["untyped"] += 1
                 totals[cause] += 1
                 per_dll[dll]["untyped"] += 1
@@ -127,7 +131,9 @@ def main():
 
     named, untyped = totals["named"], totals["untyped"]
     print(f"PE files {files_seen}, named imports {named}, untyped {untyped} ({100 * untyped / max(named, 1):.1f}%): "
-          f"{totals['no_prototype']} without a prototype, {totals['module_not_listed']} typed but from an unlisted module")
+          f"{totals['no_prototype']} without a prototype ({totals['mangled']} of them C++-decorated names, typed at "
+          f"analysis time only when the decoration has scalar and pointer types), "
+          f"{totals['module_not_listed']} typed but from an unlisted module")
     print("\nby DLL (untyped / named imports)")
     rows = sorted(per_dll.items(), key=lambda kv: -kv[1]["untyped"])[: args.top]
     print(f"{'untyped':>8} {'named':>7} {'share':>6} {'no proto':>9} {'unlisted':>9}  dll")

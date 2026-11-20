@@ -1586,8 +1586,8 @@ fn ordinary_call_with_an_unused_result_stays_void() -> Result<(), Box<dyn std::e
 #[test]
 fn packed_archive_types_and_prototypes_decode() {
     for (language, functions, known_failures) in [
-        (Language::X86Windows64, 41466, 0),
-        (Language::X86Windows32, 41345, 1),
+        (Language::X86Windows64, 43123, 0),
+        (Language::X86Windows32, 42995, 1),
     ] {
         let mut session = Session::new(language).unwrap();
         let report = session.validate_prototype_pack(40).unwrap();
@@ -1709,6 +1709,51 @@ fn win32_metadata_entries_are_in_the_windows_packs() {
     }
 }
 
+/// The phnt additions (scripts/decompiler_types/merge_phnt_export.py): native API prototypes and
+/// the loader structures, with the offsets Windows uses, and the C runtime startup exports.
+#[test]
+fn native_api_and_loader_structures_are_in_the_windows_packs() {
+    // (language, _PEB.Ldr, _TEB.ProcessEnvironmentBlock, _LDR_DATA_TABLE_ENTRY.DllBase)
+    for (language, ldr, peb, dll_base) in [
+        (Language::X86Windows64, 0x18, 0x60, 0x30),
+        (Language::X86Windows32, 0x0c, 0x30, 0x18),
+    ] {
+        let records = read_pack(binfera_ghidra::prototype_pack(language));
+        for function in [
+            "NtQuerySystemInformation",
+            "NtCreateThreadEx",
+            "LdrLoadDll",
+            "LdrGetProcedureAddress",
+            "RtlAdjustPrivilege",
+            "RtlGetCurrentPeb",
+            "__p__fmode",
+            "_initialize_narrow_environment",
+            "__stdio_common_vfprintf",
+        ] {
+            assert!(
+                records.contains_key(&format!("F:{function}")),
+                "{language:?}: {function}"
+            );
+        }
+        let find_type = |name: &str, field: &str| {
+            records
+                .iter()
+                .filter(|(key, _)| key.starts_with("T:"))
+                .filter_map(|(_, value)| value.strip_prefix(name)?.strip_prefix('\t'))
+                .find(|xml| xml.contains(&format!("<field name=\"{field}\"")))
+        };
+        for (name, field, offset) in [
+            ("_PEB", "Ldr", ldr),
+            ("_TEB", "ProcessEnvironmentBlock", peb),
+            ("_LDR_DATA_TABLE_ENTRY", "DllBase", dll_base),
+        ] {
+            let xml = find_type(name, field).unwrap_or_else(|| panic!("{language:?}: {name}"));
+            let wanted = format!("<field name=\"{field}\" offset=\"{offset}\"");
+            assert!(xml.contains(&wanted), "{language:?}: {name}: {xml}");
+        }
+    }
+}
+
 #[test]
 fn system_v_c_library_archive_decodes() {
     let mut session = Session::new(Language::X86Linux64).unwrap();
@@ -1733,7 +1778,7 @@ fn borland_compilers_start_with_their_specifications() {
     for language in [Language::X86Delphi32, Language::X86Borland32] {
         let mut session = Session::new(language).unwrap();
         let report = session.validate_prototype_pack(40).unwrap();
-        assert!(report.contains("functions=41345"), "{language:?}: {report}");
+        assert!(report.contains("functions=42995"), "{language:?}: {report}");
     }
 }
 

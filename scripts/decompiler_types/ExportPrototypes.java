@@ -2,7 +2,9 @@
 // archives, encoded with Ghidra's own decompiler marshalling so the embedded engine decodes
 // exactly what Ghidra's decompiler would receive.
 //
-// args: OUTPUT ARCHIVE [ARCHIVE...]   (earlier archives win on name clashes)
+// args: OUTPUT [roots=NAME,NAME...] ARCHIVE [ARCHIVE...]   (earlier archives win on name clashes)
+// roots= names structure types to export even when no prototype refers to them (the first
+// definition of each name in the archive order).
 // Output lines (tab separated, XML contains no tabs or newlines):
 //   F name xml-prototype
 //   T hex-id name xml-type
@@ -67,9 +69,19 @@ public class ExportPrototypes extends GhidraScript {
         pdtm = new PcodeDataTypeManager(currentProgram, name -> name);
         CompilerSpec spec = currentProgram.getCompilerSpec();
         Map<String, String> functions = new TreeMap<>();
+        Set<String> roots = new HashSet<>();
         for (int a = 1; a < args.length; a++) {
+            if (args[a].startsWith("roots=")) {
+                roots.addAll(Arrays.asList(args[a].substring(6).split(",")));
+                continue;
+            }
             FileDataTypeManager m = FileDataTypeManager.openFileArchive(new File(args[a]), false);
             try {
+                Iterator<DataType> all = m.getAllDataTypes();
+                while (all.hasNext()) {
+                    DataType dt = all.next();
+                    if (roots.remove(dt.getName())) collect(dt);
+                }
                 List<FunctionDefinition> defs = new ArrayList<>();
                 Iterator<DataType> it = m.getAllDataTypes();
                 while (it.hasNext()) if (it.next() instanceof FunctionDefinition f) defs.add(f);

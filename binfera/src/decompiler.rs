@@ -2357,9 +2357,12 @@ impl DecompilerSession {
         if self.caller_return_uses.contains_key(&address)
             && !self.explicit_signatures.contains(&address)
             && output.text.split('{').next().is_some_and(|header| {
-                header
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("void "))
+                header.lines().any(|line| {
+                    // `void *f()` returns a pointer; only a bare `void` return type is a gap.
+                    line.trim_start()
+                        .strip_prefix("void ")
+                        .is_some_and(|rest| !rest.trim_start().starts_with('*'))
+                })
             })
         {
             warnings.push("A caller reads the return register, but this function was decompiled as void; its return value may be missing.".into());
@@ -3553,6 +3556,21 @@ fn system_import_function(name: &str) -> Option<&str> {
         "winspool",
         "wlanapi",
         "wldap32",
+        // C runtime DLLs: the packs hold the C library and the startup and helper exports.
+        "crtdll",
+        "msvcr70",
+        "msvcr71",
+        "msvcr80",
+        "msvcr90",
+        "msvcr100",
+        "msvcr110",
+        "msvcr120",
+        "msvcr100d",
+        "msvcr110d",
+        "msvcr120d",
+        "ucrtbased",
+        "vcruntime140",
+        "vcruntime140d",
     ];
     let (module, function) = name.rsplit_once('.')?;
     let module = module.to_ascii_lowercase();

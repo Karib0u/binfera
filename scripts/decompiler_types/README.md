@@ -121,6 +121,39 @@ Run the two commands on packs freshly produced by the earlier steps; running the
 
 `binfera/src/decompiler.rs` (`system_import_function`) applies prototypes only to imports of a listed system DLL. The DLLs the metadata adds (`gdiplus`, `wldap32`, `winspool`, `uxtheme`, `hid`, ...) are listed there.
 
+## Native API (`Nt*`, `Zw*`, `Rtl*`, `Ldr*`) and the loader structures
+
+`winapi64.pack` and `winapi32.pack` also hold the user-mode native API of the [phnt](https://github.com/winsiderss/systeminformer/tree/bfef6c7e7d419bb3dea195eb8149b80f3574d324/phnt) headers of System Informer (MIT licence, "Copyright (c) 2022 Winsider Seminars & Solutions, Inc."; the `LICENSE.txt` of that commit has SHA-256 `e2a4557d2c4e70276b0ddaa31f35e2ce075281dac7e60ac07ca32c7cf58c1820`), pinned to commit `bfef6c7e7d419bb3dea195eb8149b80f3574d324` (2026-11-20), directory `phnt/include`. 1,613 x64 and 1,608 x86 prototypes (`NtQuerySystemInformation`, `NtCreateThreadEx`, `LdrLoadDll`, `LdrGetProcedureAddress`, `RtlAdjustPrivilege`, ...) and about 800 types are added, among them `_PEB`, `_TEB`, `_PEB_LDR_DATA`, `_LDR_DATA_TABLE_ENTRY` and `_RTL_USER_PROCESS_PARAMETERS` with the field offsets Windows uses (`_PEB.Ldr` at 0x18 on x64 and 0xc on x86, `_TEB.ProcessEnvironmentBlock` at 0x60 and 0x30, `_LDR_DATA_TABLE_ENTRY.DllBase` at 0x30 and 0x18). They are parsed by Ghidra's C parser as the kernel supplement is. The headers are for the Windows 11 24H2 build (`PHNT_WINDOWS_11_24H2`).
+
+Existing entries keep priority; an existing `_TEB` (the kernel headers declare it empty) does not block the phnt one, which is added under its own id. The Win32 metadata pack's `PEB`, `TEB`, `PEB_LDR_DATA` and `LDR_DATA_TABLE_ENTRY` typedefs (the public declarations with `Reserved` members) stay as they are.
+
+```sh
+export GHIDRA_HOME=$HOME/tools/ghidra_12.1.4_PUBLIC
+work_dir=$(mktemp -d)
+git clone https://github.com/winsiderss/systeminformer "$work_dir/si" && git -C "$work_dir/si" checkout bfef6c7e7d419bb3dea195eb8149b80f3574d324
+# x64; for x86 use i686-w64-mingw32-gcc, its include directory, imports32.sys and winapi32.pack.
+python3 -I scripts/decompiler_types/prepare_phnt_headers.py x86_64-w64-mingw32-gcc "$MINGW_INCLUDE" \
+  "$work_dir/si/phnt/include" "$work_dir/phnt.h"
+"$GHIDRA_HOME/support/analyzeHeadless" "$work_dir" phnt -import binfera/tests/fixtures/kernel/imports64.sys -noanalysis \
+  -scriptPath scripts/decompiler_types \
+  -postScript ParseKernelHeaders.java "$work_dir/phnt.h" "$work_dir/phnt.gdt" \
+  -postScript ExportPrototypes.java "$work_dir/phnt.tsv" \
+  roots=_PEB,_TEB,_PEB_LDR_DATA,_LDR_DATA_TABLE_ENTRY,_RTL_USER_PROCESS_PARAMETERS,_CLIENT_ID,_TEB_ACTIVE_FRAME,_ACTIVATION_CONTEXT_STACK \
+  "$work_dir/phnt.gdt" -deleteProject
+python3 -I scripts/decompiler_types/merge_phnt_export.py "$work_dir/phnt.tsv" "$work_dir/si/phnt/include" binfera-ghidra/data/winapi64.pack
+cargo test --release -p binfera-ghidra --features native --test native -- packed_archive native_api
+```
+
+(Use a temporary project directory outside a dot-prefixed directory, as for the kernel supplement; `-deleteProject` removes it.) Run it on a pack that already has the Win32 metadata. What the preparation does: it preprocesses a copy of `phnt.h` with MinGW-w64 14.0.0 after dropping the includes that need Windows SDK files MinGW lacks (`ntnsi.h`, `ntuser.h`, `ntwmi.h`, `nthv.h`, `ntsam.h`, `ntlsa.h`, `ntpoapi.h`, ... : see `DROPPED`), replaces the bodies of MinGW's inline functions (assembly that Ghidra's parser cannot read) with semicolons, and defines the SAL and `DECLSPEC` macros MinGW lacks as empty. `merge_phnt_export.py` adds only the functions that the phnt headers declare with `NTAPI` (the archive also holds every function of `windows.h`), the types they and the roots reach, and renumbers the type ids. A structure of bitfields inside a union cannot be decoded by the engine, so each run of bitfields at one offset is exported as one field of the base type, named after its first bit (`ImageUsesLargePages_bits`); the layout is unchanged. One prototype, `RtlLocateExtendedFeature2`, takes a structure by value that x86 cannot place and is left out.
+
+Not covered: the phnt headers that need NDIS or window-system types (`ntnsi.h`, `ntuser.h`, ...), Hyper-V (`nthv.h`), and the kernel-only `Ke*`/`Ex*`/`Mm*` functions, which the kernel supplement covers.
+
+## C runtime startup and helper exports
+
+`supplement_prototypes.py` (the Windows list) declares MSVCRT and UCRT startup and helper exports that neither the Ghidra archives nor the Win32 metadata describe: `__p__fmode`, `__p___argc`, `__p___argv`, `__getmainargs`, `__set_app_type`, `_set_app_type`, `_crt_atexit`, `_configure_narrow_argv`, `_initialize_narrow_environment`, `_initialize_onexit_table`, `_register_onexit_function`, `_seh_filter_exe`, `__acrt_iob_func`, `__stdio_common_vfprintf` and its siblings, `__current_exception`, `terminate`, `_except_handler3`, `__CxxFrameHandler` and others (44 in all that were missing). The declarations follow the UCRT's documented signatures (`corecrt_startup.h`, `corecrt_stdio_config.h`, Microsoft's [C runtime reference](https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference)) and use only fixed scalar and pointer types.
+
+The pack is looked up by function name, never by DLL: the API-set DLLs of the UCRT (`api-ms-win-crt-*-l1-1-0.dll`, which arrive from the importer as `api_ms_win_crt_*`) are accepted by their prefix in `system_import_function`, and the CRT DLLs `msvcr70` to `msvcr120`, `msvcr100d` to `msvcr120d`, `ucrtbased`, `vcruntime140`, `vcruntime140d` and `crtdll` are listed there with the rest. Data exports (`_acmdln`, `_iob`, `_fmode`, `_adjust_fdiv`) are not functions and stay untyped.
+
 ## Coverage
 
 `coverage.py` measures how many named PE imports reach the decompiler without a prototype, over `tests/testfiles` (or `--corpus DIR`), per DLL and per API. It separates a missing pack entry from a DLL missing in the allow-list above. It needs a built `binfera` (`--binfera PATH`).

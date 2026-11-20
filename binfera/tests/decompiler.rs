@@ -104,6 +104,28 @@ fn win32_metadata_types_wininet_and_toolhelp_calls() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `ntdll` exports are in no Ghidra archive; the phnt prototypes (scripts/decompiler_types/README.md,
+/// "Native API") type the call, and its information class prints as the enumeration's constant.
+#[test]
+fn phnt_types_a_native_api_call() -> anyhow::Result<()> {
+    let sample = include_bytes!(
+        "../../tests/testfiles/7d333c9b11b06ef0982b61bfc062631bb6cf9d12d0d4f2cf1b807a25ddf62fbc.exe_"
+    );
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x140001130)?;
+    let text = squeeze(&output.text);
+    for expected in [
+        "ULONGReturnLength",
+        "iVar1=ntdll_NtQuerySystemInformation(SystemHandleInformation,(PVOID)0x0,0,ReturnLength);",
+        "ntdll_NtQuerySystemInformation(SystemHandleInformation,_Memory,ReturnLength[0],ReturnLength);",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{}", output.text);
+    }
+    assert!(!output.warnings.iter().any(|w| w.contains("Unknown callee")));
+    assert_eq!(session.decompile_function(0x140001130)?.text, output.text);
+    Ok(())
+}
+
 #[test]
 fn explicitly_selected_unrecovered_wrapper_keeps_its_boundary() -> anyhow::Result<()> {
     let sample = include_bytes!("../../tests/testfiles/03b236b23b1ec37c663527c1f53af3fe.dll_");
