@@ -77,13 +77,20 @@ fn batch_skips_pe_forwarders_data_exports_and_unexported_stubs() -> anyhow::Resu
 }
 
 #[test]
-fn batch_keeps_an_x64_import_wrapper_with_an_unwind_entry() -> anyhow::Result<()> {
-    let mut bytes = FIXTURE.to_vec();
-    // Call the existing GetTickCount stub at RVA 0x1120 instead of calling through the IAT.
-    bytes[0x4eb..0x4f1].copy_from_slice(&[0xe8, 0x30, 0, 0, 0, 0x90]);
+fn batch_keeps_an_x64_import_wrapper_with_a_direct_call_or_unwind_entry() -> anyhow::Result<()> {
     let stub = 0x1dca81120;
     let options = BatchOptions::default();
-    for (with_unwind, compatible) in [(false, true), (true, true), (true, false)] {
+    for (called, with_unwind, compatible) in [
+        (false, false, true),
+        (true, false, true),
+        (false, true, true),
+        (false, true, false),
+    ] {
+        let mut bytes = FIXTURE.to_vec();
+        if called {
+            // Call the GetTickCount stub at RVA 0x1120 instead of calling through the IAT.
+            bytes[0x4eb..0x4f1].copy_from_slice(&[0xe8, 0x30, 0, 0, 0, 0x90]);
+        }
         if with_unwind {
             // Append a RUNTIME_FUNCTION with the same empty unwind info as branches.
             for (offset, value) in [(0x854, 0x1120u32), (0x858, 0x1126), (0x85c, 0x4004)] {
@@ -95,14 +102,17 @@ fn batch_keeps_an_x64_import_wrapper_with_an_unwind_entry() -> anyhow::Result<()
         if !compatible {
             bytes[0xa00] = 2; // version of an earlier record that compatibility recovery stops at
         }
-        let (session, native) = options.open(&bytes)?;
-        assert!(native.functions.contains_key(&stub));
-        assert!(session.is_import_thunk(stub));
+        let expected = called || with_unwind;
+        if expected {
+            let (session, native) = options.open(&bytes)?;
+            assert!(native.functions.contains_key(&stub));
+            assert!(session.is_import_thunk(stub));
+        }
         let mut found = false;
         decompile_all(&bytes, &options, |event| {
             match event {
                 BatchEvent::Start { functions, .. } => {
-                    assert_eq!(functions.contains(&stub), with_unwind);
+                    assert_eq!(functions.contains(&stub), expected);
                 }
                 BatchEvent::Function(function) if function.address == stub => {
                     assert_eq!(function.extra, Some(false));
@@ -116,7 +126,7 @@ fn batch_keeps_an_x64_import_wrapper_with_an_unwind_entry() -> anyhow::Result<()
             }
             Ok(())
         })?;
-        assert_eq!(found, with_unwind);
+        assert_eq!(found, expected);
     }
     Ok(())
 }

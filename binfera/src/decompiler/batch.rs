@@ -166,15 +166,19 @@ fn decompile_all_impl(
         );
     }
     functions.retain(|address| {
-        // A PE export or unwind start can have the same body as a linker import stub.
         !rejected.contains(address)
             && session.is_code_address(*address)
             && !session.is_local_label(*address)
-            && (!session.is_import_thunk(*address)
-                || (analysis.image.format == ImageFormat::Pe
-                    && analysis.seeds.get(address).is_some_and(|kinds| {
-                        kinds.contains(&SeedKind::Export) || kinds.contains(&SeedKind::Unwind)
-                    })))
+    });
+    let called_stubs = selection::called_win64_stubs(&analysis, functions.iter().copied());
+    functions.retain(|address| {
+        // Calls, exports and unwind records can establish a linker stub as an entry.
+        !session.is_import_thunk(*address)
+            || called_stubs.contains(address)
+            || (analysis.image.format == ImageFormat::Pe
+                && analysis.seeds.get(address).is_some_and(|kinds| {
+                    kinds.contains(&SeedKind::Export) || kinds.contains(&SeedKind::Unwind)
+                }))
     });
     let addresses: Vec<u64> = functions.iter().copied().collect();
     // The viewer reads branches out of the listing, and AArch64 text is not x86's.

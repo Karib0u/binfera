@@ -126,10 +126,32 @@ pub(super) fn select_analysis(
                 }
             }
         }
+        let seeds = &native.seeds;
+        let keep_native = |address: &u64, function: &crate::extract::recovery::Function| {
+            table_reachable.contains(address)
+                || session.is_named_function(*address)
+                || seeds.get(address).is_some_and(|kinds| {
+                    // Include unwind entries even if compatibility recovery stops at a bad row.
+                    kinds.contains(&SeedKind::EhFrame)
+                        || kinds.contains(&SeedKind::Vtable)
+                        || kinds.contains(&SeedKind::Unwind)
+                        || (kinds.contains(&SeedKind::Relocation) && straight_line_leaf(function))
+                })
+        };
+        // Callers can come from either recovery pass. Count only entries the
+        // ordinary inventory rules would keep, so stubs cannot seed each other.
+        let callers = native.functions.iter().filter_map(|(address, function)| {
+            ((listed.functions.contains_key(address) || keep_native(address, function))
+                && !rejected.contains(address)
+                && session.is_code_address(*address)
+                && !session.is_local_label(*address))
+            .then_some(*address)
+        });
+        let called_stubs = called_win64_stubs(&native, callers);
         // Keep compatibility coverage, but use the native graph for shared functions:
         // it includes validated compiler continuations and corrected block boundaries.
         for (address, function) in std::mem::take(&mut native.functions) {
-            let kinds = native.seeds.get(&address);
+            let kinds = seeds.get(&address);
             // Compatibility can stop before this unwind row, even when it found the function.
             if kinds.is_some_and(|kinds| kinds.contains(&SeedKind::Unwind)) {
                 listed
@@ -140,19 +162,7 @@ pub(super) fn select_analysis(
             }
             if let Some(existing) = listed.functions.get_mut(&address) {
                 *existing = function;
-            } else if table_reachable.contains(&address)
-                || session.is_named_function(address)
-                || kinds.is_some_and(|kinds| {
-                    // `.pdata` entries too: compatibility recovery, like Vivisect, gives up on
-                    // the whole directory at the first entry it cannot read (Delphi x64).
-                    kinds.contains(&SeedKind::EhFrame)
-                        || kinds.contains(&SeedKind::Vtable)
-                        || kinds.contains(&SeedKind::Unwind)
-                        || (kinds.contains(&SeedKind::Relocation) && straight_line_leaf(&function))
-                })
-            {
-                // Declared ELF entries must not depend on speculative callee
-                // discovery from another function's decompilation.
+            } else if keep_native(&address, &function) || called_stubs.contains(&address) {
                 listed.functions.insert(address, function);
             }
         }
@@ -181,6 +191,56 @@ pub(super) fn select_analysis(
     Ok((analysis, rejected))
 }
 
+/// Show recovered Win64 jump stubs with a direct call from a listed function.
+/// This keeps linker stubs reachable without listing every unused IAT entry.
+pub(super) fn called_win64_stubs(
+    analysis: &Analysis,
+    callers: impl Iterator<Item = u64>,
+) -> BTreeSet<u64> {
+    use crate::extract::{decoder::Flow, image::Architecture};
+
+    if analysis.image.format != ImageFormat::Pe || analysis.image.architecture != Architecture::X64
+    {
+        return BTreeSet::new();
+    }
+    let mut called = BTreeSet::new();
+    for caller in callers.filter_map(|entry| analysis.functions.get(&entry)) {
+        for insn in caller.blocks.iter().flat_map(|block| &block.insns) {
+            if insn.flow == Flow::Call {
+                if let Some(target) = insn
+                    .direct_target
+                    .filter(|&target| target != caller.addr && target != insn.next_address)
+                {
+                    called.insert(target);
+                }
+            }
+        }
+    }
+    called.retain(|address| {
+        let Some(entry) = analysis
+            .functions
+            .get(address)
+            .and_then(|function| function.blocks.iter().find(|block| block.addr == *address))
+        else {
+            return false;
+        };
+        let [jump] = entry.insns.as_slice() else {
+            return false;
+        };
+        jump.address == *address
+            && match jump.flow {
+                Flow::UnconditionalBranch => jump.direct_target.is_some_and(|target| {
+                    target != *address && analysis.functions.contains_key(&target)
+                }),
+                Flow::IndirectBranch => jump
+                    .memory_target
+                    .is_some_and(|slot| analysis.image.import_locations.contains_key(&slot)),
+                _ => false,
+            }
+    });
+    called
+}
+
 // Promote relocation entries only when they have a bounded leaf body.
 fn straight_line_leaf(function: &crate::extract::recovery::Function) -> bool {
     use crate::extract::decoder::Flow;
@@ -202,6 +262,70 @@ fn straight_line_leaf(function: &crate::extract::recovery::Function) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn win64_stubs_need_a_direct_call_from_a_listed_body() -> anyhow::Result<()> {
+        use crate::extract::{
+            image::{Architecture, ImageFormat},
+            recovery::{analyze_shellcode_native, BasicBlock, Function},
+        };
+
+        let mut bytes = vec![0xcc; 0x68];
+        bytes[..15].copy_from_slice(&[
+            0xe8, 0x1b, 0, 0, 0, // call 0x20
+            0xe8, 0x26, 0, 0, 0, // call 0x30
+            0xe9, 0x31, 0, 0, 0, // jump to 0x40
+        ]);
+        bytes[0x20..0x25].copy_from_slice(&[0xe9, 0x2b, 0, 0, 0]); // jump to 0x50
+        bytes[0x30..0x36].copy_from_slice(&[0xff, 0x25, 0x2a, 0, 0, 0]); // jump via 0x60
+        bytes[0x40..0x45].copy_from_slice(&[0xe9, 0x0b, 0, 0, 0]); // jump to 0x50
+        bytes[0x50] = 0xc3;
+
+        let mut analysis = analyze_shellcode_native(&bytes, Architecture::X64)?;
+        analysis.image.format = ImageFormat::Pe;
+        let base = analysis
+            .image
+            .entry_point
+            .ok_or_else(|| anyhow::anyhow!("missing entry"))?;
+        analysis
+            .image
+            .import_locations
+            .insert(base + 0x60, "test.Import".into());
+        // Supply separate recovered entries to model a PE linker stub table.
+        for (offset, instructions) in [
+            (0, &[0, 5, 10][..]),
+            (0x20, &[0x20][..]),
+            (0x30, &[0x30][..]),
+            (0x40, &[0x40][..]),
+            (0x50, &[0x50][..]),
+        ] {
+            let addr = base + offset;
+            let insns = instructions
+                .iter()
+                .map(|offset| analysis.image.decode_at(base + offset))
+                .collect::<Result<Vec<_>, _>>()?;
+            analysis.functions.insert(
+                addr,
+                Function {
+                    addr,
+                    blocks: vec![BasicBlock {
+                        addr,
+                        insns,
+                        succs: Vec::new(),
+                    }],
+                },
+            );
+        }
+        let stubs = super::called_win64_stubs(&analysis, std::iter::once(base));
+        assert_eq!(stubs, [base + 0x20, base + 0x30].into());
+        assert!(super::called_win64_stubs(&analysis, std::iter::empty()).is_empty());
+        analysis.image.import_locations.clear();
+        assert_eq!(
+            super::called_win64_stubs(&analysis, std::iter::once(base)),
+            [base + 0x20].into()
+        );
+        Ok(())
+    }
+
     #[test]
     fn relocated_callbacks_require_a_straight_line_leaf() -> Result<(), Box<dyn std::error::Error>>
     {
