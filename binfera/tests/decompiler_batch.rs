@@ -447,3 +447,54 @@ fn limited_functions_settle_before_retries_and_retain_their_names() -> anyhow::R
         .any(|e| matches!(e, BatchEvent::Function(f) if f.resource_retry == Some(true))));
     Ok(())
 }
+
+/// `--start-evidence` exposes the tables recovery read, without changing the inventory.
+#[test]
+fn start_evidence_reports_unwind_rows_and_their_chains() -> anyhow::Result<()> {
+    let bytes = include_bytes!(
+        "../../tests/testfiles/0a942aca9589d10f7b8f127870ca35cdd90d25c0b3449abe0434ffeb9f93f277.exe_"
+    );
+    let start = |evidence| -> anyhow::Result<_> {
+        let mut first = None;
+        let options = BatchOptions {
+            shard: Some((0, 65536)),
+            evidence,
+            ..Default::default()
+        };
+        decompile_all(bytes, &options, |event| {
+            if first.is_none() {
+                first = Some(event);
+            }
+            Ok(())
+        })?;
+        match first {
+            Some(BatchEvent::Start {
+                functions,
+                evidence,
+                ..
+            }) => Ok((functions, evidence)),
+            _ => anyhow::bail!("the first event is not the start record"),
+        }
+    };
+    let (plain, none) = start(false)?;
+    assert!(none.is_none());
+    let (functions, evidence) = start(true)?;
+    assert_eq!(functions, plain, "evidence must not change the inventory");
+    let evidence = evidence.ok_or_else(|| anyhow::anyhow!("no evidence"))?;
+    let unwind = |address: &u64| {
+        evidence
+            .seeds
+            .get(address)
+            .is_some_and(|kinds| kinds.contains(&binfera::extract::recovery::SeedKind::Unwind))
+    };
+    assert!(functions.iter().any(unwind));
+    assert!(!evidence.chained_unwind.is_empty());
+    for (fragment, primary) in &evidence.chained_unwind {
+        // Seeding skips a chained row; the chain ends at a row that is a function.
+        assert!(!unwind(fragment), "{fragment:#x} is a fragment");
+        assert!(unwind(primary), "{primary:#x} is not an unwind entry");
+        assert!(functions.contains(primary));
+        assert!(evidence.regions.contains_key(fragment));
+    }
+    Ok(())
+}

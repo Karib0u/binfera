@@ -112,6 +112,11 @@ struct Cli {
     #[arg(long, hide = true, value_parser = parse_function_address, requires = "decompile_all", conflicts_with = "shard")]
     decompile_retry: Vec<u64>,
 
+    /// With --decompile-all: add every seeded address's evidence kinds and the chained x64
+    /// unwind fragments to the `start` record, for `scripts/bench/recovery.py`. Runs in-process
+    #[arg(long, hide = true, requires = "decompile_all")]
+    start_evidence: bool,
+
     /// Use longer resource limits for an explicitly selected function.
     #[arg(long, requires = "decompile_function")]
     resource_retry: bool,
@@ -1212,6 +1217,7 @@ fn run_decompile_all(bytes: &[u8], cli: &Cli) -> Result<(), CliError> {
     #[cfg(not(target_arch = "wasm32"))]
     if cli.decompile_cache.is_none()
         && cli.decompile_retry.is_empty()
+        && !cli.start_evidence
         && cli.jobs.is_some_and(|jobs| jobs.get() > 1)
         && decompile_workers::run(bytes, cli, &options, signature_jobs)?
     {
@@ -1261,6 +1267,7 @@ fn decompiler_options(cli: &Cli) -> binfera::decompiler::BatchOptions {
         arch: Some(cli.arch.clone()),
         os: Some(cli.os.clone()),
         shard: cli.shard,
+        evidence: cli.start_evidence,
         limits: Default::default(),
         retry: if !cli.decompile_retry.is_empty() {
             binfera::decompiler::RetryPolicy::Only(cli.decompile_retry.clone())

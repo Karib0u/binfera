@@ -99,6 +99,7 @@ pub(super) fn emit_managed_methods(
         arch: Some("cil".into()),
         warnings: warnings.clone(),
         packed: None,
+        evidence: None,
     })?;
     let (index, count) = options.shard.unwrap_or((0, 1));
     for method in methods
@@ -138,6 +139,7 @@ pub(super) fn emit_data_only_elf(
         arch: None,
         warnings: warnings.clone(),
         packed: crate::packing::detect_elf(bytes),
+        evidence: None,
     })?;
     emit(BatchEvent::Settled)?;
     emit(BatchEvent::Done { warnings })
