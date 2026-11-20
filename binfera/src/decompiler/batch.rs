@@ -12,6 +12,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod cache;
+mod evidence;
 mod graph;
 #[doc(hidden)]
 pub use cache::{
@@ -22,6 +23,7 @@ mod listings;
 mod options;
 mod selection;
 use crate::image_info::unsupported_elf_cpu;
+pub use evidence::StartEvidence;
 pub use graph::{FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, Reference};
 use listings::{emit_data_only_elf, emit_managed_methods};
 pub use options::{BatchOptions, RetryPolicy};
@@ -40,6 +42,9 @@ pub enum BatchEvent {
         arch: Option<String>,
         warnings: Vec<String>,
         packed: Option<Packing>,
+        /// Seed kinds and unwind fragments, only with [`BatchOptions::evidence`].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        evidence: Option<Box<StartEvidence>>,
     },
     Function(Box<BatchFunction>),
     Settled,
@@ -143,10 +148,13 @@ fn decompile_all_impl(
             return emit_data_only_elf(bytes, cpu, &mut emit);
         }
     }
+    // The listed analysis can be the compatibility one, which keeps few of the native seeds.
+    let mut native_seeds = None;
     let (mut session, analysis, rejected) = if let Some(path) = cached {
         cache::open(bytes, options, path)?
     } else {
         let (mut session, native) = options.open_recovered(bytes, None, signature_jobs)?;
+        native_seeds = options.evidence.then(|| native.seeds.clone());
         let (analysis, rejected) = selection::select_analysis(bytes, native, &mut session)?;
         (session, analysis, rejected)
     };
@@ -198,6 +206,14 @@ fn decompile_all_impl(
         arch: Some(arch_name.into()),
         warnings: session.warnings().to_vec(),
         packed: crate::packing::detect(&analysis.image, bytes),
+        evidence: options.evidence.then(|| {
+            Box::new(StartEvidence::collect(
+                bytes,
+                &analysis,
+                native_seeds.take(),
+                |address| session.function_name(address),
+            ))
+        }),
     })?;
     // Cap on callees found only through decompiled text, so a pathological image stays bounded.
     const MAX_EXTRA: usize = 2000;

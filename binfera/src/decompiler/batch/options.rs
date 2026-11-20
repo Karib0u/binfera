@@ -22,6 +22,8 @@ pub struct BatchOptions {
     pub os: Option<String>,
     /// Zero-based shard index and shard count. Every shard announces the full function set.
     pub shard: Option<(usize, usize)>,
+    /// Attach recovery's per-address evidence to the `start` event (benchmark use).
+    pub evidence: bool,
 }
 
 impl BatchOptions {
