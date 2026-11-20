@@ -127,7 +127,27 @@ struct Spec {
   const char *import_model = nullptr;
   uint64_t go_context = 0;
   const char *default_model = nullptr;
+  // Windows x86 languages: their prototype archive is the Windows API pack for the pointer width
+  // (see pack_of), which a host may supply at runtime instead of the embedded one.
+  bool windows = false;
 };
+static Spec as_windows(Spec s) { s.windows = true; return s; }
+// The Windows API prototype archive of each pointer width ([0] = x86-32, [1] = x86-64). Native builds
+// embed both. The WebAssembly build embeds an empty archive instead and the host registers the real
+// one before a session for that architecture starts; none registered means no prototypes, never an
+// error. A registered archive is kept for the life of the process because decoded indexes and
+// sessions point into it.
+struct PackBytes { const unsigned char *bytes; size_t size; };
+std::mutex windows_pack_mutex;
+const std::vector<uint8_t> *windows_packs[2] = {nullptr, nullptr};
+PackBytes pack_of(const Spec &spec) {
+  if (spec.windows) {
+    std::lock_guard<std::mutex> lock(windows_pack_mutex);
+    if (const auto *registered = windows_packs[spec.wide ? 1 : 0])
+      return {registered->data(), registered->size()};
+  }
+  return {spec.pack, spec.pack_size};
+}
 const Spec &spec_for(binfera::Language language) {
   // Empty archive: x86-specific structure layouts and syscall ABIs must not leak
   // into ARM/MIPS. Function parameters come from these compiler models and DWARF.
@@ -146,12 +166,12 @@ const Spec &spec_for(binfera::Language language) {
     pspec_mipsbe_bytes, sizeof(pspec_mipsbe_bytes), cspec_mipsbe_bytes, sizeof(cspec_mipsbe_bytes),
     empty_pack, sizeof(empty_pack), 4, 0xffff0000ULL, 0x100000000ULL};
 
-  static const Spec win64{true, "x86:LE:64:default:windows", "x86-64 Windows", sla_x64_bytes, sizeof(sla_x64_bytes),
+  static const Spec win64 = as_windows(Spec{true, "x86:LE:64:default:windows", "x86-64 Windows", sla_x64_bytes, sizeof(sla_x64_bytes),
     pspec_x64_bytes, sizeof(pspec_x64_bytes), cspec_x64_bytes, sizeof(cspec_x64_bytes),
-    pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL};
-  static const Spec win32{false, "x86:LE:32:default:windows", "x86-32 Windows", sla_x86_bytes, sizeof(sla_x86_bytes),
+    pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL});
+  static const Spec win32 = as_windows(Spec{false, "x86:LE:32:default:windows", "x86-32 Windows", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86_bytes, sizeof(cspec_x86_bytes),
-    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL};
+    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL});
   // The same SLEIGH language and processor context as Windows x86-64; only the compiler
   // specification (System V calling convention) and the type archive (the C library) differ.
   static const Spec linux64{true, "x86:LE:64:default:gcc", "x86-64 System V", sla_x64_bytes, sizeof(sla_x64_bytes),
@@ -163,27 +183,27 @@ const Spec &spec_for(binfera::Language language) {
   static const Spec linux32{false, "x86:LE:32:default:gcc", "x86-32 System V", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86gcc_bytes, sizeof(cspec_x86gcc_bytes),
     pack_sysv32_bytes, sizeof(pack_sysv32_bytes), 4, 0xf0000000ULL, 0xf0000000ULL};
-  static const Spec delphi32{false, "x86:LE:32:default:borlanddelphi", "x86-32 Delphi", sla_x86_bytes, sizeof(sla_x86_bytes),
+  static const Spec delphi32 = as_windows(Spec{false, "x86:LE:32:default:borlanddelphi", "x86-32 Delphi", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86delphi_bytes, sizeof(cspec_x86delphi_bytes),
-    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL};
-  static const Spec borland32{false, "x86:LE:32:default:borlandcpp", "x86-32 Borland C++", sla_x86_bytes, sizeof(sla_x86_bytes),
+    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL});
+  static const Spec borland32 = as_windows(Spec{false, "x86:LE:32:default:borlandcpp", "x86-32 Borland C++", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86borland_bytes, sizeof(cspec_x86borland_bytes),
-    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL};
+    pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL});
   // Go: Ghidra's Go compiler specifications (`abi-internal`, the register ABI of Go 1.17+, and
   // `abi0`, the stack ABI) with the platform's C archive for imports and the Go pack for Go's own
   // functions. The goroutine's `runtime.g` sits just below the import range, unmapped.
-  static const Spec go_win64{true, "x86:LE:64:default:golang", "x86-64 Go (Windows)", sla_x64_bytes, sizeof(sla_x64_bytes),
+  static const Spec go_win64 = as_windows(Spec{true, "x86:LE:64:default:golang", "x86-64 Go (Windows)", sla_x64_bytes, sizeof(sla_x64_bytes),
     pspec_x64_bytes, sizeof(pspec_x64_bytes), cspec_x64go_bytes, sizeof(cspec_x64go_bytes),
     pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL,
-    pack_go64_bytes, sizeof(pack_go64_bytes), "MSABI", 0xfffe000000000000ULL};
+    pack_go64_bytes, sizeof(pack_go64_bytes), "MSABI", 0xfffe000000000000ULL});
   static const Spec go_linux64{true, "x86:LE:64:default:golang", "x86-64 Go (System V)", sla_x64_bytes, sizeof(sla_x64_bytes),
     pspec_x64_bytes, sizeof(pspec_x64_bytes), cspec_x64go_bytes, sizeof(cspec_x64go_bytes),
     pack_sysv64_bytes, sizeof(pack_sysv64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL,
     pack_go64_bytes, sizeof(pack_go64_bytes), "__stdcall", 0xfffe000000000000ULL};
-  static const Spec go_win32{false, "x86:LE:32:default:golang", "x86-32 Go (Windows)", sla_x86_bytes, sizeof(sla_x86_bytes),
+  static const Spec go_win32 = as_windows(Spec{false, "x86:LE:32:default:golang", "x86-32 Go (Windows)", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86go_bytes, sizeof(cspec_x86go_bytes),
     pack_x86_bytes, sizeof(pack_x86_bytes), 4, 0xf0000000ULL, 0xf0000000ULL,
-    pack_go32_bytes, sizeof(pack_go32_bytes), nullptr, 0};
+    pack_go32_bytes, sizeof(pack_go32_bytes), nullptr, 0});
   static const Spec go_linux32{false, "x86:LE:32:default:golang", "x86-32 Go (System V)", sla_x86_bytes, sizeof(sla_x86_bytes),
     pspec_x86_bytes, sizeof(pspec_x86_bytes), cspec_x86go_bytes, sizeof(cspec_x86go_bytes),
     pack_sysv32_bytes, sizeof(pack_sysv32_bytes), 4, 0xf0000000ULL, 0xf0000000ULL,
@@ -191,9 +211,9 @@ const Spec &spec_for(binfera::Language language) {
   static const Spec arm_linux{true, "AARCH64:LE:64:v8A:default", "AArch64 Linux", sla_arm64_bytes, sizeof(sla_arm64_bytes),
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64_bytes, sizeof(cspec_arm64_bytes),
     pack_sysv64_bytes, sizeof(pack_sysv64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL};
-  static const Spec arm_win{true, "AARCH64:LE:64:v8A:windows", "AArch64 Windows", sla_arm64_bytes, sizeof(sla_arm64_bytes),
+  static const Spec arm_win = as_windows(Spec{true, "AARCH64:LE:64:v8A:windows", "AArch64 Windows", sla_arm64_bytes, sizeof(sla_arm64_bytes),
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64win_bytes, sizeof(cspec_arm64win_bytes),
-    pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL};
+    pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL});
   static const Spec arm_apple{true, "AARCH64:LE:64:v8A:apple", "AArch64 Apple", sla_arm64_bytes, sizeof(sla_arm64_bytes),
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64apple_bytes, sizeof(cspec_arm64apple_bytes),
     pack_macos64_bytes, sizeof(pack_macos64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL};
@@ -208,10 +228,10 @@ const Spec &spec_for(binfera::Language language) {
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64go_bytes, sizeof(cspec_arm64go_bytes),
     pack_sysv64_bytes, sizeof(pack_sysv64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL,
     pack_go64_bytes, sizeof(pack_go64_bytes), "__cdecl", 0xfffe000000000000ULL};
-  static const Spec go_arm_win{true, "AARCH64:LE:64:v8A:golang", "AArch64 Go (Windows)", sla_arm64_bytes, sizeof(sla_arm64_bytes),
+  static const Spec go_arm_win = as_windows(Spec{true, "AARCH64:LE:64:v8A:golang", "AArch64 Go (Windows)", sla_arm64_bytes, sizeof(sla_arm64_bytes),
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64gowin_bytes, sizeof(cspec_arm64gowin_bytes),
     pack_x64_bytes, sizeof(pack_x64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL,
-    pack_go64_bytes, sizeof(pack_go64_bytes), "__cdecl", 0xfffe000000000000ULL};
+    pack_go64_bytes, sizeof(pack_go64_bytes), "__cdecl", 0xfffe000000000000ULL});
   static const Spec go_arm_apple{true, "AARCH64:LE:64:v8A:golang", "AArch64 Go (Darwin)", sla_arm64_bytes, sizeof(sla_arm64_bytes),
     pspec_arm64_bytes, sizeof(pspec_arm64_bytes), cspec_arm64goapple_bytes, sizeof(cspec_arm64goapple_bytes),
     pack_macos64_bytes, sizeof(pack_macos64_bytes), 8, 0xffff000000000000ULL, 0xffff000000000000ULL,
@@ -602,7 +622,10 @@ PrototypePack &pack_at(const unsigned char *bytes, size_t size) {
   if (!pack) pack.reset(new PrototypePack(bytes, size));
   return *pack;
 }
-PrototypePack &prototype_pack(const Spec &spec) { return pack_at(spec.pack, spec.pack_size); }
+PrototypePack &prototype_pack(const Spec &spec) {
+  const PackBytes pack = pack_of(spec);
+  return pack_at(pack.bytes, pack.size);
+}
 PrototypePack &go_pack(const Spec &spec) {
   if (!spec.go_pack) throw std::runtime_error("no Go prototype pack for this language");
   return pack_at(spec.go_pack, spec.go_pack_size);
@@ -1479,7 +1502,7 @@ public:
   }
   void invalidateTemporary(uint64_t target, const char *reason) {
     // Keep the existing full reset for ABI-sensitive Go, Rust and x86 cases.
-    const bool local = spec.sla == sla_x64_bytes && spec.pack == pack_x64_bytes &&
+    const bool local = spec.sla == sla_x64_bytes && spec.windows &&
       !spec.go_pack && !rust_fixups && !counted_strings;
     invalidateInferred(reason, local ? target : 0);
   }
@@ -2150,7 +2173,7 @@ public:
         return type->getSize() <= 8 && (kind == TYPE_VOID || kind == TYPE_UNKNOWN ||
           kind == TYPE_INT || kind == TYPE_UINT || kind == TYPE_BOOL || kind == TYPE_FLOAT);
       };
-      out.context_independent = spec.sla == sla_x64_bytes && spec.pack == pack_x64_bytes &&
+      out.context_independent = spec.sla == sla_x64_bytes && spec.windows &&
         fd->numCalls() == 0 && fd->getBasicBlocks().getSize() == 1 && scalar(out.pieces.outtype) &&
         std::all_of(out.pieces.intypes.begin(), out.pieces.intypes.end(), scalar);
       for (auto it = fd->beginOpAll(); out.context_independent && it != fd->endOpAll(); ++it) {
@@ -2363,7 +2386,7 @@ public:
         !(function.size() > 1 && function[0] == '_' && prototype_pack(spec).find("F:" + function.substr(1), xml))) {
       // Win32 exports sometimes omit the A suffix. Require both archive variants.
       std::string wide;
-      if (spec.pack != pack_x86_bytes && spec.pack != pack_x64_bytes) return false;
+      if (!spec.windows) return false;
       if (!prototype_pack(spec).find("F:" + function + "A", xml) ||
           !prototype_pack(spec).find("F:" + function + "W", wide)) return false;
     }
@@ -2592,9 +2615,19 @@ std::unique_ptr<Session> new_session(binfera::Language language) {
     return std::unique_ptr<Session>(new Session(language));
   });
 }
+void set_windows_pack(bool wide, rust::Slice<const uint8_t> bytes, bool present) {
+  // No bytes means the archive is unavailable: the empty archive types nothing, like other platforms'.
+  static const char empty[] = {'C','X','P','R','O','T','O','1',0,0,0,0};
+  const std::vector<uint8_t> *pack = !present ? nullptr
+    : bytes.size() ? new std::vector<uint8_t>(bytes.begin(), bytes.end())
+    : new std::vector<uint8_t>(empty, empty + sizeof(empty));
+  std::lock_guard<std::mutex> lock(windows_pack_mutex);
+  windows_packs[wide ? 1 : 0] = pack;
+}
 rust::Slice<const uint8_t> prototype_pack_bytes(binfera::Language language) {
   const Spec &spec = spec_for(language);
-  return rust::Slice<const uint8_t>(spec.pack, spec.pack_size);
+  const PackBytes pack = pack_of(spec);
+  return rust::Slice<const uint8_t>(pack.bytes, pack.size);
 }
 void Session::add_section(uint64_t address, rust::Slice<const uint8_t> bytes, bool executable, bool readonly) {
   std::lock_guard<std::mutex> lock(engine_mutex);
@@ -3447,7 +3480,7 @@ void Session::set_rust_function(uint64_t address) {
         arch.pcodeinjectlib->decodeInject("Ghidra Rust extension", "", InjectPayload::CALLFIXUP_TYPE, decoder);
       };
       load(rust_probe_bytes, sizeof(rust_probe_bytes));
-      const bool windows = impl->spec.pack == pack_x64_bytes || impl->spec.pack == pack_x86_bytes;
+      const bool windows = impl->spec.windows;
       if (windows && impl->ptr() == 8) load(rust_try_windows64_bytes, sizeof(rust_try_windows64_bytes));
       else if (windows) load(rust_try_windows32_bytes, sizeof(rust_try_windows32_bytes));
       else if (impl->ptr() == 8) load(rust_try_unix64_bytes, sizeof(rust_try_unix64_bytes));

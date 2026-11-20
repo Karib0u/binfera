@@ -1419,6 +1419,7 @@ impl DecompilerSession {
             )));
         }
         let init = |e: binfera_ghidra::Error| DecompileError::Initialization(e.to_string());
+        crate::bundled::register_windows_pack(image.architecture.pointer_width() == 8);
         let mut native = binfera_ghidra::Session::new(convention.language()).map_err(init)?;
         if image.architecture == Architecture::Arm {
             let mut entries = Vec::new();

@@ -1,10 +1,18 @@
 // Everything the engine needs from the network, downloaded once per page load with aggregate
-// progress: the compiled wasm module, the FLIRT signature databases, the Function ID pack for the
-// sample's architecture, and the capa rules.
+// progress: the compiled wasm module, the FLIRT signature databases, the Function ID pack and the Windows prototype pack for
+// the sample's architecture, and the capa rules.
 import { digest } from "./resultCache";
 import wasmUrl from "../wasm/binfera.wasm?url";
 
 export type Arch = "x64" | "x86" | null;
+/** Pointer width of the Windows API prototype pack a PE image needs (`winapi32.pack`, `winapi64.pack`). */
+export type WinApi = "32" | "64" | null;
+
+/** The Windows pack for a PE image: 32-bit for x86, 64-bit for x64 and AArch64 (which share it). */
+export function winApiFor(arch: string | null | undefined, format: string | null | undefined): WinApi {
+  if (format !== "pe") return null;
+  return arch === "x86" ? "32" : arch === "x64" || arch === "aarch64" ? "64" : null;
+}
 
 /** False in the browser build: the engine is WebAssembly in workers (assets.native.ts says true). */
 export const NATIVE = false;
@@ -76,18 +84,22 @@ export interface Assets {
   rules: Record<string, string>;
 }
 
-export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) => void, signatures = true): Promise<Assets> {
+export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) => void, signatures = true, winApi: WinApi = null): Promise<Assets> {
   downloads.clear();
   listener = onProgress;
   report();
   try {
     const fid = arch ? `fid-${arch}.pack` : null;
-    const [module, sigs, pack, rules] = await Promise.all([
+    const winapi = winApi ? `winapi${winApi}.pack` : null;
+    const [module, sigs, pack, api, rules] = await Promise.all([
       loadModule(),
       Promise.all(signatures ? SIGNATURES.map((n) => download(`${base}sigs/${n}`)) : []),
       fid ? download(`${base}sigs/${fid}z`).then(async (bytes) => new Uint8Array(await new Response(
         new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
       ).arrayBuffer())) : Promise.resolve(null),
+      // The Windows prototype pack is stored uncompressed: it is mostly names and type text the
+      // CDN compresses in transit, and the engine copies it out of the file system anyway.
+      winapi ? download(`${base}sigs/${winapi}`) : Promise.resolve(null),
       download(`${base}rules.json`).then((b) => JSON.parse(new TextDecoder().decode(b)) as Record<string, string>),
     ]);
     const copy = (b: Uint8Array<ArrayBuffer>) => b.slice().buffer;
@@ -98,6 +110,7 @@ export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) =>
         const files: Record<string, ArrayBuffer> = {};
         sigs.forEach((bytes, i) => (files[SIGNATURES[i]] = copy(bytes)));
         if (kind === "decompile" && fid && pack) files[fid] = copy(pack);
+        if (kind === "decompile" && winapi && api) files[winapi] = copy(api);
         return files;
       },
     };

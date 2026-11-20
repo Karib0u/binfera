@@ -77,4 +77,6 @@ public:
 std::unique_ptr<Session> new_session(Language language);
 // The embedded prototype pack for one language, read by the Rust side to describe types and callees.
 rust::Slice<const uint8_t> prototype_pack_bytes(Language language);
+// Supplies (or, with `present` false, withdraws) the Windows API prototype archive of one pointer width.
+void set_windows_pack(bool wide, rust::Slice<const uint8_t> bytes, bool present);
 }

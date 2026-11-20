@@ -154,7 +154,15 @@ mod native {
                 if matches!(arch, "arm64" | "arm32" | "mipsle" | "mipsbe") && name == "pack" {
                     continue; // Platform archives are selected by the bridge, never duplicated here.
                 }
-                let bytes = fs::read(path).unwrap();
+                // The browser build does not embed the Windows API archives (4 MB each, over the
+                // deploy size limit); the bridge gets them at runtime and sees an empty one until then.
+                let bytes = if name == "pack"
+                    && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("emscripten")
+                {
+                    b"CXPROTO1\0\0\0\0".to_vec()
+                } else {
+                    fs::read(path).unwrap()
+                };
                 if arch == "arm64" && name == "sla" {
                     assert!(
                         bytes.len() <= 2 * 1024 * 1024,

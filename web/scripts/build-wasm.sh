@@ -28,6 +28,9 @@ cp "$out/binfera.js" "$out/binfera.wasm" web/src/wasm/
 # them (only the Function ID pack for the sample's architecture) from public/sigs.
 mkdir -p web/public/sigs
 cp binfera/sigs/*.sig web/public/sigs/
+# The Windows prototype packs (4 MB each) are left out of the wasm for the same reason; the page
+# fetches the one for the sample's architecture.
+cp binfera-ghidra/data/winapi64.pack binfera-ghidra/data/winapi32.pack web/public/sigs/
 # Remove packs left by older builds so they are not deployed alongside the compressed assets.
 rm -f web/public/sigs/fid-*.pack
 for arch in x64 x86; do
