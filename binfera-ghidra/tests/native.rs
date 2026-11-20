@@ -1586,8 +1586,8 @@ fn ordinary_call_with_an_unused_result_stays_void() -> Result<(), Box<dyn std::e
 #[test]
 fn packed_archive_types_and_prototypes_decode() {
     for (language, functions, known_failures) in [
-        (Language::X86Windows64, 30751, 0),
-        (Language::X86Windows32, 30634, 1),
+        (Language::X86Windows64, 41466, 0),
+        (Language::X86Windows32, 41345, 1),
     ] {
         let mut session = Session::new(language).unwrap();
         let report = session.validate_prototype_pack(40).unwrap();
@@ -1611,6 +1611,100 @@ fn packed_archive_types_and_prototypes_decode() {
         assert!(
             report.contains(&format!("functions={functions}")),
             "{report}"
+        );
+    }
+}
+
+/// Every `key<TAB>value` record of a prototype pack (format: scripts/decompiler_types/pack_prototypes.py).
+fn read_pack(pack: &[u8]) -> std::collections::HashMap<String, String> {
+    use std::io::Read;
+    let u32_at = |at: usize| u32::from_le_bytes(pack[at..at + 4].try_into().unwrap()) as usize;
+    assert_eq!(&pack[..8], b"CXPROTO1");
+    let count = u32_at(8);
+    let mut at = 12;
+    let mut blocks = Vec::new();
+    for _ in 0..count {
+        blocks.push((u32_at(at), u32_at(at + 4)));
+        at += 14 + u16::from_le_bytes([pack[at + 12], pack[at + 13]]) as usize;
+    }
+    let mut records = std::collections::HashMap::new();
+    for (offset, length) in blocks {
+        let mut raw = String::new();
+        flate2::read::ZlibDecoder::new(&pack[at + offset..at + offset + length])
+            .read_to_string(&mut raw)
+            .unwrap();
+        for line in raw.lines() {
+            let (key, value) = line.split_once('\t').unwrap();
+            records.insert(key.to_owned(), value.to_owned());
+        }
+    }
+    records
+}
+
+/// The Win32 metadata additions (scripts/decompiler_types/pack_win32_metadata.py): prototypes the
+/// Ghidra archives lack, every struct and enum whether or not a prototype uses it, and the
+/// parameter-to-enum associations that later passes read.
+#[test]
+fn win32_metadata_entries_are_in_the_windows_packs() {
+    for (language, process_size) in [(Language::X86Windows64, 568), (Language::X86Windows32, 556)] {
+        let records = read_pack(binfera_ghidra::prototype_pack(language));
+        for function in [
+            "CreateToolhelp32Snapshot",
+            "Process32FirstW",
+            "InternetOpenA",
+            "InternetReadFile",
+            "HttpSendRequestA",
+            "WinHttpOpen",
+            "BCryptOpenAlgorithmProvider",
+            "NetApiBufferFree",
+        ] {
+            let prototype = records
+                .get(&format!("F:{function}"))
+                .unwrap_or_else(|| panic!("{language:?}: no prototype for {function}"));
+            assert!(
+                prototype.contains("modellock=\"true\""),
+                "{function}: {prototype}"
+            );
+        }
+        // The parameter names survive, and a flag parameter keeps its integer type.
+        let snapshot = &records["F:CreateToolhelp32Snapshot"];
+        assert!(
+            snapshot.contains("name=\"dwFlags\"") && snapshot.contains("name=\"th32ProcessID\""),
+            "{snapshot}"
+        );
+        assert!(!snapshot.contains("enum_"), "{snapshot}");
+        assert_eq!(
+            records["P:CreateToolhelp32Snapshot"],
+            "0=CREATE_TOOLHELP_SNAPSHOT_FLAGS+"
+        );
+        assert!(records["P:VirtualAlloc"].contains("2=VIRTUAL_ALLOCATION_TYPE+"));
+
+        // Types are keyed by id; find them by name. Structures no prototype refers to are kept.
+        let find_type = |name: &str| {
+            records
+                .iter()
+                .filter(|(key, _)| key.starts_with("T:"))
+                .find_map(|(_, value)| value.strip_prefix(name)?.strip_prefix('\t'))
+        };
+        let process = find_type("PROCESSENTRY32W").expect("PROCESSENTRY32W");
+        assert!(
+            process.contains(&format!("metatype=\"struct\" size=\"{process_size}\"")),
+            "{language:?}: {process}"
+        );
+        assert!(process.contains("name=\"szExeFile\""), "{process}");
+        for name in [
+            "IMAGE_DOS_HEADER",
+            "IMAGE_NT_HEADERS64",
+            "IMAGE_EXPORT_DIRECTORY",
+            "IMAGE_IMPORT_DESCRIPTOR",
+        ] {
+            assert!(find_type(name).is_some(), "{language:?}: no type {name}");
+        }
+        let flags = find_type("CREATE_TOOLHELP_SNAPSHOT_FLAGS").expect("the flag enum");
+        assert!(
+            flags.contains("metatype=\"enum_uint\"")
+                && flags.contains("name=\"TH32CS_SNAPPROCESS\" value=\"2\""),
+            "{flags}"
         );
     }
 }
@@ -1639,7 +1733,7 @@ fn borland_compilers_start_with_their_specifications() {
     for language in [Language::X86Delphi32, Language::X86Borland32] {
         let mut session = Session::new(language).unwrap();
         let report = session.validate_prototype_pack(40).unwrap();
-        assert!(report.contains("functions=30634"), "{language:?}: {report}");
+        assert!(report.contains("functions=41345"), "{language:?}: {report}");
     }
 }
 

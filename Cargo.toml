@@ -5,7 +5,7 @@ members = ["binfera", "binfera-cli", "binfera-python", "binfera-ghidra", "binfer
 # the workspace so its `cli`-gated bin targets never influence this
 # workspace's feature resolution -- binfera depends on it as a plain path
 # dependency with dnfile's own default (empty) feature set.
-exclude = ["third_party/dnfile", "web/src-tauri"]
+exclude = ["third_party/dnfile", "web/src-tauri", "scripts/decompiler_types/win32_metadata"]
 
 [workspace.package]
 version = "1.0.1"

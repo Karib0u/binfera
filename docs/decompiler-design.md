@@ -164,8 +164,8 @@ Ghidra's data type archives (`.gdt`) are exported once to compact packs using Gh
 
 | Pack | Size | Contents |
 |---|---:|---|
-| `winapi64.pack` | 1.5 MB | 30,749 prototypes, 9,704 types (Win32, C library, kernel) |
-| `winapi32.pack` | 1.3 MB | 30,632 prototypes, 9,650 types |
+| `winapi64.pack` | 3.9 MB | 41,466 prototypes, 42,866 types (Win32, C library, kernel, Win32 metadata) |
+| `winapi32.pack` | 3.9 MB | 41,345 prototypes, 42,803 types |
 | `sysv64.pack`, `sysv32.pack` | ≈200 KB each | 6,633 prototypes, 1,229 types |
 | `macos64.pack` | | 14,256 prototypes (macOS 10.9) |
 | `golang64.pack`, `golang32.pack` | 1.7 / 1.6 MB | Go 1.15–1.25 API snapshots by OS and release |

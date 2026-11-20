@@ -2851,13 +2851,14 @@ rust::String Session::validate_prototype_pack(uint32_t max_report) {
           types++;
           const uint64_t id = std::stoull(key.substr(2), nullptr, 16);
           if (!static_cast<TypeFactoryPack *>(impl->arch.types)->resolve(id)) fail(key, "not resolved");
-        } else {
+        } else if (key.compare(0, 2, "F:") == 0) {
           functions++;
           if (impl->symbols + 1 > 99999) throw LowlevelError("validation symbol limit");
           const uint64_t target = impl->spec.external_base + impl->symbols * 16;
           auto *fd = impl->function(target, "validate_" + std::to_string(functions), false);
           if (!impl->apply_pack_prototype(fd, key.substr(2))) fail(key, "not found");
         }
+        // Other records (`P:` parameter-to-enum associations) are data for later passes.
       } catch (const LowlevelError &e) {
         fail(key, e.explain);
       } catch (const DecoderError &e) {
