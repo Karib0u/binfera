@@ -257,10 +257,18 @@ pub struct ModelInfo {
 
 /// The answer to Claude Code's `initialize` control request.
 fn parse_claude_models(response: &Value) -> Vec<ModelInfo> {
-    response["response"]["response"]["models"]
+    let models = response["response"]["response"]["models"]
         .as_array()
-        .into_iter()
-        .flatten()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    // The "default" row names the model the user's settings resolve to.
+    let resolved = models
+        .iter()
+        .find(|m| m["value"] == "default")
+        .and_then(|m| m["resolvedModel"].as_str());
+    let mut default_marked = false;
+    models
+        .iter()
         // "default" stands for whatever the user's settings say; the panel's own Default row does that.
         .filter(|m| m["value"] != "default")
         .filter_map(|m| {
@@ -275,10 +283,88 @@ fn parse_claude_models(response: &Value) -> Vec<ModelInfo> {
                     .filter_map(|e| e.as_str().map(String::from))
                     .collect(),
                 default_effort: None,
-                is_default: false,
+                is_default: {
+                    let is = !default_marked
+                        && resolved.is_some()
+                        && (m["resolvedModel"].as_str() == resolved
+                            || m["value"].as_str() == resolved);
+                    default_marked |= is;
+                    is
+                },
             })
         })
         .collect()
+}
+
+/// What the agent uses when the panel leaves a choice blank, from the agent's own configuration.
+#[derive(Debug, Default, PartialEq)]
+struct Configured {
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+fn config_dir(var: &str, default: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join(default))
+        })
+}
+
+/// Claude Code's effort: `CLAUDE_CODE_EFFORT_LEVEL`, else `effortLevel` in its user settings.
+fn claude_configured(env: Option<String>, settings: Option<&str>) -> Configured {
+    let effort = env.filter(|e| !e.trim().is_empty()).or_else(|| {
+        let settings: Value = serde_json::from_str(settings?).ok()?;
+        settings["effortLevel"].as_str().map(String::from)
+    });
+    Configured {
+        model: None,
+        effort: effort.map(|e| e.trim().to_lowercase()),
+    }
+}
+
+/// Codex's `model` and `model_reasoning_effort` from its config.toml.
+fn codex_configured(config: Option<&str>) -> Configured {
+    let Some(table) = config.and_then(|c| c.parse::<toml::Table>().ok()) else {
+        return Configured::default();
+    };
+    // The selected profile's values replace the top-level ones.
+    let profile = table
+        .get("profile")
+        .and_then(|p| p.as_str())
+        .and_then(|name| table.get("profiles")?.get(name));
+    let get = |key: &str| {
+        profile
+            .and_then(|p| p.get(key))
+            .or_else(|| table.get(key))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    };
+    Configured {
+        model: get("model"),
+        effort: get("model_reasoning_effort"),
+    }
+}
+
+/// Marks the model and reasoning level the agent falls back to, so the panel can name them.
+fn apply_configured(models: &mut [ModelInfo], configured: &Configured) {
+    if let Some(model) = &configured.model {
+        if models.iter().any(|m| &m.id == model) {
+            for m in models.iter_mut() {
+                m.is_default = &m.id == model;
+            }
+        }
+    }
+    if let Some(effort) = &configured.effort {
+        for m in models.iter_mut() {
+            if m.efforts.is_empty() || m.efforts.contains(effort) {
+                m.default_effort = Some(effort.clone());
+            }
+        }
+    }
 }
 
 /// The answer to Codex app-server's `model/list`.
@@ -348,7 +434,13 @@ fn ask_agent<T: Send + 'static>(
 }
 
 fn claude_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
-    ask_agent(
+    let settings = config_dir("CLAUDE_CONFIG_DIR", ".claude")
+        .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok());
+    let configured = claude_configured(
+        std::env::var("CLAUDE_CODE_EFFORT_LEVEL").ok(),
+        settings.as_deref(),
+    );
+    let mut models = ask_agent(
         program,
         &[
             "-p",
@@ -368,11 +460,15 @@ fn claude_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             (v["type"] == "control_response" && v["response"]["request_id"] == "models")
                 .then(|| parse_claude_models(v))
         },
-    )
+    )?;
+    apply_configured(&mut models, &configured);
+    Ok(models)
 }
 
 fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
-    ask_agent(
+    let config = config_dir("CODEX_HOME", ".codex")
+        .and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok());
+    let mut models = ask_agent(
         program,
         &["app-server"],
         vec![
@@ -382,7 +478,9 @@ fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
         ],
         LIST_TIMEOUT,
         |v| (v["id"] == 2).then(|| parse_codex_models(v)),
-    )
+    )?;
+    apply_configured(&mut models, &codex_configured(config.as_deref()));
+    Ok(models)
 }
 
 /// The models the agent says it can run, with the reasoning levels each one supports.
@@ -977,6 +1075,50 @@ mod tests {
         assert!(models[0].is_default);
         assert_eq!(models[0].default_effort.as_deref(), Some("low"));
         assert_eq!(models[0].efforts, ["low", "ultra"]);
+    }
+
+    #[test]
+    fn defaults_come_from_each_agents_own_configuration() {
+        let claude = json!({"response": {"response": {"models": [
+            {"value": "default", "resolvedModel": "claude-opus-5-5"},
+            {"value": "opus", "resolvedModel": "claude-opus-5-5", "supportedEffortLevels": ["low", "medium", "high"]},
+            {"value": "haiku", "resolvedModel": "claude-haiku-5-5", "supportedEffortLevels": ["low"]}
+        ]}}});
+        let mut models = parse_claude_models(&claude);
+        assert!(models[0].is_default && !models[1].is_default);
+        let configured = claude_configured(None, Some(r#"{"effortLevel": "medium"}"#));
+        assert_eq!(configured.effort.as_deref(), Some("medium"));
+        apply_configured(&mut models, &configured);
+        assert_eq!(models[0].default_effort.as_deref(), Some("medium"));
+        assert_eq!(models[1].default_effort, None, "haiku has no medium level");
+        // The environment wins over the settings file.
+        assert_eq!(
+            claude_configured(Some("HIGH".into()), Some(r#"{"effortLevel": "low"}"#)).effort,
+            Some("high".into())
+        );
+
+        let codex = json!({"result": {"data": [
+            {"id": "a", "isDefault": true, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]},
+            {"id": "b", "isDefault": false, "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}
+        ]}});
+        let mut models = parse_codex_models(&codex);
+        let configured = codex_configured(Some(
+            "model = \"b\"\nmodel_reasoning_effort = \"high\"\n[profiles.x]\nmodel = \"a\"\n",
+        ));
+        apply_configured(&mut models, &configured);
+        assert!(!models[0].is_default && models[1].is_default);
+        assert_eq!(models[0].default_effort.as_deref(), Some("high"));
+        assert_eq!(
+            codex_configured(Some(
+                "model = \"a\"\nprofile = \"x\"\n[profiles.x]\nmodel = \"b\"\n"
+            ))
+            .model,
+            Some("b".into())
+        );
+        // A model the agent does not list leaves its own default in place.
+        let mut models = parse_codex_models(&codex);
+        apply_configured(&mut models, &codex_configured(Some("model = \"gone\"")));
+        assert!(models[0].is_default);
     }
 
     /// Needs the real CLIs, signed in: `cargo test -- --ignored real_model_lists`.

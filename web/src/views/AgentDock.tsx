@@ -97,7 +97,6 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
   const [started, setStarted] = useState(0);
   const [, tickClock] = useState(0);
   const [path, setPath] = useState<string | null>(null);
-  const [withSelection, setWithSelection] = useState(true);
   const [artifactTick, bumpArtifacts] = useState(0);
 
   const run = useRef<{ handle: AgentRun | null; token: number }>({ handle: null, token: 0 });
@@ -136,6 +135,15 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
     setHistory(upsert(history, { id, provider, session: sessions.current[provider] ?? null, title: titleOf(first && first.k === "user" ? first.text : "Conversation"), updated: Date.now(), items: slim(items) }));
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The function open in the code view comes first when the analyst types @.
+  const mentionable = useCallback(() => {
+    const all = symbols();
+    const at = context.address;
+    if (at === null) return all;
+    const open = all.find((s) => s.address === at) ?? { address: at, name: context.functionName ?? "0x" + at.toString(16) };
+    return [open, ...all.filter((s) => s.address !== at)];
+  }, [symbols, context.address, context.functionName]);
+
   const installed = useMemo(() => (agents ?? []).filter((a) => a.path), [agents]);
   const provider: AgentId | null = installed.find((a) => a.id === pref)?.id ?? installed[0]?.id ?? null;
   const name = installed.find((a) => a.id === provider)?.name ?? "agent";
@@ -155,8 +163,7 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
       sessions.current = {};
       setUsage({ input: 0, output: 0, cost: 0 });
     }
-    const asked = { ...context, path, address: withSelection ? context.address : null };
-    const prompt = buildPrompt(msg, asked, !sessions.current[provider]);
+    const prompt = buildPrompt(msg, { ...context, path }, !sessions.current[provider]);
     const token = ++run.current.token;
     stopped.current = false;
     setItems((prev) => [...(newConversation ? [] : prev), { k: "user", text: shown ?? msg }]);
@@ -301,17 +308,7 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
         <Composer
           text={text} onText={setText} onSend={(t) => send(t)} onInterrupt={interrupt} busy={busy}
           disabled={!provider} placeholder={provider ? (busy ? "Type to queue the next message…" : `Ask ${name} about this binary…`) : "No agent installed"}
-          queue={queue} onUnqueue={(i) => setQueue(queue.filter((_, n) => n !== i))} symbols={symbols} slash={slash} inputRef={input}
-          chips={<>
-            <span title={path ?? context.name}>◧ {context.name}</span>
-            {context.address !== null && withSelection && (
-              <span title="The agent is told which function you have selected">
-                ƒ {context.functionName ?? "0x" + context.address.toString(16)}
-                <button type="button" aria-label="Do not mention the selected function" onClick={() => setWithSelection(false)}>✕</button>
-              </span>
-            )}
-            {context.address !== null && !withSelection && <button type="button" className="ag-ctx-add" onClick={() => setWithSelection(true)}>+ selected function</button>}
-          </>}
+          queue={queue} onUnqueue={(i) => setQueue(queue.filter((_, n) => n !== i))} symbols={mentionable} slash={slash} inputRef={input}
           bar={
             <div className="ag-bar">
               {provider && <Picker agents={installed} provider={provider} onProvider={(p) => { if (p === provider) return; if (!empty) reset(); setPref(p); }} model={choice.model} effort={choice.effort} onModel={(model) => setChoice({ model })} onEffort={(effort) => setChoice({ effort })} switchStartsNewChat={!empty} disabled={busy} />}

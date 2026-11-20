@@ -9,7 +9,7 @@ const script = replay.events as [number, AgentEvent][];
 const levels = ["low", "medium", "high", "xhigh", "max"];
 const models: Record<AgentId, ModelInfo[]> = {
   claude: [
-    { id: "opus", name: "Opus 5.5", description: "For complex work and everyday tasks", efforts: levels, defaultEffort: null, isDefault: false },
+    { id: "opus", name: "Opus 5.5", description: "For complex work and everyday tasks", efforts: levels, defaultEffort: "medium", isDefault: true },
     { id: "sonnet", name: "Sonnet 5.5", description: "Most efficient for simpler tasks", efforts: levels, defaultEffort: null, isDefault: false },
     { id: "fable", name: "Fable 5.1", description: "For your toughest challenges", efforts: levels, defaultEffort: null, isDefault: false },
     { id: "haiku", name: "Haiku 5.5", description: "Fastest for quick answers", efforts: levels, defaultEffort: null, isDefault: false },

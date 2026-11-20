@@ -5,7 +5,7 @@ export interface AgentContext {
   name: string;
   /** The original or retained input path, when available. */
   path: string | null;
-  /** The function or address the analyst has selected, if any. */
+  /** The function open in the code view, offered first when the analyst types @. */
   address: number | null;
   functionName: string | null;
 }
@@ -21,14 +21,13 @@ const REPLY =
   "Reuse evidence from earlier turns and stop calling tools once you can answer. Reserve broad analysis for explicit requests. " +
   "Reply to an acknowledgment without tools. If a follow-up is ambiguous, ask what detail the analyst wants.";
 
-/** The text sent for one turn: the question, with the file and the analyst's selection around it. */
+/** The text sent for one turn: the question, with the file around it. Functions reach the agent as @ mentions in the text. */
 export function buildPrompt(text: string, c: AgentContext, first: boolean): string {
   const project = c.sha.startsWith("sha256:") ? c.sha : `sha256:${c.sha}`;
   const lines: string[] = [];
   if (first) lines.push(INTRO);
   lines.push(REPLY);
   lines.push(`File: ${c.name}${c.path ? ` (${c.path})` : ""}. Binfera project id: ${project}. It is already analysed in Binfera's project store, so use that project id with the tools${c.path ? ", or open_binary on the path" : ""}.`);
-  if (c.address !== null) lines.push(`The analyst has selected ${c.functionName ? c.functionName + " at " : ""}0x${c.address.toString(16)}.`);
   return lines.join("\n") + "\n\n" + text;
 }
 
