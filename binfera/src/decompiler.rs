@@ -50,7 +50,7 @@ mod stack_purge;
 mod stack_strings;
 mod strlen_loops;
 mod unit;
-mod variadic;
+mod win64_args;
 
 pub use candidates::rejected_compatibility_entries;
 pub use unit::{Guess, Unit, UnitFunction};
@@ -828,21 +828,13 @@ impl DecompilerSession {
                     ))
                 })?;
             // Apply runtime prototypes only to validated FLIRT matches.
-            let prototype = match name.trim_start_matches('_') {
-                "security_init_cookie" => Some((ValueType::Void, vec![])),
-                "security_check_cookie" if wide => Some((ValueType::Void, vec![ValueType::U64])),
-                "DllMainCRTStartup" | "DllMain" => Some((
-                    ValueType::I32,
-                    vec![ValueType::Pointer, ValueType::U32, ValueType::Pointer],
-                )),
-                _ => None,
-            };
-            if let Some((result, parameters)) = prototype {
+            if let Some((result, parameters)) = runtime_prototype(name, wide) {
                 session.set_signature(*address, result, &parameters)?;
             }
         }
         // Effect models need a name from a validated source, FLIRT or Function ID.
         // An export is only a claim by the image, so it never selects a model.
+        let mut applied_fixups = BTreeMap::new();
         for (address, name) in libraries.iter().chain(recognized.iter()) {
             if let Some(fixup) = effects::call_fixup(name, wide) {
                 session
@@ -853,6 +845,7 @@ impl DecompilerSession {
                             "{fixup} fixup for {name} at {address:#x}: {error}"
                         ))
                     })?;
+                applied_fixups.insert(*address, fixup);
             }
         }
         // Ghidra labels an ambiguous match `FID_conflict:<name>` for every candidate, and its
@@ -872,9 +865,29 @@ impl DecompilerSession {
                                 "{fixup} fixup for {candidates:?} at {address:#x}: {error}"
                             ))
                         })?;
+                    applied_fixups.insert(*address, fixup);
                 }
             }
         }
+        // The same validated names type the helpers behind jump stubs.
+        let mut stub_names: BTreeMap<u64, (&str, bool)> = recognized
+            .iter()
+            .filter(|(_, name)| name.len() <= 256)
+            .map(|(address, name)| (*address, (name.as_str(), false)))
+            .collect();
+        stub_names.extend(
+            libraries
+                .iter()
+                .map(|(address, name)| (*address, (name.as_str(), true))),
+        );
+        let typed: BTreeSet<u64> = stub_names
+            .keys()
+            .chain(thunks.keys())
+            .chain(cookie_checks.iter())
+            .chain(export_addresses.iter().map(|(address, _)| address))
+            .copied()
+            .collect();
+        session.inherit_through_jump_stubs(&analysis, &applied_fixups, &stub_names, &typed)?;
         if let Some(entry) = dll_entry {
             session.set_signature(
                 entry,
@@ -889,6 +902,60 @@ impl DecompilerSession {
         session.initialization_ms = started.elapsed().as_secs_f64() * 1000.0;
         session.apply_dwarf(&analysis);
         Ok((session, analysis))
+    }
+
+    /// MSVC incremental-link stubs are a single direct jump, so they keep the
+    /// helper's effects and prototype. Without this the stack-cookie model and
+    /// a runtime helper's signature disappear behind the stub.
+    fn inherit_through_jump_stubs(
+        &mut self,
+        analysis: &Analysis,
+        applied_fixups: &BTreeMap<u64, &str>,
+        names: &BTreeMap<u64, (&str, bool)>,
+        typed: &BTreeSet<u64>,
+    ) -> Result<(), DecompileError> {
+        if self.convention != CallingConvention::WindowsX64
+            || (applied_fixups.is_empty() && names.is_empty())
+        {
+            return Ok(());
+        }
+        let wide = true;
+        for address in analysis.functions.keys() {
+            if self.funclet_labels.contains_key(address) || !self.in_code(*address) {
+                continue;
+            }
+            let Some(target) = jump_stub_target(analysis, *address) else {
+                continue;
+            };
+            if let Some(fixup) = applied_fixups.get(&target) {
+                if !applied_fixups.contains_key(address) {
+                    self.native
+                        .set_call_fixup(*address, fixup)
+                        .map_err(|error| {
+                            DecompileError::Initialization(format!(
+                                "{fixup} fixup for jump stub at {address:#x}: {error}"
+                            ))
+                        })?;
+                }
+            }
+            let Some(&(name, library)) = names.get(&target) else {
+                continue;
+            };
+            if typed.contains(address) {
+                continue;
+            }
+            self.native
+                .apply_prototype(*address, name)
+                .map_err(|error| {
+                    DecompileError::Initialization(format!(
+                        "prototype for {name} through jump stub at {address:#x}: {error}"
+                    ))
+                })?;
+            if let Some((result, parameters)) = runtime_prototype(name, wide).filter(|_| library) {
+                self.set_signature(*address, result, &parameters)?;
+            }
+        }
+        Ok(())
     }
 
     /// Classes from RTTI: each a structure holding pointers to its virtual function tables, each
@@ -1777,9 +1844,17 @@ impl DecompilerSession {
                 }
             }
         }
-        for (caller, site, target, count) in variadic::calls(analysis) {
+        let call_arguments = win64_args::calls(analysis);
+        for (caller, site, target, count) in call_arguments.variadic {
             native
                 .set_callsite_arguments(caller, site, target, count)
+                .map_err(init)?;
+        }
+        if !call_arguments.stack_arguments.is_empty() {
+            let (targets, counts): (Vec<u64>, Vec<u32>) =
+                call_arguments.stack_arguments.into_iter().unzip();
+            native
+                .set_win64_stack_arguments(&targets, &counts)
                 .map_err(init)?;
         }
         let mut warnings = image.load_diagnostics.clone();
@@ -2481,7 +2556,8 @@ fn caller_return_uses(analysis: &Analysis) -> BTreeMap<u64, u32> {
         if analysis
             .functions
             .get(address)
-            .is_some_and(direct_tail_thunk)
+            .and_then(direct_tail_target)
+            .is_some()
         {
             *width = 0;
         }
@@ -2489,13 +2565,46 @@ fn caller_return_uses(analysis: &Analysis) -> BTreeMap<u64, u32> {
     uses
 }
 
-fn direct_tail_thunk(function: &recovery::Function) -> bool {
-    let mut insns = function.blocks.iter().flat_map(|block| &block.insns);
-    insns.next().is_some_and(|first| {
-        first.flow == Flow::UnconditionalBranch
-            && first.direct_target.is_some()
-            && insns.next().is_none()
-    })
+/// Runtime prototypes that FLIRT names select but the archives do not hold.
+fn runtime_prototype(name: &str, wide: bool) -> Option<(ValueType, Vec<ValueType>)> {
+    match name.trim_start_matches('_') {
+        "security_init_cookie" => Some((ValueType::Void, vec![])),
+        "security_check_cookie" if wide => Some((ValueType::Void, vec![ValueType::U64])),
+        "DllMainCRTStartup" | "DllMain" => Some((
+            ValueType::I32,
+            vec![ValueType::Pointer, ValueType::U32, ValueType::Pointer],
+        )),
+        _ => None,
+    }
+}
+
+/// The function a chain of single-jump stubs at `address` ends in.
+fn jump_stub_target(analysis: &Analysis, address: u64) -> Option<u64> {
+    let mut target = direct_tail_target(analysis.functions.get(&address)?)?;
+    for _ in 0..8 {
+        match analysis.functions.get(&target).and_then(direct_tail_target) {
+            Some(next) if next != address => target = next,
+            Some(_) => return None,
+            None => return Some(target),
+        }
+    }
+    None
+}
+
+/// The target of a function whose entry block is one direct jump. Recovery can
+/// follow that jump and attach the target's blocks, so only the entry counts.
+fn direct_tail_target(function: &recovery::Function) -> Option<u64> {
+    let entry = function
+        .blocks
+        .iter()
+        .find(|block| block.addr == function.addr)?;
+    let [jump] = entry.insns.as_slice() else {
+        return None;
+    };
+    if jump.address != function.addr || jump.flow != Flow::UnconditionalBranch {
+        return None;
+    }
+    jump.direct_target
 }
 
 /// Whether an x86 function's first use of ECX, along its straight-line entry, is a read: the `this`
@@ -3707,9 +3816,154 @@ mod tests {
                 }],
             }
         }
-        assert!(direct_tail_thunk(&function(&[0xe9, 0, 0, 0, 0])));
-        assert!(!direct_tail_thunk(&function(&[0xff, 0xe0]))); // jmp rax
-        assert!(!direct_tail_thunk(&function(&[0x90, 0xe9, 0, 0, 0, 0])));
+        assert_eq!(
+            direct_tail_target(&function(&[0xe9, 0, 0, 0, 0])),
+            Some(0x1005)
+        );
+        assert_eq!(direct_tail_target(&function(&[0xff, 0xe0])), None); // jmp rax
+        assert_eq!(
+            direct_tail_target(&function(&[0x90, 0xe9, 0, 0, 0, 0])),
+            None
+        );
+    }
+
+    #[test]
+    fn pe_jump_stub_is_found_when_recovery_attaches_its_target() -> anyhow::Result<()> {
+        // A minimal PE32+ with one executable section at RVA 0x1000.
+        let mut bytes = vec![0; 0x1200];
+        let put = |bytes: &mut [u8], at: usize, value: u32| {
+            bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        };
+        bytes[..2].copy_from_slice(b"MZ");
+        put(&mut bytes, 0x3c, 0x80);
+        bytes[0x80..0x84].copy_from_slice(b"PE\0\0");
+        bytes[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes());
+        bytes[0x86..0x88].copy_from_slice(&1u16.to_le_bytes());
+        bytes[0x94..0x96].copy_from_slice(&0xf0u16.to_le_bytes());
+        bytes[0x96..0x98].copy_from_slice(&0x22u16.to_le_bytes());
+        bytes[0x98..0x9a].copy_from_slice(&0x20bu16.to_le_bytes());
+        put(&mut bytes, 0x98 + 16, 0x1000);
+        bytes[0xb0..0xb8].copy_from_slice(&0x1_4000_0000u64.to_le_bytes());
+        for (offset, value) in [
+            (32, 0x1000),
+            (36, 0x200),
+            (56, 0x2000),
+            (60, 0x200),
+            (108, 16),
+        ] {
+            put(&mut bytes, 0x98 + offset, value);
+        }
+        bytes[0x188..0x190].copy_from_slice(b".text\0\0\0");
+        for (offset, value) in [
+            (8, 0x200),
+            (12, 0x1000),
+            (16, 0x200),
+            (20, 0x1000),
+            (36, 0x60000020),
+        ] {
+            put(&mut bytes, 0x188 + offset, value);
+        }
+        let code = [
+            0x48, 0x83, 0xec, 0x28, // sub rsp, 0x28
+            0xe8, 0x27, 0, 0, 0, // call helper (0x1030)
+            0xe8, 0x12, 0, 0, 0, // call stub (0x1020)
+            0x48, 0x83, 0xc4, 0x28, // add rsp, 0x28
+            0xc3, // ret
+        ];
+        bytes[0x1000..0x1000 + code.len()].copy_from_slice(&code);
+        bytes[0x1020..0x1025].copy_from_slice(&[0xe9, 0x0b, 0, 0, 0]); // jmp helper
+        bytes[0x1030] = 0xc3;
+        let analysis = recovery::analyze(&bytes)?;
+        let (stub, helper) = (0x1_4000_1020, 0x1_4000_1030);
+        assert_eq!(jump_stub_target(&analysis, stub), Some(helper));
+        Ok(())
+    }
+
+    #[test]
+    fn x64_jump_stub_chain_inherits_fixup_and_prototype() -> anyhow::Result<()> {
+        use crate::extract::image::SHELLCODE_BASE;
+
+        let mut bytes = vec![0xcc; 0x31];
+        let caller = [
+            0x48, 0x83, 0xec, 0x28, // sub rsp, 0x28
+            0xe8, 0x27, 0, 0, 0, // call helper directly, so recovery has its entry
+            0xb8, 0x2a, 0, 0, 0, // mov eax, 42
+            0xe8, 0x0d, 0, 0, 0, // call the first stub
+            0x48, 0x83, 0xc4, 0x28, // add rsp, 0x28
+            0xc3, // ret
+        ];
+        bytes[..caller.len()].copy_from_slice(&caller);
+        bytes[0x20..0x22].copy_from_slice(&[0xeb, 0x06]); // jmp second stub
+        bytes[0x28..0x2a].copy_from_slice(&[0xeb, 0x06]); // jmp helper
+        bytes[0x30] = 0xc3;
+        let mut analysis = recovery::analyze_shellcode(&bytes, Architecture::X64)?;
+        let (first, second, target) = (
+            SHELLCODE_BASE + 0x20,
+            SHELLCODE_BASE + 0x28,
+            SHELLCODE_BASE + 0x30,
+        );
+        // Raw-code recovery has no entry for the second stub; give both stubs one.
+        for stub in [first, second] {
+            let insn = analysis
+                .instructions
+                .get(&stub)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("stub {stub:#x} was not decoded"))?;
+            analysis.functions.insert(
+                stub,
+                recovery::Function {
+                    addr: stub,
+                    blocks: vec![recovery::BasicBlock {
+                        addr: stub,
+                        insns: vec![insn],
+                        succs: Vec::new(),
+                    }],
+                },
+            );
+        }
+        assert_eq!(jump_stub_target(&analysis, first), Some(target));
+        assert_eq!(jump_stub_target(&analysis, second), Some(target));
+        let session = |analysis: &Analysis| -> anyhow::Result<DecompilerSession> {
+            let mut session = DecompilerSession::from_analysis(
+                analysis,
+                &BTreeMap::new(),
+                CallingConvention::WindowsX64,
+            )?;
+            session
+                .native
+                .set_call_fixup(target, "security_check_cookie")?;
+            Ok(session)
+        };
+        let mut plain = session(&analysis)?;
+        let before = plain.decompile_function(SHELLCODE_BASE)?;
+        assert!(!before.text.contains("return 0x2a;"), "{}", before.text);
+
+        let mut fixed = session(&analysis)?;
+        fixed.inherit_through_jump_stubs(
+            &analysis,
+            &BTreeMap::from([(target, "security_check_cookie")]),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        )?;
+        let after = fixed.decompile_function(SHELLCODE_BASE)?;
+        assert!(after.text.contains("return 0x2a;"), "{}", after.text);
+        assert!(after
+            .notes
+            .iter()
+            .any(|note| note.contains("replaced with injection: security_check_cookie")));
+
+        let mut typed = session(&analysis)?;
+        typed.inherit_through_jump_stubs(
+            &analysis,
+            &BTreeMap::new(),
+            &BTreeMap::from([(target, ("DllMain", true))]),
+            &BTreeSet::from([second]),
+        )?;
+        let stub = typed.decompile_function(first)?;
+        assert!(stub.text.contains("param_3"), "{}", stub.text);
+        let untouched = typed.decompile_function(second)?;
+        assert!(!untouched.text.contains("param_3"), "{}", untouched.text);
+        Ok(())
     }
 
     #[test]

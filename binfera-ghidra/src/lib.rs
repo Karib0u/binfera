@@ -305,6 +305,11 @@ mod ffi {
             target: u64,
             count: u32,
         ) -> Result<bool>;
+        fn set_win64_stack_arguments(
+            self: Pin<&mut Session>,
+            targets: &[u64],
+            counts: &[u32],
+        ) -> Result<()>;
         fn set_message_send(
             self: Pin<&mut Session>,
             caller: u64,
@@ -595,6 +600,18 @@ impl Session {
         self.inner
             .pin_mut()
             .set_callsite_arguments(caller, site, target, count)
+    }
+
+    /// Give fixed Win64 functions the stack arguments every caller writes and the body reads,
+    /// counted after the four register arguments. Replaces the previous set.
+    pub fn set_win64_stack_arguments(
+        &mut self,
+        targets: &[u64],
+        counts: &[u32],
+    ) -> Result<(), Error> {
+        self.inner
+            .pin_mut()
+            .set_win64_stack_arguments(targets, counts)
     }
 
     /// Give one Objective-C message send its arguments: self, the selector and one per colon.
