@@ -2864,3 +2864,99 @@ fn aarch64_leaf_sweep_respects_unwind_bodies_and_compatibility() {
         assert!(!analysis.functions.contains_key(&0x1010));
     }
 }
+
+/// `.pdata` holding one `RUNTIME_FUNCTION` per `(begin, end)` RVA pair, each naming the
+/// version 1, no-handler `UNWIND_INFO` at the start of `.rdata`.
+fn runtime_functions(rows: &[(u32, u32)]) -> Vec<u8> {
+    let mut pdata = Vec::new();
+    for &(begin, end) in rows {
+        for value in [begin, end, 0x1000] {
+            pdata.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    pdata
+}
+
+/// As [`native_x64`], with an exception directory over the whole `.pdata`.
+fn native_x64_unwound(text: &[u8], rows: &[(u32, u32)]) -> Analysis {
+    let pdata = runtime_functions(rows);
+    let declared = u32::try_from(pdata.len()).expect("small test directory");
+    native_x64_declaring(text, &[1, 0, 0, 0], &pdata, Some(declared))
+}
+
+#[test]
+fn native_sweeps_frameless_x64_leaves_outside_unwind_extents() {
+    // 0x1000: the entry, covered by unwind data. 0x1010: an unreferenced leaf after padding.
+    // 0x1020: a body that pushes, which needs unwind data it does not have. 0x1030 and
+    // 0x1034: leaves the linker packed back to back.
+    let mut text = vec![0x48, 0x83, 0xec, 0x28, 0x48, 0x83, 0xc4, 0x28, 0xc3];
+    text.resize(0x10, 0xcc);
+    text.extend_from_slice(&[0x33, 0xc0, 0xc3]); // xor eax, eax; ret
+    text.resize(0x20, 0xcc);
+    text.extend_from_slice(&[0x53, 0x33, 0xc0, 0x5b, 0xc3]); // push rbx; ...; pop rbx; ret
+    text.resize(0x30, 0xcc);
+    text.extend_from_slice(&[0x48, 0x8b, 0x01, 0xc3]); // mov rax, [rcx]; ret
+    text.extend_from_slice(&[0x8b, 0x02, 0x89, 0x01, 0xc3]); // mov eax, [rdx]; mov [rcx], eax
+    text.resize(0x40, 0xcc);
+    let analysis = native_x64_unwound(&text, &[(0, 9)]);
+    for leaf in [0x1010, 0x1030, 0x1034] {
+        assert!(analysis.functions.contains_key(&leaf), "{leaf:#x}");
+        assert!(analysis.seeds[&leaf].contains(&SeedKind::Unclaimed));
+    }
+    assert!(!analysis.functions.contains_key(&0x1020));
+}
+
+#[test]
+fn native_leaf_sweep_leaves_unresolved_switch_cases_alone() {
+    let mut text = vec![0xc3];
+    text.resize(0x10, 0xcc);
+    // A dispatch that loads its target from an indexed table, then aligned cases.
+    text.extend_from_slice(&[
+        0x48, 0x63, 0x04, 0x8a, // movsxd rax, dword [rdx+rcx*4]
+        0x48, 0x03, 0xc2, // add rax, rdx
+        0x48, 0x89, 0xc1, // mov rcx, rax
+        0x8b, 0xc9, // mov ecx, ecx
+        0x8b, 0xd2, // mov edx, edx
+        0xff, 0xe0, // jmp rax
+    ]);
+    for _ in 0..2 {
+        text.extend_from_slice(&[0x48, 0x8d, 0x05, 0, 0, 0, 0, 0xc3]); // lea rax, [rip]; ret
+    }
+    text.resize(0x40, 0xcc);
+    text.extend_from_slice(&[0x33, 0xc0, 0xc3]);
+    let analysis = native_x64_unwound(&text, &[(0, 1)]);
+    for interior in [0x1010, 0x1020, 0x1028] {
+        assert!(!analysis.functions.contains_key(&interior), "{interior:#x}");
+    }
+    // Padding ends the doubt.
+    assert!(analysis.functions.contains_key(&0x1040));
+}
+
+#[test]
+fn incremental_link_thunks_name_every_function() {
+    // Sixteen `jmp rel32` entries, each to its own `xor eax, eax; ret` after the table.
+    let entries = MIN_INCREMENTAL_THUNKS as u64;
+    let mut text = Vec::new();
+    for index in 0..entries {
+        let target = 0x100 + 0x10 * index;
+        let next = 5 * (index + 1);
+        text.push(0xe9);
+        text.extend_from_slice(&i32::try_from(target - next).unwrap().to_le_bytes());
+    }
+    text.resize(0x100, 0xcc);
+    for _ in 0..entries {
+        text.extend_from_slice(&[0x33, 0xc0, 0xc3]);
+        text.resize(text.len() + 13, 0xcc);
+    }
+    let image = |text: &[u8]| {
+        let mut image = LoadedImage::from_shellcode_at(text, Architecture::X64, 0x1000);
+        image.format = ImageFormat::Pe;
+        image
+    };
+    let thunks = incremental_link_thunks(&image(&text));
+    assert_eq!(thunks.len(), MIN_INCREMENTAL_THUNKS);
+    assert_eq!(thunks[3], (0x100f, 0x1130));
+    // A shorter run is ordinary code, not a linker table.
+    text[5 * (entries as usize - 1)] = 0xcc;
+    assert!(incremental_link_thunks(&image(&text)).is_empty());
+}

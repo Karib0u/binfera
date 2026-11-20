@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 mod flow;
 mod functions;
+mod leaves;
 mod seeds;
 use flow::*;
 use functions::*;
@@ -33,6 +34,7 @@ use super::noreturn;
 const MAX_FUNCTIONS: usize = 100_000;
 const MAX_INSNS_PER_FUNCTION: usize = 200_000;
 const MAX_PROLOGUE_SCAN_BYTES: usize = 32 * 1024 * 1024;
+const MAX_UNCLAIMED_SWEEPS: usize = 4;
 const MAX_PROLOGUE_SEEDS_PER_SECTION: usize = 8_192;
 const MAX_SWEEP_CALL_SEEDS: usize = 32_768;
 
@@ -116,6 +118,18 @@ pub enum SeedKind {
     Dwarf,
     /// Delphi VMT, published method or property accessor.
     DelphiMethod,
+    /// Entry of an MSVC incremental-linking thunk table (`/INCREMENTAL`): a `jmp rel32` the
+    /// linker emits for each function so it can relink in place.
+    IncrementalThunk,
+    /// Target of an incremental-linking thunk: the linker gives every function in the image
+    /// one, referenced or not.
+    IncrementalTarget,
+    /// Initial value of a delay-load IAT slot: the linker stub that resolves the import on its
+    /// first call.
+    DelayLoadThunk,
+    /// x64 unwind language handler, or a destructor or copy constructor a C++ `ThrowInfo`
+    /// names: called only by the runtime.
+    MsvcThrowMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -724,7 +738,13 @@ fn recover_functions(
         }
     }
     let mut late_waves_done = false;
-    let mut unclaimed_swept = backend != RecoveryBackend::Native;
+    // A leaf found by one sweep can be the tail-call target that validates another, so the
+    // sweep repeats while it finds entries, a bounded number of times.
+    let mut unclaimed_sweeps = if backend == RecoveryBackend::Native {
+        MAX_UNCLAIMED_SWEEPS
+    } else {
+        0
+    };
     let mut data_pointer_wave = None;
     let mut early_candidates_done = !evaluate_candidates;
     let mut function_budget_reported = false;
@@ -811,15 +831,25 @@ fn recover_functions(
                 ) {
                     continue;
                 }
-                if !unclaimed_swept {
-                    unclaimed_swept = true;
+                if unclaimed_sweeps > 0 {
+                    // Only the x64 leaf sweep depends on entries an earlier sweep found.
+                    unclaimed_sweeps = if leaves::sweeps_x64_leaves(&analysis.image) {
+                        unclaimed_sweeps - 1
+                    } else {
+                        0
+                    };
+                    let mut found_new = false;
                     for address in unclaimed_entries(analysis, &function_starts) {
                         analysis
                             .seeds
                             .entry(address)
                             .or_default()
                             .insert(SeedKind::Unclaimed);
+                        found_new |= !function_starts.contains(&address);
                         pending.push_back(address);
+                    }
+                    if !found_new {
+                        unclaimed_sweeps = 0;
                     }
                     if !pending.is_empty() {
                         continue;
@@ -2122,6 +2152,9 @@ fn unclaimed_entries(analysis: &Analysis, function_starts: &BTreeSet<u64>) -> Ve
         return Vec::new();
     }
     let unwound = unwind_extents(image);
+    if leaves::sweeps_x64_leaves(image) {
+        return leaves::unclaimed_x64_leaf_entries(analysis, function_starts, &unwound);
+    }
     let mut found = Vec::new();
     for section in image
         .sections
@@ -2568,6 +2601,10 @@ fn is_authoritative_seed(kind: SeedKind) -> bool {
             | SeedKind::MachoFunctionStarts
             | SeedKind::GoFunctionTable
             | SeedKind::DelphiMethod
+            | SeedKind::IncrementalThunk
+            | SeedKind::IncrementalTarget
+            | SeedKind::DelayLoadThunk
+            | SeedKind::MsvcThrowMetadata
     )
 }
 

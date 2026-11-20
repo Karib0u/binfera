@@ -266,6 +266,29 @@ pub(super) fn collect_pe_seeds(
             add_seed(image, seeds, address, SeedKind::Export);
         }
     }
+    if backend == RecoveryBackend::Native {
+        let thunks = incremental_link_thunks(image);
+        // The pointer waves skip an address that is already an entry, so record here the
+        // evidence they would have found for a thunk that data names.
+        let named = if thunks.is_empty() {
+            BTreeSet::new()
+        } else {
+            collect_data_pointer_targets(image)
+        };
+        for (thunk, target) in thunks {
+            add_seed(image, seeds, thunk, SeedKind::IncrementalThunk);
+            if named.contains(&thunk) {
+                add_seed(image, seeds, thunk, SeedKind::PointerTarget);
+            }
+            add_seed(image, seeds, target, SeedKind::IncrementalTarget);
+        }
+        for address in msvc_x64_eh_entries(image) {
+            add_seed(image, seeds, address, SeedKind::MsvcThrowMetadata);
+        }
+        for stub in delay_load_stubs(&pe, image) {
+            add_seed(image, seeds, stub, SeedKind::DelayLoadThunk);
+        }
+    }
     if let Some(tls) = &pe.tls_data {
         for callback in &tls.callbacks {
             add_seed(image, seeds, *callback, SeedKind::TlsCallback);
@@ -419,6 +442,219 @@ pub(super) fn collect_pe_seeds(
         }
     }
     Ok(())
+}
+
+/// Initial values of the delay-load IAT slots: on disk each holds the address of the linker
+/// stub that binds its import on first use.
+fn delay_load_stubs(pe: &PE<'_>, image: &LoadedImage) -> Vec<u64> {
+    let Some(directory) = pe
+        .header
+        .optional_header
+        .as_ref()
+        .and_then(|header| header.data_directories.get_delay_import_descriptor())
+        .filter(|directory| directory.virtual_address != 0)
+    else {
+        return Vec::new();
+    };
+    let base = image.image_base;
+    let word = |address: u64| -> Option<u32> {
+        let bytes = image.bytes_at(address, 4)?;
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    };
+    let width: u64 = if image.architecture == Architecture::X64 {
+        8
+    } else {
+        4
+    };
+    let mut stubs = Vec::new();
+    let descriptors = u64::from(directory.size) / 32;
+    for index in 0..descriptors.min(256) {
+        let descriptor = base + u64::from(directory.virtual_address) + 32 * index;
+        let (Some(attributes), Some(iat)) = (word(descriptor), word(descriptor + 12)) else {
+            break;
+        };
+        if iat == 0 {
+            break;
+        }
+        // Version 1 descriptors hold RVAs; the original format held addresses.
+        let iat = if attributes & 1 != 0 {
+            base + u64::from(iat)
+        } else {
+            u64::from(iat)
+        };
+        for slot in 0..4096 {
+            match read_pointer(image, iat + slot * width) {
+                Some(0) | None => break,
+                Some(stub) if image.is_primary_code_address(stub) => stubs.push(stub),
+                Some(_) => {}
+            }
+        }
+    }
+    stubs
+}
+
+/// Shortest run of back-to-back `jmp rel32` taken for an incremental-linking thunk table.
+/// Compiled code does not chain this many jumps, and the smallest real table holds one entry
+/// per function of the image.
+pub(super) const MIN_INCREMENTAL_THUNKS: usize = 16;
+
+/// `(thunk, target)` pairs of an MSVC incremental-linking thunk table: a run of contiguous
+/// `jmp rel32` (`e9`) entries, each reaching executable code outside the run. `/INCREMENTAL`
+/// gives every function of the image an entry, so each target is a function start even when
+/// nothing calls it.
+pub(super) fn incremental_link_thunks(image: &LoadedImage) -> Vec<(u64, u64)> {
+    if image.format != ImageFormat::Pe
+        || !matches!(image.architecture, Architecture::X86 | Architecture::X64)
+    {
+        return Vec::new();
+    }
+    let mut thunks = Vec::new();
+    for section in image
+        .sections
+        .iter()
+        .filter(|s| s.permissions.execute && image.is_primary_code_address(s.address))
+    {
+        let Some(bytes) = image.bytes_at(section.address, MAX_PROLOGUE_SCAN_BYTES) else {
+            continue;
+        };
+        let target_at = |offset: usize| -> Option<u64> {
+            let entry = bytes.get(offset..offset + 5)?;
+            if entry[0] != 0xe9 {
+                return None;
+            }
+            let displacement = i32::from_le_bytes(entry[1..5].try_into().ok()?);
+            let next = section.address.checked_add(offset as u64 + 5)?;
+            let target = next.checked_add_signed(i64::from(displacement))?;
+            (image.is_primary_code_address(target) && is_executable(image, target))
+                .then_some(target)
+        };
+        let mut offset = 0;
+        while offset + 5 <= bytes.len() {
+            let mut run = Vec::new();
+            let mut at = offset;
+            while let Some(target) = target_at(at) {
+                run.push((section.address + at as u64, target));
+                at += 5;
+            }
+            let (first, last) = (section.address + offset as u64, section.address + at as u64);
+            if run.len() >= MIN_INCREMENTAL_THUNKS
+                && run
+                    .iter()
+                    .all(|&(_, target)| !(first..last).contains(&target))
+            {
+                thunks.extend(run);
+                offset = at;
+            } else {
+                offset += 1;
+            }
+        }
+    }
+    thunks
+}
+
+/// Functions that x64 exception metadata names by RVA and no code reaches: the language
+/// handler of each `UNWIND_INFO`, and the destructor and copy constructors a C++ `throw`
+/// records in its `ThrowInfo` and `CatchableType`s. The C++ records are taken only when
+/// their type descriptors check out.
+pub(super) fn msvc_x64_eh_entries(image: &LoadedImage) -> BTreeSet<u64> {
+    let mut entries = BTreeSet::new();
+    if image.format != ImageFormat::Pe || image.architecture != Architecture::X64 {
+        return entries;
+    }
+    let base = image.image_base;
+    let word = |address: u64| -> Option<u32> {
+        let bytes = image.bytes_at(address, 4)?;
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    };
+    let code = |rva: u32| {
+        let address = base + u64::from(rva);
+        (rva != 0 && image.is_primary_code_address(address) && is_executable(image, address))
+            .then_some(address)
+    };
+    if let Some((directory, size)) = image.pe_exception_directory {
+        let rows = usize::try_from(size).unwrap_or(0) / 12;
+        for row in 0..rows.min(MAX_FUNCTIONS) {
+            let Some(unwind) = word(directory + row as u64 * 12 + 8) else {
+                break;
+            };
+            // An odd value indirects to another row, as some linkers emit for shared tails.
+            if unwind & 1 != 0 {
+                continue;
+            }
+            let info = base + u64::from(unwind);
+            let Some(header) = image.bytes_at(info, 4).filter(|header| header.len() == 4) else {
+                continue;
+            };
+            let flags = header[0] >> 3;
+            if header[0] & 7 == 0 || flags & 4 != 0 || flags & 3 == 0 {
+                continue;
+            }
+            let codes = (u64::from(header[2]) + 1) & !1;
+            if let Some(handler) = word(info + 4 + 2 * codes).and_then(code) {
+                entries.insert(handler);
+            }
+        }
+    }
+    // `TypeDescriptor`: vftable pointer, spare pointer, then the decorated name.
+    let type_descriptor = |rva: u32| {
+        rva != 0
+            && image
+                .bytes_at(base + u64::from(rva) + 16, 3)
+                .is_some_and(|name| name == b".?A")
+    };
+    // `CatchableType`: properties, type, PMD, size, copy constructor.
+    let catchable = |address: u64| -> Option<Option<u64>> {
+        let properties = word(address)?;
+        let copy = word(address + 24)?;
+        (properties <= 0x1f && type_descriptor(word(address + 4)?))
+            .then(|| code(copy))
+            .filter(|function| copy == 0 || function.is_some())
+    };
+    for section in image.sections.iter().filter(|section| {
+        !section.permissions.execute
+            && section.permissions.read
+            && !matches!(section.name.as_str(), ".reloc" | ".rsrc" | ".pdata")
+    }) {
+        let length = usize::try_from(section.virtual_size).unwrap_or(0);
+        let Some(bytes) = image.bytes_at(section.address, length) else {
+            continue;
+        };
+        for offset in (0..bytes.len().saturating_sub(16)).step_by(4) {
+            let address = section.address + offset as u64;
+            // `ThrowInfo`: attributes, destructor, forward-compatibility handler, then a
+            // `CatchableTypeArray` (count and type RVAs) that must hold valid catchable types.
+            let (Some(attributes), Some(destructor), Some(forward), Some(array)) = (
+                word(address),
+                word(address + 4),
+                word(address + 8),
+                word(address + 12),
+            ) else {
+                continue;
+            };
+            if attributes > 0x1f
+                || array == 0
+                || [destructor, forward]
+                    .iter()
+                    .any(|&rva| rva != 0 && code(rva).is_none())
+            {
+                continue;
+            }
+            let array = base + u64::from(array);
+            let Some(count) = word(array).filter(|count| (1..=64).contains(count)) else {
+                continue;
+            };
+            let types: Option<Vec<Option<u64>>> = (0..u64::from(count))
+                .map(|index| catchable(base + u64::from(word(array + 4 + 4 * index)?)))
+                .collect();
+            let Some(types) = types else {
+                continue;
+            };
+            entries.extend(code(destructor));
+            entries.extend(code(forward));
+            entries.extend(types.into_iter().flatten());
+        }
+    }
+    entries
 }
 
 pub(super) fn collect_safe_seh_seeds(

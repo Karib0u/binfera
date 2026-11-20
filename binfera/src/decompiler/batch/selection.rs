@@ -136,6 +136,15 @@ pub(super) fn select_analysis(
                         || kinds.contains(&SeedKind::Vtable)
                         || kinds.contains(&SeedKind::Unwind)
                         || (kinds.contains(&SeedKind::Relocation) && straight_line_leaf(function))
+                        || kinds.contains(&SeedKind::IncrementalTarget)
+                        || kinds.contains(&SeedKind::DelayLoadThunk)
+                        || kinds.contains(&SeedKind::MsvcThrowMetadata)
+                        // The linker emits a thunk per function; list the ones that code, data
+                        // or image metadata (an exception handler, a relocation) reaches.
+                        || (kinds.contains(&SeedKind::IncrementalThunk)
+                            && (kinds.len() > 1
+                                || native.code_xrefs.contains_key(address)
+                                || native.data_xrefs.contains_key(address)))
                 })
         };
         // Callers can come from either recovery pass. Count only entries the
@@ -152,13 +161,16 @@ pub(super) fn select_analysis(
         // it includes validated compiler continuations and corrected block boundaries.
         for (address, function) in std::mem::take(&mut native.functions) {
             let kinds = seeds.get(&address);
-            // Compatibility can stop before this unwind row, even when it found the function.
-            if kinds.is_some_and(|kinds| kinds.contains(&SeedKind::Unwind)) {
-                listed
-                    .seeds
-                    .entry(address)
-                    .or_default()
-                    .insert(SeedKind::Unwind);
+            // Compatibility can stop before this unwind row, even when it found the function,
+            // and it does not read incremental-linking thunks.
+            for kind in [
+                SeedKind::Unwind,
+                SeedKind::IncrementalTarget,
+                SeedKind::Unclaimed,
+            ] {
+                if kinds.is_some_and(|kinds| kinds.contains(&kind)) {
+                    listed.seeds.entry(address).or_default().insert(kind);
+                }
             }
             if let Some(existing) = listed.functions.get_mut(&address) {
                 *existing = function;

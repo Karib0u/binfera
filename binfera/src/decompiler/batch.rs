@@ -172,12 +172,18 @@ fn decompile_all_impl(
     });
     let called_stubs = selection::called_win64_stubs(&analysis, functions.iter().copied());
     functions.retain(|address| {
-        // Calls, exports and unwind records can establish a linker stub as an entry.
+        // Calls, exports, unwind records and incremental-linking thunks can establish a linker
+        // stub as an entry.
         !session.is_import_thunk(*address)
             || called_stubs.contains(address)
             || (analysis.image.format == ImageFormat::Pe
                 && analysis.seeds.get(address).is_some_and(|kinds| {
-                    kinds.contains(&SeedKind::Export) || kinds.contains(&SeedKind::Unwind)
+                    kinds.contains(&SeedKind::Export)
+                        || kinds.contains(&SeedKind::Unwind)
+                        || kinds.contains(&SeedKind::IncrementalTarget)
+                        || (kinds.contains(&SeedKind::Unclaimed)
+                            && analysis.image.architecture
+                                == crate::extract::image::Architecture::X64)
                 }))
     });
     let addresses: Vec<u64> = functions.iter().copied().collect();
