@@ -140,6 +140,12 @@ fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
+    // Where uv installs tools such as the Vibe CLI when its default (~/.local/bin) is moved.
+    for var in ["UV_TOOL_BIN_DIR", "XDG_BIN_HOME"] {
+        if let Some(dir) = std::env::var_os(var).filter(|d| !d.is_empty()) {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         let home = PathBuf::from(home);
         for rel in [
@@ -300,12 +306,17 @@ fn parse_codex_models(response: &Value) -> Vec<ModelInfo> {
         .collect()
 }
 
+/// How long a model list may take: the agents start their own services first.
+const LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Starts the agent's protocol mode, sends it `requests` and returns the first reply for which
-/// `wanted` gives something, then stops the process. It asks for a list, so no model runs.
+/// `wanted` gives something within `timeout`, then stops the process. It asks for a list or a
+/// version, so no model runs.
 fn ask_agent<T: Send + 'static>(
     program: PathBuf,
     args: &[&str],
     requests: Vec<String>,
+    timeout: std::time::Duration,
     wanted: fn(&Value) -> Option<T>,
 ) -> Result<T, String> {
     let mut command = agent_command(&program, &work_dir()?);
@@ -330,7 +341,7 @@ fn ask_agent<T: Send + 'static>(
     for request in requests {
         let _ = writeln!(stdin, "{request}");
     }
-    let found = rx.recv_timeout(std::time::Duration::from_secs(30));
+    let found = rx.recv_timeout(timeout);
     crate::engine::kill_tree(pid);
     let _ = child.wait();
     found.map_err(|_| format!("{} did not list its models", program.display()))
@@ -352,6 +363,7 @@ fn claude_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             "--no-session-persistence",
         ],
         vec![json!({"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}).to_string()],
+        LIST_TIMEOUT,
         |v| {
             (v["type"] == "control_response" && v["response"]["request_id"] == "models")
                 .then(|| parse_claude_models(v))
@@ -368,6 +380,7 @@ fn codex_models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             json!({"jsonrpc": "2.0", "method": "initialized"}).to_string(),
             json!({"jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {}}).to_string(),
         ],
+        LIST_TIMEOUT,
         |v| (v["id"] == 2).then(|| parse_codex_models(v)),
     )
 }
@@ -725,7 +738,6 @@ pub fn agent_run(
             }
         };
         let mut ended = false;
-        let mut run_error = None;
         if let Some(parse) = parse {
             // Feed the prompt from its own thread so a full pipe can never block the reader below.
             let feeder = std::thread::spawn(move || {
@@ -739,7 +751,30 @@ pub fn agent_run(
             }
             let _ = feeder.join();
         } else {
-            run_error = vibe::run(stdin, stdout, &cwd, &engine, &request, &mut emit).err();
+            // Requests are written from their own thread so a long prompt never blocks the reading.
+            let (input, lines) = std::sync::mpsc::channel::<String>();
+            let writer = std::thread::spawn(move || {
+                for line in lines {
+                    if writeln!(stdin, "{line}")
+                        .and_then(|_| stdin.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            let result = vibe::run(input, stdout, &cwd, &engine, &request, &mut emit);
+            // The app server and the Binfera server it started stay up until told otherwise; the
+            // turn is settled here, so end them rather than wait on how they shut down.
+            crate::engine::kill_tree(pid);
+            let _ = writer.join();
+            let cancelled = inner.cancelled.lock().unwrap().contains(&id);
+            match result {
+                Ok(()) => emit(AgentEvent::Done),
+                Err(_) if cancelled => emit(AgentEvent::Done),
+                Err(message) => emit(AgentEvent::Error { message }),
+            }
+            ended = true;
         }
         let status = child.wait();
         let stderr_text = stderr_thread.join().unwrap_or_default();
@@ -748,11 +783,7 @@ pub fn agent_run(
 
         if !ended {
             let failed = status.as_ref().map(|s| !s.success()).unwrap_or(true);
-            let event = if cancelled {
-                AgentEvent::Done
-            } else if let Some(message) = run_error {
-                AgentEvent::Error { message }
-            } else if !failed {
+            let event = if cancelled || !failed {
                 AgentEvent::Done
             } else {
                 let tail = stderr_text.trim();

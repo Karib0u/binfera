@@ -1,11 +1,18 @@
 //! Adapter for the Vibe app server shipped with the CLI and the macOS app.
 
-use super::{ask_agent, choice, content_text, find, tool, AgentEvent, AgentRequest, ModelInfo};
+use super::{
+    ask_agent, choice, content_text, find, tool, AgentEvent, AgentRequest, ModelInfo, LIST_TIMEOUT,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
+
+/// The app server answers `initialize` in about a second; detection waits no longer than this.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) fn find_server() -> Option<PathBuf> {
     find("vibe-app-server").or_else(|| {
@@ -51,11 +58,17 @@ fn initialized() -> Value {
 }
 
 pub(super) fn version(program: PathBuf) -> Option<String> {
-    ask_agent(program, &[], vec![initialize().to_string()], |message| {
-        message["result"]["serverInfo"]["version"]
-            .as_str()
-            .map(String::from)
-    })
+    ask_agent(
+        program,
+        &[],
+        vec![initialize().to_string()],
+        VERSION_TIMEOUT,
+        |message| {
+            message["result"]["serverInfo"]["version"]
+                .as_str()
+                .map(String::from)
+        },
+    )
     .ok()
 }
 
@@ -68,6 +81,7 @@ pub(super) fn models(program: PathBuf) -> Result<Vec<ModelInfo>, String> {
             initialized().to_string(),
             request(2, "config/read", json!({})).to_string(),
         ],
+        LIST_TIMEOUT,
         |message| {
             (message["id"] == 2).then(|| {
                 let config = &rpc_result(message)?["config"];
@@ -117,15 +131,18 @@ fn rpc_result(message: &Value) -> Result<&Value, String> {
         .ok_or_else(|| "Mistral Vibe did not return a result".into())
 }
 
-struct Connection<R, W> {
+/// Requests go to a writer thread that owns the server's stdin, so a long prompt never blocks
+/// the reading below while the server's own output fills its pipe.
+struct Connection<R> {
     lines: std::io::Lines<BufReader<R>>,
-    input: W,
+    input: Sender<String>,
 }
 
-impl<R: Read, W: Write> Connection<R, W> {
+impl<R: Read> Connection<R> {
     fn send(&mut self, message: Value) -> Result<(), String> {
-        writeln!(self.input, "{message}")
-            .map_err(|e| format!("could not write to Mistral Vibe: {e}"))
+        self.input
+            .send(message.to_string())
+            .map_err(|_| "could not write to Mistral Vibe".into())
     }
 
     fn read(&mut self) -> Result<Value, String> {
@@ -154,8 +171,9 @@ impl<R: Read, W: Write> Connection<R, W> {
     }
 }
 
+/// Runs one turn: `input` takes each line for the server's stdin, `stdout` is the server's output.
 pub(super) fn run(
-    stdin: impl Write,
+    input: Sender<String>,
     stdout: impl Read,
     cwd: &Path,
     engine: &str,
@@ -164,7 +182,7 @@ pub(super) fn run(
 ) -> Result<(), String> {
     let mut conn = Connection {
         lines: BufReader::new(stdout).lines(),
-        input: stdin,
+        input,
     };
     conn.send(initialize())?;
     conn.reply(1)?;
@@ -229,7 +247,7 @@ pub(super) fn run(
         }
         match message["method"].as_str() {
             Some("history/entryAdded" | "history/entryUpdated") => {
-                if let Some(event) = history_event(&message, &mut entries)? {
+                if let Some(event) = history_event(&message, &mut entries) {
                     emit(event);
                 }
             }
@@ -258,7 +276,9 @@ pub(super) fn run(
                         cost: None,
                     });
                 }
-                conn.call(7, "session/stop", json!({"sessionId": id}))?;
+                // The answer is complete; the stop only lets Vibe close cleanly, and the
+                // process is ended either way.
+                let _ = conn.call(7, "session/stop", json!({"sessionId": id}));
                 return Ok(());
             }
             _ => {}
@@ -306,51 +326,81 @@ fn tool_name(entry: &Value) -> Option<&str> {
         .or_else(|| name.strip_prefix("binfera_"))
 }
 
-fn history_event(
-    message: &Value,
-    entries: &mut HashMap<String, Value>,
-) -> Result<Option<AgentEvent>, String> {
+/// An entry still being generated, and whether the panel has been shown it yet.
+struct Pending {
+    entry: Value,
+    shown: bool,
+}
+
+/// Follows the history: Vibe sends each entry whole once, then as patches against what it sent.
+/// Every unfinished entry is kept, since one can become visible later (an effect learns its tool
+/// name in a patch). An update that cannot be applied drops that entry rather than the turn.
+fn history_event(message: &Value, entries: &mut HashMap<String, Pending>) -> Option<AgentEvent> {
     let params = &message["params"];
     if message["method"] == "history/entryAdded" {
         let entry = &params["entry"];
-        let Some(id) = entry["id"].as_str().filter(|_| visible(entry)) else {
-            return Ok(None);
-        };
-        let event = entry_event(id, entry);
+        let id = entry["id"].as_str()?;
+        let shown = visible(entry);
+        let event = shown.then(|| entry_event(id, entry)).flatten();
         if entry["generationStatus"] != "completed" {
-            entries.insert(id.into(), entry.clone());
+            entries.insert(
+                id.into(),
+                Pending {
+                    entry: entry.clone(),
+                    shown: event.is_some(),
+                },
+            );
         }
-        return Ok(event);
+        return event;
     }
 
-    let Some(id) = params["entryId"].as_str() else {
-        return Ok(None);
-    };
-    let Some(entry) = entries.get_mut(id) else {
-        return Ok(None);
-    };
-    for op in params["patch"].as_array().into_iter().flatten() {
-        // Vibe adds append for streaming strings and arrays to JSON Patch.
+    let id = params["entryId"].as_str()?;
+    let pending = entries.get_mut(id)?;
+    let ops = params["patch"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if apply_patch(&mut pending.entry, ops).is_err() {
+        entries.remove(id);
+        return None;
+    }
+    if pending.entry["generationStatus"] == "completed" {
+        let pending = entries.remove(id)?;
+        return visible(&pending.entry)
+            .then(|| entry_event(id, &pending.entry))
+            .flatten();
+    }
+    // A tool call that has just become visible is shown as running.
+    if !pending.shown && visible(&pending.entry) {
+        let event = entry_event(id, &pending.entry);
+        pending.shown = event.is_some();
+        return event;
+    }
+    None
+}
+
+/// JSON Patch, plus Vibe's `append`, which extends a string (or an array) in place.
+fn apply_patch(entry: &mut Value, ops: &[Value]) -> Result<(), ()> {
+    for op in ops {
         if op["op"] == "append" {
-            match op["path"].as_str().and_then(|path| entry.pointer_mut(path)) {
-                Some(Value::String(text)) => {
-                    text.push_str(op["value"].as_str().unwrap_or_default())
+            let path = op["path"].as_str().ok_or(())?;
+            match (entry.pointer_mut(path), &op["value"]) {
+                (Some(Value::String(text)), Value::String(more)) => text.push_str(more),
+                (Some(Value::Array(items)), value) => items.push(value.clone()),
+                // Nothing there yet: the appended value is the whole of it.
+                (None, value) => {
+                    let add = json!({"op": "add", "path": path, "value": value});
+                    let add = serde_json::from_value(add).map_err(|_| ())?;
+                    json_patch::patch(entry, &[add]).map_err(|_| ())?;
                 }
-                Some(Value::Array(items)) => items.push(op["value"].clone()),
-                _ => {}
+                _ => return Err(()),
             }
         } else {
-            let op = serde_json::from_value(op.clone())
-                .map_err(|e| format!("invalid Mistral Vibe history update: {e}"))?;
-            json_patch::patch(entry, &[op])
-                .map_err(|e| format!("could not update Mistral Vibe history: {e}"))?;
+            let op = serde_json::from_value(op.clone()).map_err(|_| ())?;
+            json_patch::patch(entry, &[op]).map_err(|_| ())?;
         }
     }
-    Ok(if entry["generationStatus"] == "completed" {
-        entries.remove(id).and_then(|entry| entry_event(id, &entry))
-    } else {
-        None
-    })
+    Ok(())
 }
 
 fn entry_event(id: &str, entry: &Value) -> Option<AgentEvent> {
@@ -421,10 +471,10 @@ mod tests {
             r#"{"id":7,"result":{}}"#,
             "\n",
         );
-        let mut sent = Vec::new();
+        let (input, sent) = std::sync::mpsc::channel();
         let mut events = Vec::new();
         run(
-            &mut sent,
+            input,
             replies.as_bytes(),
             Path::new("/tmp/binfera-agent"),
             "/App/my binfera",
@@ -460,9 +510,9 @@ mod tests {
                 },
             ]
         );
-        let sent: Vec<Value> = BufReader::new(sent.as_slice())
-            .lines()
-            .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
+        let sent: Vec<Value> = sent
+            .try_iter()
+            .map(|line| serde_json::from_str(&line).unwrap())
             .collect();
         assert_eq!(sent[2]["method"], "session/resume");
         let config = &sent[2]["params"]["agentConfig"];
@@ -470,5 +520,100 @@ mod tests {
         assert_eq!(config["mcpServers"][0]["command"], "/App/my binfera");
         assert_eq!(sent[3]["params"]["sessionOnly"], true);
         assert_eq!(sent[6]["params"]["message"][0]["text"], request.prompt);
+    }
+
+    fn added(entry: Value) -> Value {
+        json!({"method": "history/entryAdded", "params": {"sessionId": "s1", "entry": entry}})
+    }
+
+    fn updated(id: &str, patch: Value) -> Value {
+        json!({"method": "history/entryUpdated", "params": {"sessionId": "s1", "entryId": id, "patch": patch}})
+    }
+
+    #[test]
+    fn a_tool_call_named_after_it_starts_is_still_shown() {
+        let mut entries = HashMap::new();
+        let effect = json!({"id": "e1", "type": "effect", "generationStatus": "in_progress", "detail": {}, "state": {"status": "running"}});
+        assert_eq!(history_event(&added(effect), &mut entries), None);
+        let named = updated(
+            "e1",
+            json!([{"op": "add", "path": "/detail/toolName", "value": "binfera_list_functions"}]),
+        );
+        assert_eq!(
+            history_event(&named, &mut entries),
+            Some(tool("e1", "list_functions", Value::Null, "running", None))
+        );
+        let done = updated(
+            "e1",
+            json!([
+                {"op": "append", "path": "/state/outputText", "value": "12 functions"},
+                {"op": "replace", "path": "/state/status", "value": "completed"},
+                {"op": "replace", "path": "/generationStatus", "value": "completed"}
+            ]),
+        );
+        assert_eq!(
+            history_event(&done, &mut entries),
+            Some(tool(
+                "e1",
+                "list_functions",
+                Value::Null,
+                "done",
+                Some("12 functions".into())
+            ))
+        );
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn a_patch_that_does_not_apply_drops_only_that_entry() {
+        let mut entries = HashMap::new();
+        let message = json!({"id": "m1", "type": "message", "role": "assistant", "generationStatus": "in_progress", "content": [{"type": "text", "text": "Hel"}]});
+        history_event(&added(message), &mut entries);
+        let streamed = updated(
+            "m1",
+            json!([{"op": "append", "path": "/content/0/text", "value": "lo"}]),
+        );
+        assert_eq!(history_event(&streamed, &mut entries), None);
+        assert_eq!(entries["m1"].entry["content"][0]["text"], "Hello");
+        let bad = updated(
+            "m1",
+            json!([{"op": "replace", "path": "/missing/field", "value": 1}]),
+        );
+        assert_eq!(history_event(&bad, &mut entries), None);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn a_failed_stop_after_a_finished_turn_is_not_an_error() {
+        let request = AgentRequest {
+            id: 1,
+            provider: "vibe".into(),
+            prompt: "Hi".into(),
+            session: None,
+            model: None,
+            effort: None,
+        };
+        let replies = [
+            json!({"id": 1, "result": {}}),
+            json!({"id": 2, "result": {"state": {"session": {"id": "s1"}}}}),
+            json!({"id": 4, "result": {}}),
+            json!({"id": 5, "result": {"runtime": {"tools": [], "mcp": {"sources": [{"name": "binfera", "tools": [{"enabled": true}]}]}}}}),
+            json!({"id": 6, "result": {}}),
+            json!({"method": "turn/completed", "params": {"sessionId": "s1", "turn": {"status": "completed"}}}),
+        ]
+        .map(|m| m.to_string() + "\n")
+        .concat();
+        let (input, _sent) = std::sync::mpsc::channel();
+        let mut events = Vec::new();
+        run(
+            input,
+            replies.as_bytes(),
+            Path::new("/tmp"),
+            "binfera",
+            &request,
+            &mut |event| events.push(event),
+        )
+        .unwrap();
+        assert_eq!(events, vec![AgentEvent::Session { id: "s1".into() }]);
     }
 }

@@ -147,13 +147,17 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
     if (!agent || !provider || !msg) return;
     // While the agent works, a message waits its turn.
     if (busyRef.current) { setQueue([...queueRef.current, msg]); setText(""); return; }
-    const asked = { ...context, path, address: withSelection ? context.address : null };
-    const prompt = buildPrompt(msg, asked, !sessions.current[provider]);
-    const token = ++run.current.token;
+    // Another agent cannot resume this one's session, so it starts its own conversation; the
+    // earlier one stays in the history.
     const newConversation = conv.current?.provider !== provider;
     if (newConversation) {
       conv.current = { id: newId(), provider };
+      sessions.current = {};
+      setUsage({ input: 0, output: 0, cost: 0 });
     }
+    const asked = { ...context, path, address: withSelection ? context.address : null };
+    const prompt = buildPrompt(msg, asked, !sessions.current[provider]);
+    const token = ++run.current.token;
     stopped.current = false;
     setItems((prev) => [...(newConversation ? [] : prev), { k: "user", text: shown ?? msg }]);
     setText("");
@@ -291,6 +295,9 @@ export default function AgentDock({ context, notes, tick, symbols, onBusy, onOpe
           )}
         </div>
 
+        {provider && !empty && conv.current && conv.current.provider !== provider && (
+          <p className="ag-switch">{AGENT_NAMES[conv.current.provider]} is not available, so your next message starts a new chat with {name}. This one stays in the history.</p>
+        )}
         <Composer
           text={text} onText={setText} onSend={(t) => send(t)} onInterrupt={interrupt} busy={busy}
           disabled={!provider} placeholder={provider ? (busy ? "Type to queue the next message…" : `Ask ${name} about this binary…`) : "No agent installed"}
