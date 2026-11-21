@@ -1,5 +1,5 @@
 """The Win32 metadata generator keeps existing pack entries, lays structures out per architecture
-and records parameter-to-enum associations."""
+and records parameter-to-enum associations with the named values they print as."""
 from pathlib import Path
 import subprocess
 import sys
@@ -24,6 +24,10 @@ DUMP = "\n".join([
     f"TD\t{NS}.OLD_STRUCT\t7\tstruct\t0\t0\t0\t0\tx|u8|",
     f"TD\t{NS}.POINTISH\t7\tstruct\t0\t0\t0\t0\tc|u8|\tp|p:void|\tn|u16|",
     f"TD\t{NS}.UNIONISH\t7\tstruct\t1\t0\t0\t0\ta|u8|\tb|u64|",
+    f"TD\t{NS}.UNUSED_ENUM\t7\tenum\ti32\t0\tNOBODY=-1",
+    # CN name type value: only the listed handle types keep their constants.
+    f"CN\tHKEY_LOCAL_MACHINE\tn:{NS}.System.Registry.HKEY\t-2147483646",
+    f"CN\tINVALID_HANDLE_VALUE\tn:{NS}.HANDLE\t-1",
 ]) + "\n"
 
 
@@ -50,6 +54,12 @@ class Win32MetadataPackTests(unittest.TestCase):
                 self.assertEqual(entries["F:OldCall"], "original prototype")
                 self.assertIn("F:NewCall", entries)
                 self.assertEqual(entries["P:NewCall"], "0=MODE+")
+                # Named values of the sets P: entries name, in declaration order, and the constants
+                # of the listed handle types; nothing for an enum no parameter takes.
+                self.assertEqual(entries["E:MODE"], "f\tFIRST=1;SECOND=2")
+                self.assertNotIn("E:UNUSED_ENUM", entries)
+                self.assertEqual(entries["E:HKEY"], "h\tHKEY_LOCAL_MACHINE=-2147483646")
+                self.assertNotIn("E:HANDLE", entries)
                 # Fields with natural alignment: u8, then a pointer, then u16.
                 point = self.type_named(entries, "POINTISH")
                 self.assertIn(f'size="{3 * word if word == 8 else 12}"', point)

@@ -14,7 +14,14 @@ Added entries, all in the pack format of pack_prototypes.py:
   T:<hex id>        every struct, union, enum, handle typedef and function-pointer typedef of the
                     metadata, whether or not a prototype refers to it; ids start at ID_BASE
   P:<function>      parameter-to-enum association, "<index>=<EnumName>[+]" separated by ';'
-                    (+ marks a flag set); parameters keep their integer type
+                    (+ marks a flag set); parameters keep their integer type. A few parameters that
+                    the metadata leaves untyped take the union of two sets ("<A>+|<B>+"), listed in
+                    ASSOCIATIONS
+  E:<name>          the named values of an enum that a P: entry names, in declaration order:
+                    "<kind><TAB><member>=<value>;..." with kind f (flag set) or e (enum); and kind h
+                    for the constants the metadata declares with a handle type (HANDLE_CONSTANTS)
+The bridge reads P: and E: to type those parameters with an enum whose values print by name
+(the symbolic-constants pass, docs/decompiler-design.md). Both are rewritten on every run.
 """
 import argparse
 import re
@@ -49,6 +56,19 @@ BUILTIN_IDS = {"int": 0xc000000000000095, "uint": 0xc0000000000000c4, "char": 0x
                "float": 0xc00000000000008a, "double": 0xc000000000000082,
                "wchar_t": 0xc0000000000000cd}
 ARCH_BIT = {"x86": 1, "x64": 2}
+# Parameters that the metadata types as a bare integer although the SDK documents their values as
+# the union of metadata flag sets. CreateFile's access mask takes the generic rights
+# (GENERIC_READ) as well as the file rights; CreateRemoteThread takes CreateThread's flags.
+ASSOCIATIONS = {
+    "CreateFileA": {1: ("FILE_ACCESS_RIGHTS", "GENERIC_ACCESS_RIGHTS")},
+    "CreateFileW": {1: ("FILE_ACCESS_RIGHTS", "GENERIC_ACCESS_RIGHTS")},
+    "CreateRemoteThread": {5: ("THREAD_CREATION_FLAGS",)},
+    "CreateRemoteThreadEx": {5: ("THREAD_CREATION_FLAGS",)},
+}
+# Handle types whose metadata constants name values unambiguously. HANDLE (-1 is both
+# INVALID_HANDLE_VALUE and the current-process pseudo handle) and HWND (0 is NULL, HWND_TOP and
+# HWND_DESKTOP) are left out.
+HANDLE_CONSTANTS = ("Windows.Win32.System.Registry.HKEY",)
 
 
 def parse_type(text):
@@ -86,11 +106,16 @@ class Generator:
                 ident = int(key[2:], 16)
                 if name and ident < 0xc000000000000000 and ident < self.old_ids.get(name, (1 << 64, 0))[0]:
                     self.old_ids[name] = (ident, key)
+        self.constants = {}      # handle type full name -> [(name, value)] in name order
+        self.used_enums = {}     # emitted enum name -> full name, for the E: records
         self.types = {}          # full name -> record for this architecture
         self.functions = {}      # name -> (dll, record)
         for line in dump:
             fields = line.rstrip("\n").split("\t")
-            if fields[0] == "TD":
+            if fields[0] == "CN":
+                if fields[2][2:] in HANDLE_CONSTANTS:
+                    self.constants.setdefault(fields[2][2:], []).append((fields[1], int(fields[3])))
+            elif fields[0] == "TD":
                 arches = int(fields[2])
                 if arches & self.bit:
                     self.types.setdefault(fields[1], fields)
@@ -326,6 +351,35 @@ class Generator:
                 meta = "union" if union else "struct"
                 self.emit(ident, name, f'<type name="{n}" id="0x{ident:x}" metatype="{meta}" size="{size}" alignment="{align}">{"".join(body)}</type>')
 
+    def enum_by_short(self, short, required=True):
+        if not hasattr(self, "_enums"):
+            self._enums = {}
+            for full in sorted(self.types):
+                if self.types[full][3] == "enum":
+                    self._enums.setdefault(self.short(full), full)
+        if required and short not in self._enums:
+            raise SystemExit("ASSOCIATIONS names an unknown enum " + short)
+        return self._enums.get(short)
+
+    def enum_ref(self, full):
+        """'<name>[+]' of an enum a P: entry names; records it for its E: entry."""
+        name = self.names[full][0]
+        self.used_enums[name] = full
+        return name + ("+" if self.types[full][5] == "1" else "")
+
+    def emit_constants(self):
+        """E: entries: the values of every enum a P: entry names, and the handle constants."""
+        for name, full in sorted(self.used_enums.items()):
+            record = self.types[full]
+            values = []
+            for item in record[6:]:
+                member, _, value = item.rpartition("=")
+                values.append(f"{member}={int(value)}")
+            kind = "f" if record[5] == "1" else "e"
+            self.out["E:" + name] = kind + "\t" + ";".join(values)
+        for full, constants in sorted(self.constants.items()):
+            self.out["E:" + self.short(full)] = "h\t" + ";".join(f"{n}={v}" for n, v in constants)
+
     def emit_functions(self):
         for name, (dll, fields) in sorted(self.functions.items()):
             conv, flags, ret = fields[3], fields[5], fields[6]
@@ -336,14 +390,16 @@ class Generator:
                     pname, text, assoc = (item.split("|") + ["", ""])[:3]
                     t = parse_type(text)
                     flag = ""
-                    if t[0] == "n" and t[1] in self.types and self.types[t[1]][3] == "enum":
-                        enum_name = self.names[t[1]][0]
-                        flag = "+" if self.types[t[1]][5] == "1" else ""
-                        associations.append(f"{index}={enum_name}{flag}")
+                    curated = ASSOCIATIONS.get(name, {}).get(index)
+                    if curated:
+                        targets = [self.enum_by_short(short) for short in curated]
+                        associations.append(f"{index}=" + "|".join(self.enum_ref(target) for target in targets))
+                    elif t[0] == "n" and t[1] in self.types and self.types[t[1]][3] == "enum":
+                        associations.append(f"{index}={self.enum_ref(t[1])}")
                     elif assoc:
-                        target = next((f for f in self.types if self.types[f][3] == "enum" and self.short(f) == assoc.split(",")[0].rsplit(".", 1)[-1]), None)
+                        target = self.enum_by_short(assoc.split(",")[0].rsplit(".", 1)[-1], required=False)
                         if target:
-                            associations.append(f"{index}={self.names[target][0]}{'+' if self.types[target][5] == '1' else ''}")
+                            associations.append(f"{index}={self.enum_ref(target)}")
                     params.append((pname, t))
                 # The association is kept even where the Ghidra-derived entry has priority.
                 if associations:
@@ -374,9 +430,14 @@ def main():
         generator.functions = {k: v for k, v in generator.functions.items() if k not in skipped}
     generator.emit_types()
     generator.emit_functions()
+    generator.emit_constants()
     merged = dict(existing)
     for key, value in generator.out.items():
-        merged.setdefault(key, value)
+        # P: and E: belong to this generator alone, so a rerun replaces them.
+        if key[:2] in ("P:", "E:"):
+            merged[key] = value
+        else:
+            merged.setdefault(key, value)
     print(generator.stats)
     pack(merged.items(), args.pack)
 

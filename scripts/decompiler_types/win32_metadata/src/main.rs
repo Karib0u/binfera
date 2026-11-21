@@ -7,6 +7,8 @@
 //! Records (tab separated; types use the grammar documented below):
 //!   FN  name  dll  conv  arches  flags  ret  [param...]       param = name|type|assoc-enum|dir
 //!   TD  fullname  arches  kind  ...                             see `dump_type`
+//!   CN  name  type  value                                       a constant whose type is a named
+//!                                                               type (`HKEY_LOCAL_MACHINE`, `n:...HKEY`)
 //!
 //! Type grammar: `void bool char16 i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 isize usize`,
 //! `p:T` (pointer), `a<N>:T` (fixed array), `n:Namespace.Name` (named type), `s` (string, unused).
@@ -214,6 +216,7 @@ fn main() {
     let index = Index::read(&args[1]).expect("cannot read the winmd file");
     let mut types: BTreeMap<String, String> = BTreeMap::new();
     let mut functions: BTreeMap<String, String> = BTreeMap::new();
+    let mut constants: BTreeMap<String, String> = BTreeMap::new();
     let mut const_count = 0usize;
     for (ns, name, item) in index.iter_items() {
         use windows_metadata::reader::Item;
@@ -258,7 +261,15 @@ fn main() {
                     types.entry(format!("{full}\t{}", arches_of(&t))).or_default().push_str(&s);
                 }
             }
-            Item::Const(_) => const_count += 1,
+            Item::Const(f) => {
+                const_count += 1;
+                // Only constants of a named type (handles such as HKEY): untyped `#define` values
+                // belong to no parameter.
+                let ty = type_name(&safe_field_type(&f), ns);
+                if let (true, Some(c)) = (ty.starts_with("n:"), f.constant()) {
+                    constants.insert(format!("{ty}\t{name}"), format!("CN\t{name}\t{ty}\t{}", const_value(&c.value())));
+                }
+            }
         }
         }));
         if result.is_err() {
@@ -272,6 +283,10 @@ fn main() {
     }
     for text in types.values() {
         out.push_str(text);
+    }
+    for line in constants.values() {
+        out.push_str(line);
+        out.push('\n');
     }
     std::fs::write(&args[2], out).expect("cannot write the output");
     eprintln!("functions={} types={} constants={}", functions.len(), types.len(), const_count);

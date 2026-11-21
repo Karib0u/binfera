@@ -50,6 +50,8 @@ mod stack_protector;
 mod stack_purge;
 mod stack_strings;
 mod strlen_loops;
+#[cfg(test)]
+mod symbolic_constants;
 mod unit;
 mod win64_args;
 
