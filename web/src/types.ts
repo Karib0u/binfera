@@ -30,6 +30,31 @@ export interface DecompiledFunction {
   lines?: number[][];
   /** Stack symbols by offset, from the decompiler. */
   frame?: StackSlot[];
+  /** The named parameters of each call, and where the caller puts each argument. */
+  call_args?: CallArgument[];
+  /** x86 calls with a known stack effect: the call and the bytes its callee pops besides the return address. */
+  call_pops?: [number, number][];
+  /** The data symbols the text names, with the type class the decompiler gave each. */
+  globals?: GlobalSymbol[];
+}
+
+export interface CallArgument {
+  /** The call instruction. */
+  call: number;
+  index: number;
+  name: string;
+  type: string;
+  /** The register holding the argument, as the decompiler names it (`RCX`, `R8D`, `x0`). */
+  register?: string;
+  /** From the stack pointer at the call instruction, for an argument on the stack. */
+  stack?: number;
+}
+
+export interface GlobalSymbol {
+  name: string;
+  address: number;
+  size: number;
+  kind: "float" | "signed" | "unsigned" | "bool" | "pointer" | "unknown";
 }
 
 export interface StackSlot {

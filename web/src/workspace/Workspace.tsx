@@ -42,6 +42,7 @@ import Wordmark from "../Wordmark";
 import BuildVersion from "../BuildVersion";
 import { ShellcodeNotice } from "../views/ShellcodeNotice";
 import { NATIVE } from "../engine/assets";
+import { importThunk } from "../annotations";
 import type { RawCodeOptions } from "../engine/engine.worker";
 
 /** The page's own title, from index.html, to restore on leaving a file. */
@@ -713,7 +714,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
 
   const label = (ad: number) => fnLabel(ad, a.functions.get(ad)?.name);
   const slotByVa = useMemo(() => new Map((image?.imports ?? []).filter((i) => i.va).map((i) => [i.va, i])), [image]);
-  const slot = (va: number) => slotByVa.get(va);
+  // A call to an import stub (`jmp [slot]`) names the API it jumps to, as IDA does.
+  const slot = (va: number) => slotByVa.get(va) ?? (image ? importThunk(image, va, slotByVa) : undefined);
   const xrefCount = (va: number) => xrefs.get(va)?.length ?? 0;
   const mode: "overview" | "code" | "data" = sel === "capa" ? "overview" : typeof sel === "number" ? "code" : "data";
   // Sections live in File on a desktop; a phone keeps its Hex tab.

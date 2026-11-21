@@ -23,6 +23,8 @@ function measureChar() {
 
 interface Props {
   rows: AsmRow[];
+  /** The call arguments an instruction sets up and the stack symbols it uses, by address. */
+  argNotes?: Map<number, string>;
   recovered?: FunctionGraph;
   arch: Arch;
   self: number;
@@ -48,7 +50,7 @@ interface Props {
 interface View { x: number; y: number; k: number }
 
 /** Control-flow graph of one function, in the manner of IDA's graph view: blocks, coloured edges, pan and zoom. */
-export default function GraphView({ rows, recovered, arch, self, name, rules, resolve, label, strAt, textAt, onGoto, cursor, onCursor, marked, slot, onImport, isData, onData, onCode }: Props) {
+export default function GraphView({ rows, recovered, arch, self, name, rules, resolve, label, strAt, textAt, onGoto, cursor, onCursor, marked, slot, onImport, isData, onData, onCode, argNotes }: Props) {
   const cfg = useMemo(() => buildCfg(rows, arch, recovered), [rows, arch, recovered]);
   // The parent passes fresh closures and arrays on every render; key the layout on content so it is not redone (and the view reset).
   const strRef = useRef(strAt);
@@ -83,11 +85,12 @@ export default function GraphView({ rows, recovered, arch, self, name, rules, re
       };
       // A name shown in place of an address can be longer than the address.
       const extra = (text: string) => { let n = 0; for (const m of text.matchAll(ADDR_IN_ASM)) n += Math.max(0, (nameRef.current(asmAddress(m))?.length ?? 0) - m[0].length); return n; };
-      const chars = Math.max(...b.rows.map((r) => 10 + r[2].length + extra(r[2]) + noteLen(r[2]) + 2), 12);
+      const argLen = (ad: number) => { const n = argNotes?.get(ad); return n ? n.length + 4 : 0; };
+      const chars = Math.max(...b.rows.map((r) => 10 + r[2].length + extra(r[2]) + noteLen(r[2]) + argLen(r[0]) + 2), 12);
       const headChars = (b.addr === self ? name.length : 4 + 8) + 2;
       return { w: Math.ceil(Math.max(chars, headChars) * cw) + PAD_X * 2, h: HEAD_H + (caps.get(b.id)?.length ?? 0) * CAP_H + b.rows.length * LINE_H + PAD_Y * 2 };
     });
-  }, [cfg, caps, self, name]);
+  }, [cfg, caps, self, name, argNotes]);
 
   const box = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
@@ -255,7 +258,7 @@ export default function GraphView({ rows, recovered, arch, self, name, rules, re
                 <div className="gb-head">{b.addr === self ? name : "loc_" + b.addr.toString(16).padStart(8, "0")}</div>
                 {bcaps.map((c) => <div key={c} className="gb-cap" title={c}>{c}</div>)}
                 <div className="gb-body">
-                  {b.rows.map(([ad, hexBytes, text]) => <Insn key={ad} ad={ad} text={text} branch={branchTarget([ad, hexBytes, text], arch)} onBranch={(v) => (rows.some((r) => r[0] === v) ? onCursor : onCode)?.(v)} self={self} resolve={resolve} label={label} strAt={strAt} textAt={textAt} onGoto={onGoto} slot={slot} onImport={onImport} isData={isData} onData={onData} active={ad === cursor || !!marked?.has(ad)} onPick={() => { if (moved.current < 4) onCursor?.(ad); }} />)}
+                  {b.rows.map(([ad, hexBytes, text]) => <Insn key={ad} ad={ad} text={text} argNote={argNotes?.get(ad)} branch={branchTarget([ad, hexBytes, text], arch)} onBranch={(v) => (rows.some((r) => r[0] === v) ? onCursor : onCode)?.(v)} self={self} resolve={resolve} label={label} strAt={strAt} textAt={textAt} onGoto={onGoto} slot={slot} onImport={onImport} isData={isData} onData={onData} active={ad === cursor || !!marked?.has(ad)} onPick={() => { if (moved.current < 4) onCursor?.(ad); }} />)}
                 </div>
               </div>
             );
@@ -298,7 +301,7 @@ const branchTarget = (row: AsmRow, arch: Arch) => {
   return flow.kind === "jump" || flow.kind === "cond" || flow.kind === "call" ? flow.target : undefined;
 };
 
-function Insn({ ad, text, branch, onBranch, self, resolve, label, strAt, textAt, onGoto, slot, onImport, isData, onData, active, onPick }: { ad: number; text: string; branch?: number; onBranch: (va: number) => void; active: boolean; onPick: () => void } & Pick<Props, "self" | "resolve" | "label" | "strAt" | "textAt" | "onGoto" | "slot" | "onImport" | "isData" | "onData">) {
+function Insn({ ad, text, argNote, branch, onBranch, self, resolve, label, strAt, textAt, onGoto, slot, onImport, isData, onData, active, onPick }: { ad: number; text: string; argNote?: string; branch?: number; onBranch: (va: number) => void; active: boolean; onPick: () => void } & Pick<Props, "self" | "resolve" | "label" | "strAt" | "textAt" | "onGoto" | "slot" | "onImport" | "isData" | "onData">) {
   const notes = useNotes();
   const sp = text.indexOf(" ");
   const mnem = sp < 0 ? text : text.slice(0, sp), ops = sp < 0 ? "" : text.slice(sp);
@@ -325,7 +328,7 @@ function Insn({ ad, text, branch, onBranch, self, resolve, label, strAt, textAt,
   return (
     <div className={"gi" + (active ? " hl" : "")} onClick={onPick}>
       <code className="ia">{ad.toString(16).padStart(8, "0")}</code>
-      <code><span className="tk-k" data-tok={mnem}>{mnem}</span>{parts}{note && <span className="tk-c">  ; {JSON.stringify(note.length > 40 ? note.slice(0, 40) + "…" : note)}</span>}{ad !== self && own && <span className="tk-c ucm" title={own}>  ; {own.length > 60 ? own.slice(0, 60) + "…" : own}</span>}</code>
+      <code><span className="tk-k" data-tok={mnem}>{mnem}</span>{parts}{argNote && <span className="tk-c tk-arg">  ; {argNote}</span>}{note && <span className="tk-c">  ; {JSON.stringify(note.length > 40 ? note.slice(0, 40) + "…" : note)}</span>}{ad !== self && own && <span className="tk-c ucm" title={own}>  ; {own.length > 60 ? own.slice(0, 60) + "…" : own}</span>}</code>
     </div>
   );
 }

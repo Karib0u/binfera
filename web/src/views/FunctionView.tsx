@@ -6,7 +6,7 @@ import { linesWithSetup } from "../graph";
 import { useNotes } from "../names";
 import Asm, { type AsmHandle } from "../Asm";
 import { cachedFunctionArrows } from "../BranchArrows";
-import { applyNames, Code } from "../highlight";
+import { applyNames, Code, importKey } from "../highlight";
 import MoreMenu, { type MenuItem } from "../MoreMenu";
 import { panesOf, VIEW_NAMES, type CodeView, type Layout } from "../workspace/location";
 import { revealIn, Splitter, useMedia, useStored } from "../workspace/panels";
@@ -14,6 +14,8 @@ import CodePanes, { type PanePlace, type PaneRenderer } from "../workspace/CodeP
 import { PackedNotice } from "./AnalysisStatus";
 import { NATIVE } from "../engine/assets";
 import { StackFrame } from "./StackFrame";
+import { instructionNotes } from "../annotations";
+import { codeVocabulary } from "../highlight";
 
 function DecompileNotice({ a, address }: { a: Analysis; address: number }) {
   const [busy, setBusy] = useState(false);
@@ -121,6 +123,9 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
   const f = a.functions.get(address);
+  const argNotes = useMemo(() => instructionNotes(f, a.arch), [f, a.arch]);
+  const importNames = useMemo(() => new Set((a.image?.imports ?? []).flatMap((i) => [importKey(i), i.name])), [a.image]);
+  const vocabulary = useMemo(() => codeVocabulary(f?.frame, (name) => importNames.has(name), f?.text), [f?.frame, f?.text, importNames]);
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(!!mobile);
   const [inspector, setInspector] = useState<"refs" | "stack">("refs");
@@ -312,7 +317,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
                     let first: number | undefined;
                     for (let d = 0; d < lines.length && first === undefined; d++) first = lines[line - d]?.[0] ?? lines[line + d]?.[0];
                     if (first !== undefined) { picked.current = first; onCursor(first); }
-                  }} resolve={noSelf} display={display} onGoto={onGoto} onString={openString} strAt={strAt} inlineStrings={inlineStr} data={{ is: isData, go: onData }} />
+                  }} resolve={noSelf} display={display} onGoto={onGoto} onString={openString} strAt={strAt} inlineStrings={inlineStr} data={{ is: isData, go: onData }} vocabulary={vocabulary} />
                 </>
               )}
               {a.decompileError && <div className="notice error">Decompiler: {a.decompileError}</div>}
@@ -320,12 +325,12 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   );
   const aContent = (
     <>
-              {hasAsm ? <Asm scrollRef={asm} focusable arrows={arrows} arch={a.arch} onCode={onCode} rows={f!.asm!} labels={f!.labels} self={address} resolve={resolve} onGoto={onGoto} strAt={strAt} textAt={textAt} label={(ad) => f?.labels?.[ad] ?? fnLabel(ad, a.functions.get(ad)?.name)} active={hlAddrs} onPick={(ad) => { picked.current = ad; asmPick = ad; setFocus({ kind: "a", ad }); onCursor(ad); }} capAt={capAt} isData={isData} onData={onData} slot={slot} onImport={onImport} />
+              {hasAsm ? <Asm scrollRef={asm} focusable arrows={arrows} arch={a.arch} onCode={onCode} rows={f!.asm!} labels={f!.labels} self={address} resolve={resolve} onGoto={onGoto} strAt={strAt} textAt={textAt} label={(ad) => f?.labels?.[ad] ?? fnLabel(ad, a.functions.get(ad)?.name)} active={hlAddrs} onPick={(ad) => { picked.current = ad; asmPick = ad; setFocus({ kind: "a", ad }); onCursor(ad); }} capAt={capAt} isData={isData} onData={onData} slot={slot} onImport={onImport} argNotes={argNotes} />
                 : <p className="fine">{f ? "No instruction listing." : "Waiting for analysis…"}</p>}
     </>
   );
   const graphContent = hasAsm
-    ? <GraphView recovered={f?.cfg} rows={f!.asm!} arch={a.arch} self={address} name={fnLabel(address, f?.name)} rules={rules} resolve={resolve} onGoto={onGoto} strAt={strAt} textAt={textAt} label={(ad) => fnLabel(ad, a.functions.get(ad)?.name)} cursor={cursor} onCursor={onCursor} marked={hlAddrs} slot={slot} onImport={onImport} isData={isData} onData={onData} onCode={onCode} />
+    ? <GraphView recovered={f?.cfg} rows={f!.asm!} arch={a.arch} self={address} name={fnLabel(address, f?.name)} rules={rules} resolve={resolve} onGoto={onGoto} strAt={strAt} textAt={textAt} label={(ad) => fnLabel(ad, a.functions.get(ad)?.name)} cursor={cursor} onCursor={onCursor} marked={hlAddrs} slot={slot} onImport={onImport} isData={isData} onData={onData} onCode={onCode} argNotes={argNotes} />
     : <p className="fine">{f ? "No instruction listing." : "Waiting for analysis…"}</p>;
   const refsContent = (
     <>

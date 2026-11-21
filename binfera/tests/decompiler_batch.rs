@@ -534,3 +534,28 @@ fn batch_lists_no_block_inside_an_unwind_row() -> anyhow::Result<()> {
     assert!(!warnings.iter().any(|w| w.contains("unwind row")));
     Ok(())
 }
+
+#[test]
+fn batch_names_call_arguments_and_their_registers() -> anyhow::Result<()> {
+    // `ExitProcess(uExitCode)`: the listing names the instruction that sets ECX from this.
+    let mut seen = false;
+    decompile_all(FIXTURE, &BatchOptions::default(), |event| {
+        if let BatchEvent::Function(function) = event {
+            for argument in function.call_args.iter().flatten() {
+                if argument.name == "uExitCode" {
+                    assert_eq!(argument.index, 0);
+                    assert_eq!(argument.type_name, "UINT");
+                    assert_eq!(argument.register_name.as_deref(), Some("ECX"));
+                    assert_eq!(argument.stack, None);
+                    let json = serde_json::to_value(argument).expect("serializable");
+                    assert_eq!(json["register"], "ECX");
+                    assert!(json.get("stack").is_none());
+                    seen = true;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    assert!(seen, "no call names its uExitCode argument");
+    Ok(())
+}
