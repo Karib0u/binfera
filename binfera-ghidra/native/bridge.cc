@@ -950,6 +950,17 @@ static void collectStackFrame(Funcdata *fd, AddrSpace *stack, rust::Vec<binfera:
   }
 }
 
+/// A placeholder parameter name (`param_3`, `arg2`, Ghidra's `__undef`/`$$undef`), not one a prototype gives.
+static bool genericParameterName(const std::string &name) {
+  const auto numbered = [&](const char *prefix) {
+    const size_t n = strlen(prefix);
+    return name.size() > n && name.compare(0, n, prefix) == 0 &&
+           std::all_of(name.begin() + n, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+  };
+  return name.empty() || name.find("param_") == 0 || numbered("arg") || name.find("__undef") == 0 ||
+         name.find("$$undef") == 0;
+}
+
 /// The named parameters of each call of a finished function, with where the caller puts each
 /// argument: a register, or a stack offset from the stack pointer at the call instruction. A
 /// listing names the instructions that set them up from this, as IDA does.
@@ -973,8 +984,7 @@ static void collectCallArguments(Funcdata *fd, AddrSpace *stack, rust::Vec<binfe
     for (int4 slot = 0; slot < call->numParams() && slot + 1 < op->numInput(); ++slot) {
       const ProtoParameter *parameter = call->getParam(slot);
       const std::string &name = parameter->getName();
-      if (name.empty() || name.find("param_") == 0 || name.find("arg") == 0 || name.find("__undef") == 0 ||
-          name.find("$$undef") == 0) continue;
+      if (genericParameterName(name)) continue;
       binfera::NativeCallArgument out;
       out.call = op->getAddr().getOffset();
       out.index = uint32_t(slot);
@@ -2130,8 +2140,7 @@ public:
       for (int4 slot = 1; slot < op->numInput() && slot <= call->numParams(); ++slot) {
         const auto *parameter = call->getParam(slot - 1);
         const auto &name = parameter->getName();
-        if (name.empty() || name.find("param_") == 0 || name.find("arg") == 0 || name.find("__undef") == 0 ||
-            name.find("$$undef") == 0 || name == "this") continue;
+        if (genericParameterName(name) || name == "this") continue;
         const Varnode *vn = op->getIn(slot);
         Symbol *symbol = nullptr;
         for (int depth = 0; depth < 8; ++depth) {
@@ -2246,7 +2255,7 @@ public:
       for (const auto &[index, name] : parameterRoleNames(fd)) {
         if (index < 0 || size_t(index) >= out.pieces.innames.size()) continue;
         auto &current = out.pieces.innames[index];
-        if (current.empty() || current.find("param_") == 0 || current.find("arg") == 0) current = name;
+        if (genericParameterName(current)) current = name;
       }
       // A non-leaf or memory-dependent result can carry request-local pointer,
       // array or global types. Retain those results only within the original
