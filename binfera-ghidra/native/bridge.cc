@@ -1094,6 +1094,33 @@ bool binfera_jump_target_valid(LoadImage *loader, uint64_t function, uint64_t ta
   // Reject only an interior target in a different declared unwind range.
   return !source || !destination || source == destination || target == destination->start;
 }
+// A call target merged from several reads of one import slot is that slot (the same function pointer
+// on every path); anything else, or a merge with other inputs, is returned unchanged.
+Varnode *binfera_extern_slot(Varnode *vn) {
+  if (!vn->isWritten() || vn->getDef()->code() != CPUI_MULTIEQUAL) return vn;
+  std::vector<Varnode *> pending{vn};
+  std::set<Varnode *> seen;
+  Varnode *slot = nullptr;
+  while (!pending.empty()) {
+    Varnode *cur = pending.back();
+    pending.pop_back();
+    if (!seen.insert(cur).second) continue;
+    if (seen.size() > 64) return vn;
+    if (cur->isWritten()) {
+      PcodeOp *def = cur->getDef();
+      if (def->code() == CPUI_COPY) { pending.push_back(def->getIn(0)); continue; }
+      if (def->code() == CPUI_MULTIEQUAL) {
+        for (int i = 0; i < def->numInput(); ++i) pending.push_back(def->getIn(i));
+        continue;
+      }
+      return vn;
+    }
+    if (!cur->isPersist() || !cur->isExternalRef()) return vn;
+    if (slot && (slot->getAddr() != cur->getAddr() || slot->getSize() != cur->getSize())) return vn;
+    if (!slot) slot = cur;
+  }
+  return slot ? slot : vn;
+}
 bool binfera_forwarded_return(Funcdata &fd, const PcodeOp &ret, int slot) {
   const auto *value = ret.getIn(slot);
   if (!value->isWritten() || !value->getDef()->isCall() || fd.getFuncProto().isNoReturn()) return false;
