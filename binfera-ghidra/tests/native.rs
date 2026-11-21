@@ -2783,3 +2783,33 @@ fn locked_parameter_names_are_restored_after_printing() -> Result<(), Box<dyn st
     }
     Ok(())
 }
+
+#[test]
+fn a_call_through_a_code_pointer_slot_is_a_direct_call() -> Result<(), Box<dyn std::error::Error>> {
+    // push 7; call dword ptr ds:[0x2000]; add esp,4; ret -- and the callee, `return *(&arg)`.
+    let caller = [0x6a, 7, 0xff, 0x15, 0, 0x20, 0, 0, 0x83, 0xc4, 4, 0xc3];
+    let callee = [0x8b, 0x44, 0x24, 4, 0xc3];
+    let mut session = Session::new(Language::X86Windows32)?;
+    session.add_section(0x1000, &caller, true, true)?;
+    session.add_section(0x1100, &callee, true, true)?;
+    session.add_section(0x2000, &[0; 4], false, true)?;
+    session.add_function(0x1000, "caller", false)?;
+    session.add_function(0x1100, "callee", false)?;
+    let before = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+    assert!(before.text.contains("(*"), "{}", before.text);
+    // A function the session does not know is refused and changes nothing.
+    assert!(!session.add_code_pointer(0x2000, 0x1200, "PTR_nothing")?);
+    assert_eq!(
+        before.text,
+        session.decompile(0x1000, 5000, 1000, 1_000_000)?.text
+    );
+    assert!(session.add_code_pointer(0x2000, 0x1100, "PTR_callee")?);
+    let after = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
+    assert!(after.text.contains("callee("), "{}", after.text);
+    assert!(!after.text.contains("(*"), "{}", after.text);
+    assert_eq!(
+        after.text,
+        session.decompile(0x1000, 5000, 1000, 1_000_000)?.text
+    );
+    Ok(())
+}

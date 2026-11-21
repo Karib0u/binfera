@@ -7,6 +7,7 @@ import { useNotes } from "../names";
 import Asm, { type AsmHandle } from "../Asm";
 import { cachedFunctionArrows } from "../BranchArrows";
 import { applyNames, Code, importKey } from "../highlight";
+import { resolvedSlots } from "../resolved";
 import MoreMenu, { type MenuItem } from "../MoreMenu";
 import { panesOf, VIEW_NAMES, type CodeView, type Layout } from "../workspace/location";
 import { revealIn, Splitter, useMedia, useStored } from "../workspace/panels";
@@ -124,7 +125,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const exportOf = (ad: number) => notes.exportOf(ad);
   const f = a.functions.get(address);
   const argNotes = useMemo(() => instructionNotes(f, a.arch), [f, a.arch]);
-  const importNames = useMemo(() => new Set((a.image?.imports ?? []).flatMap((i) => [importKey(i), i.name])), [a.image]);
+  const importNames = useMemo(() => new Set([...(a.image?.imports ?? []), ...resolvedSlots(a.resolved)].flatMap((i) => [importKey(i), i.name])), [a.image, a.resolved]);
   const vocabulary = useMemo(() => codeVocabulary(f?.frame, (name) => importNames.has(name), f?.text), [f?.frame, f?.text, importNames]);
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(!!mobile);

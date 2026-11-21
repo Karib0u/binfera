@@ -135,6 +135,8 @@ export interface Analysis {
   order: number[];
   functions: Map<number, DecompiledFunction>;
   names: Map<number, string>;
+  /** Globals the program fills with `GetProcAddress` and a literal name, by address: the API each holds. Shown like imports. */
+  resolved?: Map<number, string>;
   /** Retry one browser function with longer limits, retaining its listing and references. */
   retryFunction?: (address: number) => Promise<void>;
   capa: CapaResult | null;

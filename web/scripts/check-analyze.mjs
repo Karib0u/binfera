@@ -74,6 +74,25 @@ assert.equal(result.functions.size, 2);
 assert.equal(result.functions.get(30).name, "extra");
 console.log("Function membership and interleaved worker starts: passed");
 
+// Globals filled by GetProcAddress with a literal name arrive on the start record, once per shard,
+// and read like import slots with no library.
+const { resolvedSlots, slotSource } = await import(moduleUrl(stripTypes(await readFile(new URL("../src/resolved.ts", import.meta.url), "utf8"))));
+const resolvedUpdates = [];
+const resolvedRun = analyze(new File([new Uint8Array(16)], "resolved"), a => resolvedUpdates.push(a), new AbortController().signal);
+await setImmediate();
+const resolvedFirst = workers.length - 2;
+workers[resolvedFirst].emit({ type: "start", functions: [10], resolved: { "4259968": "ReadFile", "4259972": "WriteFile" } });
+workers[resolvedFirst + 1].emit({ type: "start", functions: [10], resolved: { "4259968": "ReadFile", "4259972": "WriteFile" } });
+for (const worker of workers.slice(resolvedFirst)) worker.resolve();
+await resolvedRun;
+const resolvedResult = resolvedUpdates.at(-1);
+assert.deepEqual([...resolvedResult.resolved], [[4259968, "ReadFile"], [4259972, "WriteFile"]]);
+assert.deepEqual(resolvedSlots(resolvedResult.resolved), [{ dll: "", name: "ReadFile", va: 4259968 }, { dll: "", name: "WriteFile", va: 4259972 }]);
+assert.deepEqual(resolvedSlots(undefined), []);
+assert.equal(slotSource({ dll: "" }), "resolved at run time");
+assert.equal(slotSource({ dll: "KERNEL32.dll" }), "KERNEL32.dll");
+console.log("Resolved API slots reach the analysis and read like imports: passed");
+
 // Cancelling while a throttled update is pending must not reopen the previous analysis.
 const cancelledUpdates = [];
 const controller = new AbortController();

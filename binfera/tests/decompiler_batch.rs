@@ -559,3 +559,39 @@ fn batch_names_call_arguments_and_their_registers() -> anyhow::Result<()> {
     assert!(seen, "no call names its uExitCode argument");
     Ok(())
 }
+
+/// APIs the program loads with `GetProcAddress` and a literal name are reported once on the start
+/// record, so a viewer can show their slots like imports.
+#[test]
+fn batch_start_reports_the_apis_resolved_with_getprocaddress() -> anyhow::Result<()> {
+    let sample = include_bytes!("../../tests/testfiles/dc4dc746d8a14060fb5fc7edd4ef5282.exe_");
+    let mut resolved = None;
+    let mut text = String::new();
+    decompile_all(sample, &BatchOptions::default(), |event| {
+        match event {
+            BatchEvent::Start {
+                resolved: found, ..
+            } => resolved = Some(found),
+            BatchEvent::Function(function) => text.push_str(function.text.as_deref().unwrap_or("")),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    let resolved = resolved.ok_or_else(|| anyhow::anyhow!("no start record"))?;
+    assert_eq!(resolved.len(), 9, "{resolved:?}");
+    assert_eq!(
+        resolved.get(&0x405430).map(String::as_str),
+        Some("WFSStartUp")
+    );
+    assert_eq!(resolved.get(&0x405434).map(String::as_str), Some("WFSOpen"));
+    let names: BTreeSet<&str> = resolved.values().map(String::as_str).collect();
+    assert!(
+        names.contains("WFSStartUp") && names.contains("WFSGetInfo"),
+        "{names:?}"
+    );
+    // The C text calls each of them by name.
+    for name in names {
+        assert!(text.contains(&format!("{name}(")), "{name}");
+    }
+    Ok(())
+}

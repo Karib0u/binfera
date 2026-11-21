@@ -1,0 +1,54 @@
+{
+ "about": "Per-sample decompiler quality metrics of scripts/bench/quality.py; regenerate with --write-baseline.",
+ "files": {
+  "2f43138aa75fb12ac482b486cbc98569.dll_": {
+   "errors": 0,
+   "indirect_calls": 8,
+   "numeric_api_args": 1,
+   "unknown_callee_calls": 20,
+   "untyped_imports": 0
+  },
+  "59a6c5036241a2f604e755bf523eb084.exe_": {
+   "errors": 0,
+   "indirect_calls": 9,
+   "numeric_api_args": 0,
+   "unknown_callee_calls": 33,
+   "untyped_imports": 0
+  },
+  "7d333c9b11b06ef0982b61bfc062631bb6cf9d12d0d4f2cf1b807a25ddf62fbc.exe_": {
+   "errors": 0,
+   "indirect_calls": 9,
+   "numeric_api_args": 0,
+   "unknown_callee_calls": 50,
+   "untyped_imports": 3
+  },
+  "883bf161937f8dc6e766b07000110254.exe_": {
+   "errors": 0,
+   "indirect_calls": 66,
+   "numeric_api_args": 1,
+   "unknown_callee_calls": 126,
+   "untyped_imports": 0
+  },
+  "Practical Malware Analysis Lab 12-01.exe_": {
+   "errors": 0,
+   "indirect_calls": 41,
+   "numeric_api_args": 0,
+   "unknown_callee_calls": 47,
+   "untyped_imports": 0
+  },
+  "b2ad4409323147b63e370745e5209996.exe_": {
+   "errors": 0,
+   "indirect_calls": 13,
+   "numeric_api_args": 0,
+   "unknown_callee_calls": 131,
+   "untyped_imports": 2
+  },
+  "dc4dc746d8a14060fb5fc7edd4ef5282.exe_": {
+   "errors": 0,
+   "indirect_calls": 2,
+   "numeric_api_args": 0,
+   "unknown_callee_calls": 25,
+   "untyped_imports": 0
+  }
+ }
+}

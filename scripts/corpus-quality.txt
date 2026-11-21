@@ -1,0 +1,16 @@
+# binfera decompiler quality subset -- the per-push check of scripts/bench/quality.py.
+#
+# Small PE files from tests/testfiles, x86 and x64, chosen for what they exercise: APIs resolved
+# with GetProcAddress, calls the decompiler cannot name, imports the packs do not type, and
+# constants passed to enum parameters. Decompiling all of them takes about 30 seconds on a CI
+# runner. After a change that moves the counts, regenerate the baseline:
+#
+#   python3 scripts/bench/quality.py --head-bin target/release/binfera \
+#       --samples scripts/corpus-quality.txt --write-baseline scripts/bench/quality-baseline.json
+dc4dc746d8a14060fb5fc7edd4ef5282.exe_
+2f43138aa75fb12ac482b486cbc98569.dll_
+Practical Malware Analysis Lab 12-01.exe_
+b2ad4409323147b63e370745e5209996.exe_
+59a6c5036241a2f604e755bf523eb084.exe_
+883bf161937f8dc6e766b07000110254.exe_
+7d333c9b11b06ef0982b61bfc062631bb6cf9d12d0d4f2cf1b807a25ddf62fbc.exe_

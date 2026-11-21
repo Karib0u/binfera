@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { ImageInfo } from "../engine/image";
 import type { Analysis, DecompiledFunction } from "../types";
 import { frameHeader, MAX_FRAME_LINES } from "../annotations";
+import { resolvedSlots } from "../resolved";
 import { packRows, type BuildRequest, type DataItem, type ListingIndex, type ListingModel } from "./model";
 
 /** The data a function names: its typed symbols, and a label at every other address it refers to. */
@@ -17,7 +18,7 @@ function dataItems(f: Pick<DecompiledFunction, "globals" | "data_refs">): DataIt
   return items;
 }
 
-type Input = Pick<Analysis, "functions" | "strings" | "settled">;
+type Input = Pick<Analysis, "functions" | "strings" | "settled" | "resolved">;
 type Snapshot = ListingModel | "failed" | null;
 /** How long the worker outlives the last Listing pane. */
 const IDLE_MS = 60_000;
@@ -139,7 +140,7 @@ class ListingStore {
       }
       if (initial) {
         const { regions, sections, imports, details, ptrSize } = this.image;
-        request.image = { regions, sections, imports, structures: details?.structures, ptrSize };
+        request.image = { regions, sections, imports: [...imports, ...resolvedSlots(input.resolved)], structures: details?.structures, ptrSize };
       } else {
         for (const fn of removed) request.changes.push([fn, null]);
       }
@@ -163,7 +164,7 @@ const stores = new WeakMap<ImageInfo, ListingStore>();
 const noSnapshot = () => null;
 const noSubscribe = () => () => {};
 
-export function useListing({ image, functions, strings, settled }: Analysis): Snapshot {
+export function useListing({ image, functions, strings, settled, resolved }: Analysis): Snapshot {
   let store = image ? stores.get(image) : undefined;
   if (image && !store) {
     store = new ListingStore(image);
@@ -171,7 +172,7 @@ export function useListing({ image, functions, strings, settled }: Analysis): Sn
   }
   const snapshot = useSyncExternalStore(store?.subscribe ?? noSubscribe, store?.getSnapshot ?? noSnapshot, noSnapshot);
   useEffect(() => {
-    store?.update({ functions, strings, settled });
-  }, [store, functions, strings, settled]);
+    store?.update({ functions, strings, settled, resolved });
+  }, [store, functions, strings, settled, resolved]);
   return snapshot;
 }

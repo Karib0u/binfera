@@ -4,6 +4,7 @@ import { revealIn } from "./workspace/panels";
 import { ArrowPaths, gutterWidth, type Arrow } from "./BranchArrows";
 import { ADDR_IN_ASM, asmAddress, operandNote, rowFlow, type Arch } from "./graph";
 import { importKey, tokenized, tokKey } from "./highlight";
+import { slotSource } from "./resolved";
 import { useNotes } from "./names";
 
 const ROW = 20, VIRTUAL_THRESHOLD = 1500;
@@ -69,7 +70,7 @@ export default function Asm({ rows, self, resolve, onGoto, strAt, textAt, label,
       parts.push(target !== undefined && target !== self
         ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={tokKey(label(target))} data-fn={target} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGoto(target); }}>{label(target)}</a>
         : slot?.(v)
-          ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={importKey(slot(v)!)} title={slot(v)!.dll + " · " + lit} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport?.(slot(v)!.name); }}>{slot(v)!.name}</a>
+          ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={importKey(slot(v)!)} title={slotSource(slot(v)!) + " · " + lit} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport?.(slot(v)!.name); }}>{slot(v)!.name}</a>
         : v === branch
           ? <a key={k++} href={"#" + lit} className="xref tk-n" data-tok={tokKey(lit)} title="Go to this instruction" onClick={(e) => {
               e.preventDefault(); e.stopPropagation();

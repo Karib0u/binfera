@@ -211,7 +211,7 @@ export default function Listing({ a, cursor, marked, tick, onCursor, label, reso
           <code className="ia">{hex(at.va, 8)}</code>
           <code className="l-op">{a.image!.ptrSize === 8 ? "dq" : "dd"}</code>
           <a className="xref tk-f" href="#imp" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport(at.name); }}>{at.name}</a>
-          <small>; import {at.dll}</small>
+          <small>; {at.dll ? "import " + at.dll : "resolved with GetProcAddress"}</small>
           {xrefCount(at.va) > 0 && <button className="hexlink" onClick={(e) => { e.stopPropagation(); onXrefs(at.va); }}>{xrefCount(at.va)} xrefs</button>}
         </div>
       );
