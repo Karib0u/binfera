@@ -20,6 +20,9 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 # The Windows build has no system zlib to find, so it builds one (the decompiler's .sla compression
 # and the SLEIGH compiler both need it). Elsewhere the system zlib is used, as before.
+[dev-dependencies]
+flate2 = "1"
+
 [target.'cfg(windows)'.dependencies]
 libz-sys = { version = "1", default-features = false, features = ["static"], optional = true }
 

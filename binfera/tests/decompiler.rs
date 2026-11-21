@@ -33,6 +33,124 @@ fn corpus_privilege_function_preserves_return_and_stack_arguments() -> anyhow::R
     Ok(())
 }
 
+/// The text without whitespace, so an expectation does not depend on where the printer wraps a line.
+fn squeeze(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// WinINet and Toolhelp are in no Ghidra archive; the Win32 metadata pack
+/// (scripts/decompiler_types/pack_win32_metadata.py) types their calls with named parameters.
+#[test]
+fn win32_metadata_types_wininet_and_toolhelp_calls() -> anyhow::Result<()> {
+    let sample = include_bytes!(
+        "../../tests/testfiles/98c37c3c23bbfb362dac7754c6ba48e75cf24d73bc963a4cdfca557b9e016909.exe_"
+    );
+    let mut session = DecompilerSession::from_pe(sample)?;
+    // A WinINet session: handles, the server port and the request flags carry their parameter names,
+    // and the C strings are typed as such ("GET" is the verb argument).
+    let output = session.decompile_function(0x4010c0)?;
+    for expected in [
+        "BOOL __fastcall FUN_004010c0(int param_1)",
+        "void *hInternet;",
+        "ushort nServerPort;",
+        "uint dwFlags;",
+        "hInternet = wininet_InternetOpenA(",
+        "wininet_InternetSetOptionA(hInternet,5,lpBuffer,4);",
+        "wininet_InternetConnectA(",
+        "wininet_HttpOpenRequestA(",
+        "\"GET\"",
+        "BVar3 = wininet_HttpAddRequestHeadersA(",
+    ] {
+        assert!(
+            squeeze(&output.text).contains(&squeeze(expected)),
+            "{expected}\n{}",
+            output.text
+        );
+    }
+    assert!(!output.text.contains("unsigned char *"), "{}", output.text);
+    assert!(!output.warnings.iter().any(|w| w.contains("Unknown callee")));
+    // The reader's parameters are named from the prototype too.
+    let output = session.decompile_function(0x40138f)?;
+    assert!(
+        squeeze(&output.text).contains(&squeeze(
+            "FUN_0040138f(int param_1,void *lpBuffer,uint dwNumberOfBytesToRead,uint *lpdwNumberOfBytesRead)"
+        )),
+        "{}",
+        output.text
+    );
+    assert!(
+        squeeze(&output.text).contains("wininet_InternetReadFile("),
+        "{}",
+        output.text
+    );
+
+    // Toolhelp: the snapshot handle, and the process record is the structure, not a byte buffer.
+    let output = session.decompile_function(0x401d84)?;
+    for expected in [
+        "hSnapshot = kernel32_CreateToolhelp32Snapshot(2,0);",
+        "PROCESSENTRY32 _Dst_00;",
+        "_Dst_00.dwSize = 0x128;",
+        "kernel32_Process32First(hSnapshot,&_Dst_00)",
+        "_Dst_00.szExeFile,_Dst_00.th32ProcessID",
+        "kernel32_Process32Next(hSnapshot,&_Dst_00)",
+    ] {
+        assert!(
+            squeeze(&output.text).contains(&squeeze(expected)),
+            "{expected}\n{}",
+            output.text
+        );
+    }
+    assert_eq!(session.decompile_function(0x401d84)?.text, output.text);
+    Ok(())
+}
+
+/// `ntdll` exports are in no Ghidra archive; the phnt prototypes (scripts/decompiler_types/README.md,
+/// "Native API") type the call, and its information class prints as the enumeration's constant.
+#[test]
+fn phnt_types_a_native_api_call() -> anyhow::Result<()> {
+    let sample = include_bytes!(
+        "../../tests/testfiles/7d333c9b11b06ef0982b61bfc062631bb6cf9d12d0d4f2cf1b807a25ddf62fbc.exe_"
+    );
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x140001130)?;
+    let text = squeeze(&output.text);
+    for expected in [
+        "ULONGReturnLength",
+        "iVar1=ntdll_NtQuerySystemInformation(SystemHandleInformation,(PVOID)0x0,0,ReturnLength);",
+        "ntdll_NtQuerySystemInformation(SystemHandleInformation,_Memory,ReturnLength[0],ReturnLength);",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{}", output.text);
+    }
+    assert!(!output.warnings.iter().any(|w| w.contains("Unknown callee")));
+    assert_eq!(session.decompile_function(0x140001130)?.text, output.text);
+    Ok(())
+}
+
+/// `msvcrt.dll` exports `operator new` and `operator delete` under their decorated names, which no
+/// pack holds. The decoration (`??2@YAPAXI@Z`: cdecl, `void *` result, one `unsigned int`) gives the
+/// prototype, so the result needs no cast and the argument is a pointer.
+#[test]
+fn decorated_cpp_imports_of_a_system_dll_are_typed_from_their_names() -> anyhow::Result<()> {
+    let sample = include_bytes!(
+        "../../tests/testfiles/98c37c3c23bbfb362dac7754c6ba48e75cf24d73bc963a4cdfca557b9e016909.exe_"
+    );
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x401199)?;
+    let text = squeeze(&output.text);
+    for expected in [
+        "_Dest=msvcrt___2_YAPAXI_Z(sVar2+1);",
+        "msvcrt___3_YAXPAX_Z(*(void**)(param_1+0x18));",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{}", output.text);
+    }
+    assert!(
+        !text.contains("(char*)msvcrt___2_YAPAXI_Z"),
+        "{}",
+        output.text
+    );
+    Ok(())
+}
+
 #[test]
 fn explicitly_selected_unrecovered_wrapper_keeps_its_boundary() -> anyhow::Result<()> {
     let sample = include_bytes!("../../tests/testfiles/03b236b23b1ec37c663527c1f53af3fe.dll_");

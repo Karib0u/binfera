@@ -1,0 +1,10 @@
+[package]
+name = "win32-metadata-dump"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+windows-metadata = "=0.100.0"
+
+[workspace]

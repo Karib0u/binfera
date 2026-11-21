@@ -1419,6 +1419,7 @@ impl DecompilerSession {
             )));
         }
         let init = |e: binfera_ghidra::Error| DecompileError::Initialization(e.to_string());
+        crate::bundled::register_windows_pack(image.architecture.pointer_width() == 8);
         let mut native = binfera_ghidra::Session::new(convention.language()).map_err(init)?;
         if image.architecture == Architecture::Arm {
             let mut entries = Vec::new();
@@ -1661,13 +1662,21 @@ impl DecompilerSession {
                         || import_symbol(name).is_some_and(rust::noreturn),
                 )
                 .map_err(init)?;
-            if let Some(function) = import_function(convention, name) {
-                // Unknown names are fine: the call keeps its warning.
-                native.apply_prototype(*address, function).map_err(init)?;
-            } else if let Some(prototype) = import_symbol(name)
-                .and_then(demangle::demangle)
-                .and_then(|demangled| demangled.prototype)
-            {
+            // Unknown names are fine: the call keeps its warning. A listed system DLL's
+            // decorated C++ name (`msvcrt.??2@YAPAXI@Z`, `operator new`) is in no pack, and its
+            // decoration then gives the prototype, as for an import of any other DLL.
+            let typed = match import_function(convention, name) {
+                Some(function) => native.apply_prototype(*address, function).map_err(init)?,
+                None => false,
+            };
+            let demangled = if typed {
+                None
+            } else {
+                import_symbol(name)
+                    .and_then(demangle::demangle)
+                    .and_then(|demangled| demangled.prototype)
+            };
+            if let Some(prototype) = demangled {
                 // A C++ import's decoration gives its prototype, `this` first for a method.
                 apply_demangled(&mut native, *address, &prototype);
             }
@@ -2357,9 +2366,12 @@ impl DecompilerSession {
         if self.caller_return_uses.contains_key(&address)
             && !self.explicit_signatures.contains(&address)
             && output.text.split('{').next().is_some_and(|header| {
-                header
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("void "))
+                header.lines().any(|line| {
+                    // `void *f()` returns a pointer; only a bare `void` return type is a gap.
+                    line.trim_start()
+                        .strip_prefix("void ")
+                        .is_some_and(|rest| !rest.trim_start().starts_with('*'))
+                })
             })
         {
             warnings.push("A caller reads the return register, but this function was decompiled as void; its return value may be missing.".into());
@@ -3508,6 +3520,66 @@ fn system_import_function(name: &str) -> Option<&str> {
         "powrprof",
         "dnsapi",
         "ws2help",
+        // The Win32 metadata pack (scripts/decompiler_types/pack_win32_metadata.py) types the
+        // exports of these system DLLs.
+        "activeds",
+        "avicap32",
+        "avifil32",
+        "avrt",
+        "cabinet",
+        "cldapi",
+        "clfsw32",
+        "combase",
+        "cryptbase",
+        "d3d9",
+        "dbgeng",
+        "dinput8",
+        "dwmapi",
+        "fltlib",
+        "fwpuclnt",
+        "gdiplus",
+        "hid",
+        "httpapi",
+        "imagehlp",
+        "ktmw32",
+        "mscoree",
+        "msacm32",
+        "msdelta",
+        "msimg32",
+        "msvfw32",
+        "mswsock",
+        "normaliz",
+        "oleacc",
+        "opengl32",
+        "rasapi32",
+        "rstrtmgr",
+        "shcore",
+        "shfolder",
+        "snmpapi",
+        "uxtheme",
+        "virtdisk",
+        "wer",
+        "wevtapi",
+        "windowscodecs",
+        "winscard",
+        "winspool",
+        "wlanapi",
+        "wldap32",
+        // C runtime DLLs: the packs hold the C library and the startup and helper exports.
+        "crtdll",
+        "msvcr70",
+        "msvcr71",
+        "msvcr80",
+        "msvcr90",
+        "msvcr100",
+        "msvcr110",
+        "msvcr120",
+        "msvcr100d",
+        "msvcr110d",
+        "msvcr120d",
+        "ucrtbased",
+        "vcruntime140",
+        "vcruntime140d",
     ];
     let (module, function) = name.rsplit_once('.')?;
     let module = module.to_ascii_lowercase();

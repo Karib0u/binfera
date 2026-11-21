@@ -349,6 +349,7 @@ mod ffi {
         ) -> Result<()>;
         fn new_session(language: Language) -> Result<UniquePtr<Session>>;
         fn prototype_pack_bytes(language: Language) -> &'static [u8];
+        fn set_windows_pack(wide: bool, bytes: &[u8], present: bool);
         fn add_section(
             self: Pin<&mut Session>,
             address: u64,
@@ -400,6 +401,21 @@ pub use ffi::{
 /// Format: `scripts/decompiler_types/pack_prototypes.py`.
 pub fn prototype_pack(language: Language) -> &'static [u8] {
     ffi::prototype_pack_bytes(language)
+}
+
+/// Supplies the Windows API prototype archive for 64-bit (`wide`) or 32-bit x86 sessions.
+///
+/// Native builds embed both archives, so this only overrides them (tests use it); the
+/// WebAssembly build embeds none and the host calls this before the first session for that
+/// architecture. An empty `bytes` means the archive is unavailable: Windows imports then stay
+/// untyped, exactly as with the empty archives of the other platforms.
+pub fn set_windows_pack(wide: bool, bytes: &[u8]) {
+    ffi::set_windows_pack(wide, bytes, true);
+}
+
+/// Forgets a supplied archive: native builds fall back to the embedded one, WebAssembly to none.
+pub fn clear_windows_pack(wide: bool) {
+    ffi::set_windows_pack(wide, &[], false);
 }
 
 // CXX shared structs cannot derive serde traits inside the bridge.

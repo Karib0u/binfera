@@ -36,3 +36,31 @@ pub fn read(name: &str) -> Result<std::borrow::Cow<'static, [u8]>, String> {
         .map(std::borrow::Cow::Owned)
         .map_err(|e| format!("bundled data file {} is not mounted: {e}", path.display()))
 }
+
+/// Hands the Windows API prototype archive for `wide` (64-bit) or 32-bit images to the native
+/// bridge. Native builds embed both archives and this does nothing; the Emscripten build reads
+/// the page-mounted `/sigs/winapi{64,32}.pack` once per process and architecture. A pack that is
+/// not mounted is reported on stderr once and registered as empty: Windows imports then stay
+/// untyped instead of failing the decompilation.
+#[cfg(all(feature = "decompiler", target_os = "emscripten"))]
+pub(crate) fn register_windows_pack(wide: bool) {
+    use std::sync::OnceLock;
+    static LOADED: [OnceLock<()>; 2] = [OnceLock::new(), OnceLock::new()];
+    LOADED[usize::from(wide)].get_or_init(|| {
+        let bytes = if wide {
+            bundled!("winapi64.pack")
+        } else {
+            bundled!("winapi32.pack")
+        };
+        match bytes {
+            Ok(bytes) => binfera_ghidra::set_windows_pack(wide, &bytes),
+            Err(error) => {
+                eprintln!("binfera: no Windows prototypes, imports stay untyped: {error}");
+                binfera_ghidra::set_windows_pack(wide, &[]);
+            }
+        }
+    });
+}
+
+#[cfg(all(feature = "decompiler", not(target_os = "emscripten")))]
+pub(crate) fn register_windows_pack(_wide: bool) {}

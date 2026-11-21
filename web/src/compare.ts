@@ -1,7 +1,7 @@
 // Compares two binaries in the browser. Each side's facts come from its own worker, so no worker
 // holds both samples; a further short-lived worker compares the facts. The engine decides what
 // matches and what changed, and this file only moves its output around.
-import { loadAssets, loadEngine } from "./engine/assets";
+import { loadAssets, loadEngine, winApiFor } from "./engine/assets";
 import { EngineError, runEngine, TOO_LARGE } from "./engine/run";
 
 export type Verdict = "identical" | "equivalent" | "changed";
@@ -170,7 +170,7 @@ export async function pairDiff(c: Comparison, a: number, b: number, module: WebA
 export async function decompileOne(c: Comparison, side: "a" | "b", address: number, signal: AbortSignal): Promise<string> {
   const index = side === "a" ? 0 : 1;
   const { arch, format } = c.document.inputs[index];
-  const assets = await loadAssets(arch === "x64" || arch === "x86" ? arch : null, () => {}, format === "pe");
+  const assets = await loadAssets(arch === "x64" || arch === "x86" ? arch : null, () => {}, format === "pe", winApiFor(arch, format));
   const sample = await c.sides[index].file.arrayBuffer();
   let out = "";
   await runEngine({ kind: "decompileOne", module: assets.module, sample, data: assets.data("decompile"), address }, (l) => { out += l + "\n"; }, signal);

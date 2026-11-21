@@ -1,6 +1,6 @@
 import type { Arch } from "./graph";
 import type { Analysis, DecompiledFunction, Packing } from "./types";
-import { loadAssets, loadEngine, loadEngineId, NATIVE } from "./engine/assets";
+import { loadAssets, loadEngine, loadEngineId, NATIVE, winApiFor } from "./engine/assets";
 import { summarizeCapa } from "./engine/capa";
 import { EngineError, runEngine, TOO_LARGE } from "./engine/run";
 import { extractStrings } from "./engine/strings";
@@ -135,7 +135,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     if (!previous?.retry_pending) return;
     let output = "";
     try {
-      const assets = await loadAssets(a.image?.fidArch ?? null, progress, a.image?.format === "pe");
+      const assets = await loadAssets(a.image?.fidArch ?? null, progress, a.image?.format === "pe", winApiFor(a.image?.arch, a.image?.format));
       if (signal.aborted) return;
       await runEngine({ kind: "decompileOne", module: assets.module, sample: bytes.slice(0), data: assets.data("decompile"), address, resourceRetry: true, raw },
         (line) => { output += line + "\n"; }, signal);
@@ -196,7 +196,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
   const info = JSON.parse(metadata) as ImageMetadata;
   applyImage(info);
 
-  const assets = await loadAssets(info.fidArch, progress, info.format === "pe");
+  const assets = await loadAssets(info.fidArch, progress, info.format === "pe", winApiFor(info.arch, info.format));
   if (signal.aborted) return;
 
   // A file too large for the engine's memory limit is refused. The capability worker has the lower
