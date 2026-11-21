@@ -496,6 +496,14 @@ mod native {
                 );
             }
             if name == "coreaction" {
+                // A register loaded from an import slot and called through (`mov esi,[slot]` ...
+                // `call esi`) is a MULTIEQUAL once a loop reloads it, so the CALLIND never sees the
+                // slot itself and keeps no name or prototype. Look through the merge.
+                replace(
+                    &mut code,
+                    "      vn = vn->getDef()->getIn(0);\n    if (vn->isPersist() && vn->isExternalRef()) { // Check for possible external reference",
+                    "      vn = vn->getDef()->getIn(0);\n    vn = binfera_extern_slot(vn);\n    if (vn->isPersist() && vn->isExternalRef()) { // Check for possible external reference",
+                );
                 // A verified tail call or modeled syscall can define the ABI return value.
                 replace(
                     &mut code,

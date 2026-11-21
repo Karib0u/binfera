@@ -54,6 +54,10 @@ and asserts each original hook occurs exactly once before changing it:
 - `coreaction.cc`: extend ABI-aligned input containers in both directions so an
   overlapping later stack input is not cut in half. Preserve a verified tail
   call or resolved syscall result that reaches every normal return unchanged.
+  `ActionDeindirect` looks through COPY and MULTIEQUAL to one import slot
+  (`binfera_extern_slot`), so `mov esi,[slot]` reloaded in a loop and called as
+  `call esi` still resolves to the import (test
+  `register_loaded_from_an_import_slot_resolves_to_the_import`).
 - `jumptable.cc`: stop speculative table enumeration at an interior address in a
   different declared unwind range. Separate entries/cold fragments remain valid;
   truncation retains the engine's incomplete-analysis warning. For a wrapped

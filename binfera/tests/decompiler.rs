@@ -33,6 +33,29 @@ fn corpus_privilege_function_preserves_return_and_stack_arguments() -> anyhow::R
     Ok(())
 }
 
+/// `mov esi,[IAT slot]` before a loop and `call esi` inside it: the register is a merge of reads of
+/// the slot, and the call must still resolve to the import with its prototype.
+#[test]
+fn register_loaded_from_an_import_slot_resolves_to_the_import() -> anyhow::Result<()> {
+    let sample = include_bytes!("../../tests/testfiles/0a0882b8da225406cc838991b5f67d11.exe_");
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x418c40)?;
+    println!("{}\n{:?}", output.text, output.warnings);
+    let text = squeeze(&output.text);
+    assert!(
+        text.contains(&squeeze("hHeap = kernel32_GetProcessHeap();"))
+            && text.contains(&squeeze("kernel32_HeapFree(hHeap,dwFlags,lpszVolumeName);")),
+        "{}",
+        output.text
+    );
+    assert!(
+        !output.text.contains("(*pcVar"),
+        "a call through an import register kept no name: {}",
+        output.text
+    );
+    Ok(())
+}
+
 /// The text without whitespace, so an expectation does not depend on where the printer wraps a line.
 fn squeeze(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
