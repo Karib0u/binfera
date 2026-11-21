@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-20. This page lists planned work and how it will be measured. It also lists what already exists, so that work is not planned twice. Priorities describe relative value, not delivery dates.
+Updated: 2026-11-21. This page lists planned work and how it will be measured. It also lists what already exists, so that work is not planned twice. Priorities describe relative value, not delivery dates.
 
 **Scope.** binfera answers "what does this one executable do?" by reading its code. These belong to the File Analysis Bus project instead: file-format parsing, unpacking, analysis of installer and bytecode scripts, and verdicts.
 
@@ -32,15 +32,19 @@ This must hold for the binaries analysts actually get: stripped, often packed, a
   - Incremental-link thunk tables: every target is recovered, and no stub absorbs a body.
   - x64 frameless leaves in code gaps, with switch cases rejected.
   - Delay-load stubs. x64 language handlers and the C++ `ThrowInfo` destructors and copy constructors.
+  - No x64 start strictly inside another function's unwind row, unless structural evidence names it (#56).
 - **ELF:** `.eh_frame` and `.ARM.exidx` function entries, init and fini arrays.
 - **Mach-O:** `LC_FUNCTION_STARTS`, code signatures, chained fixups.
 - **Detail views:** ELF and Mach-O, plus a hex view whose header fields are colored for PE, ELF and Mach-O.
 - **Language and library support:** Go `pclntab`, DWARF, Delphi VMTs and RTTI, Nim, Itanium and MS demangling, FLIRT and Function ID.
 - **Other recovery:** relocations, vtables, pointer recovery, jump tables, and prologue and unclaimed-gap sweeps.
 - **Typed input to the decompiler:** debug types (structures, pointers, arrays, aliases), locked signatures, typed stack locals and named data symbols, all through the Ghidra bridge.
+- **Windows type packs:** Win32 metadata, the phnt native API and loader structures, and CRT exports (#57). APIs resolved by `GetProcAddress` with a literal name into a global are registered as imports and typed (#59).
+- **Prototype propagation:** a caller inherits API parameter names and types from the inferred prototypes of its callees (#58).
 - **Decompilation:** x86, x86-64, AArch64, ARM32/Thumb and MIPS32.
 - **Other analysis:** capa, function emulation and diffing.
-- **Viewers:** entropy, hex, strings and imports, and a .NET IL listing.
+- **Viewers:** entropy, hex, strings and imports, and a .NET IL listing. An IDA-style listing with typed data items (`dd offset FUN_x`, `dd ?` for uninitialized data) and a frame header per function; argument and stack-variable comments in the assembly; import-stub names (#58).
+- **Measurement:** the recovery benchmark harness, `scripts/bench/recovery.py` (#52), and the type-coverage report, `scripts/decompiler_types/coverage.py` (#57).
 - **Archives:** zip and 7z, with known-password probing.
 - **Integrations:** MCP and the agent.
 
@@ -50,7 +54,7 @@ This must hold for the binaries analysts actually get: stripped, often packed, a
 
 | Item | Work |
 |---|---|
-| Benchmark harness | A script that runs the per-change workflow (see [Methodology](#methodology)) over a corpus manifest and compares two commits. It writes recall, precision, merged and split bodies, and timing as JSON. A small subset runs in CI. Its first truth source is tier B evidence extracted from the existing corpus, so it is useful before the symbol corpus exists. |
+| Benchmark harness | **First version done (#52).** Remaining: a small subset in CI. A script that runs the per-change workflow (see [Methodology](#methodology)) over a corpus manifest and compares two commits. It writes recall, precision, merged and split bodies, and timing as JSON. A small subset runs in CI. Its first truth source is tier B evidence extracted from the existing corpus, so it is useful before the symbol corpus exists. |
 | Evidence census | For each evidence source (`.pdata`, Guard CF, thunk tables, FH4, C scope tables, `.eh_frame`, Go `pclntab`, and so on), report how many corpus binaries contain it and how many starts it alone contributes. This orders the recovery items below. |
 | Baseline | Publish the first numbers per format, architecture and compiler in [benchmarks.md](benchmarks.md), and set the targets in [Definition of "best"](#definition-of-best) from them. |
 | Symbol corpus | Fetch about 200 Windows binaries with PDBs (x86, x64, ARM64) and about 200 Linux binaries with debuginfo. Commit the extracted truth (start, size, name) as manifests, not the binaries. |
@@ -58,11 +62,11 @@ This must hold for the binaries analysts actually get: stripped, often packed, a
 
 ### Windows function recovery
 
-Order these by the evidence census. Guard CF and the C++ handler tables are common in Microsoft binaries and may be rare in malware. The first census (376 PE and ELF files in `tests/testfiles`) found 100% tier B recall on PE x64 and about 1,300 starts inside x64 `.pdata` extents, so false starts come first.
+Order these by the evidence census. Guard CF and the C++ handler tables are common in Microsoft binaries and may be rare in malware. The first census (376 PE and ELF files in `tests/testfiles`) found 100% tier B recall on PE x64 and about 1,300 starts inside x64 `.pdata` extents, so false starts came first; #56 removed the 1,090 on PE x64 with tier B recall unchanged.
 
 | Item | Work | Proof |
 |---|---|---|
-| Interior false starts | Reject starts strictly inside a `.pdata` extent unless they are a funclet or a chained entry. The first census found 521 from `Vtable`, 372 from `MsvcCookieBlock`, 309 from `PointerTarget` and 94 from `Emulated`, some at odd addresses. | `.pdata` names the extent of every non-leaf function. |
+| Interior false starts | **Done for PE x64 (#56).** Remaining: the ELF x64 interior starts the census found (about 309 from `PointerTarget` and 58 from `CallTarget`), bounded by `.eh_frame` FDEs instead of `.pdata`. | `.pdata` or an FDE names the extent of every non-leaf function. |
 | PLT sections | Treat `.plt`, `.plt.got` and `.plt.sec` FDEs as stub ranges, not one function each, in both recovery and scoring. | The section and its relocations. |
 | Guard CF table | Parse `GuardCFFunctionTable` from the load config, including the per-entry metadata stride, and seed each entry as authoritative. Today only the `GUARD_CF` flag is displayed. | The linker emits the table. |
 | x86 gap recovery | x86 has no `.pdata`, so validate candidates in code gaps with other evidence: a relocation or Guard CF entry naming them; an MSVC, gcc or Delphi prologue with a matching epilogue; a `ret imm` that matches the stack arguments; padding before the start. | At least one structural witness and a coherent body. |
@@ -85,23 +89,23 @@ The goal assumes binaries that are often packed. Until these exist, recovery wor
 
 The decompiler can only print what it knows about the APIs and structures a sample uses. The Windows packs come from Ghidra's Visual Studio 2012 archives plus a driver-header supplement, and keep only types that some prototype refers to. That leaves out structures reached through registers, such as `_PEB` through `gs:[0x60]`.
 
-Measured over the 365 PE files in `tests/testfiles`:
+Measured over the 365 PE files in `tests/testfiles` before #57:
 
-- 16.3% of named imports (6,948 of 42,677) have no prototype.
+- 16.3% of named imports (6,948 of 42,677) had no prototype. After #57, `coverage.py` reports 8.5% (3,628) over 347 PEs; the rest are class-typed decorated names (mfc42, msvcp*, Qt), data exports, third-party DLLs, ordinal-only imports and about 95 `ntdll` leftovers.
 - The untyped APIs found in the most files are Toolhelp (`CreateToolhelp32Snapshot` in 84 files, `Process32*` in 37 to 40), WinINet (`InternetReadFile` in 45, `InternetOpenA` in 34, `HttpSendRequestA` in 21), WinHTTP, and undocumented `ntdll` exports (`NtQuerySystemInformation` in 19, `Ldr*`, `NtCreateThreadEx`).
-- 280 files import `GetProcAddress` and 72 import `CoCreateInstance`. The decompiler models neither: a resolved API prints as `(*DAT_x)(...)`, and a COM call prints as a vtable offset.
+- 280 files import `GetProcAddress` and 72 import `CoCreateInstance`. Since #59, an API resolved with a literal name into a global prints as a typed call; one kept in a local still prints as `(*pFVar5)(...)`, and a COM call prints as a vtable offset.
 
 #### Data
 
-All data is generated by development scripts and checked in as packs, like today's prototype packs. Nothing is downloaded at build time or at analysis time. Each pack is a type library in the format of semantic-editing step 2, so analysts can apply its types by hand and later passes can use them. Packs load lazily, so the browser downloads only the packs a sample needs.
+All data is generated by development scripts and checked in as packs, like today's prototype packs. Nothing is downloaded at build time or at analysis time. Each pack is a type library in the format of semantic-editing step 2, so analysts can apply its types by hand and later passes can use them. Packs load lazily, so the browser downloads only the packs a sample needs. Not done yet: since #57 the Windows packs are embedded in the wasm, which grew the web download by about 5 MB.
 
 | Pack | Content | Source |
 |---|---|---|
-| Win32 | Every documented Win32 function, structure, enum and constant, including WinINet, WinHTTP, Toolhelp, BCrypt, netapi and the APIs added after Windows 8. Parameters carry the enum or flag set they take. | Microsoft's Win32 metadata (`Windows.Win32.winmd`), read with the `windows-metadata` crate. No Java and no C parsing are needed. |
+| Win32 (**done, #57**) | Every documented Win32 function, structure, enum and constant, including WinINet, WinHTTP, Toolhelp, BCrypt, netapi and the APIs added after Windows 8. Parameters carry the enum or flag set they take. | Microsoft's Win32 metadata (`Windows.Win32.winmd`), read with the `windows-metadata` crate. No Java and no C parsing are needed. |
 | COM | Interface vtable layouts with method names and signatures, keyed by IID; class names keyed by CLSID. | The same Win32 metadata. The existing `binfera/data/com_interfaces.json` (used only by capa today) supplies extra GUID names. |
-| Native API | `Nt*`, `Zw*`, `Rtl*` and `Ldr*` prototypes, and the loader structures `_PEB`, `_TEB`, `_PEB_LDR_DATA` and `_LDR_DATA_TABLE_ENTRY`. | The phnt headers from System Informer (MIT), parsed by the same C-declaration parser as step 2. The WDK metadata (`Windows.Wdk.winmd`) is the fallback. |
-| PE structures | `IMAGE_DOS_HEADER`, `IMAGE_NT_HEADERS32/64`, `IMAGE_EXPORT_DIRECTORY`, `IMAGE_IMPORT_DESCRIPTOR` and the other headers that manual loaders parse. | The Win32 metadata. |
-| C runtime | MSVCRT, UCRT (`api-ms-win-crt-*`) and VCRUNTIME startup and helper exports. | The Win32 metadata and the MinGW-w64 headers already used for the driver supplement. |
+| Native API (**done, #57**) | `Nt*`, `Zw*`, `Rtl*` and `Ldr*` prototypes, and the loader structures `_PEB`, `_TEB`, `_PEB_LDR_DATA` and `_LDR_DATA_TABLE_ENTRY`. | The phnt headers from System Informer (MIT), parsed by the same C-declaration parser as step 2. The WDK metadata (`Windows.Wdk.winmd`) is the fallback. |
+| PE structures (**done, #57**) | `IMAGE_DOS_HEADER`, `IMAGE_NT_HEADERS32/64`, `IMAGE_EXPORT_DIRECTORY`, `IMAGE_IMPORT_DESCRIPTOR` and the other headers that manual loaders parse. | The Win32 metadata. |
+| C runtime (**done, #57**) | MSVCRT, UCRT (`api-ms-win-crt-*`) and VCRUNTIME startup and helper exports. | The Win32 metadata and the MinGW-w64 headers already used for the driver supplement. |
 | Windows syscalls | System call number to `Nt*` name, for each Windows build. | Extracted from the `ntdll.dll` and `win32u.dll` builds on Microsoft's public symbol server, by decoding their stubs. Not copied from third-party tables, whose license is unclear. |
 | API hashes | Hash value to API name, for the common algorithms (ROR13 additive, DJB2, FNV-1a, CRC32, and the hash variants malware families use). | Computed from the export names of the packs above. OALabs HashDB (Apache-2.0) is a reference for which algorithms to cover. |
 | Static libraries | Function ID packs for OpenSSL, mbedTLS, zlib, libcurl, Boost and the Delphi runtime. | Built at several versions and optimization levels with the compiler matrix. |
@@ -112,9 +116,9 @@ The Win32 metadata repository is MIT, but its notice says the metadata does not 
 
 | Item | Work | Proof |
 |---|---|---|
-| Untyped imports | Look up every import in the packs above. Derive prototypes for MSVC- and Itanium-mangled imports (`msvcp*`, `mfc*`, Qt) from the mangled name, which encodes the parameter and return types. | The import name, or its mangled signature. |
-| Resolved APIs | A `GetProcAddress` (or `LdrGetProcedureAddress`) call whose name argument is a constant string types its result as that API's function pointer. The global or local that receives it is named after the API. Do the same for hash-resolved APIs once the hash and the algorithm are identified. | A constant name argument, or a hash found in the hash pack for exactly one API. |
-| Symbolic constants | Print constant arguments as their enum or flag names: `MEM_COMMIT \| MEM_RESERVE`, `PAGE_EXECUTE_READWRITE`, `CREATE_SUSPENDED`, `HKEY_LOCAL_MACHINE`. | The parameter's enum in the Win32 metadata. A value that does not decompose into the set's flags stays numeric. |
+| Untyped imports | **Pack lookup done (#57).** Remaining: class-typed decorated names, data exports and ordinal-only imports. Look up every import in the packs above. Derive prototypes for MSVC- and Itanium-mangled imports (`msvcp*`, `mfc*`, Qt) from the mangled name, which encodes the parameter and return types. | The import name, or its mangled signature. |
+| Resolved APIs | **Globals with a literal name done (#59):** WannaCry 13 of 13 calls, DarkGate 58. Remaining: results kept in locals and struct fields, `LdrGetProcedureAddress`, hashes, and the resolved names in the Asm and Listing views. A `GetProcAddress` (or `LdrGetProcedureAddress`) call whose name argument is a constant string types its result as that API's function pointer. The global or local that receives it is named after the API. Do the same for hash-resolved APIs once the hash and the algorithm are identified. | A constant name argument, or a hash found in the hash pack for exactly one API. |
+| Symbolic constants | **In progress** (`feat/symbolic-constants`), from the `P:<function>` parameter-to-enum records #57 added to the packs. Print constant arguments as their enum or flag names: `MEM_COMMIT \| MEM_RESERVE`, `PAGE_EXECUTE_READWRITE`, `CREATE_SUSPENDED`, `HKEY_LOCAL_MACHINE`. | The parameter's enum in the Win32 metadata. A value that does not decompose into the set's flags stays numeric. |
 | COM calls | Type the output pointer of `CoCreateInstance`, `QueryInterface` and `CoGetObject` from a constant IID, so vtable calls print as `pService->Connect(...)`. | A constant IID found in the COM pack. |
 | Windows syscalls | Name direct `syscall` and `int 2e` stubs from a constant `eax`. Use the build of the closest match when the target build is unknown, and mark the name as a guess. | A constant system call number; the build when known. |
 | Strings | Run identified decryption routines in the existing function emulator, and annotate their call sites with the plaintext. | The emulator's result at the call site. |
@@ -147,7 +151,7 @@ Deliver the steps in this order:
 
 | Area | Remaining work |
 |---|---|
-| Signatures | Infer argument counts and types from every call site and from how the callee uses its registers. Reconcile them with ABI evidence: Win64 home space, `ret imm` on x86, variadic calls. |
+| Signatures | **In progress** (`fix/register-iat-call-args`): a call through a register loaded from the IAT (`mov esi, [HeapAlloc]; call esi`) loses its prototype and arguments. Also: `unaff_EBP` after the x86 `__SEH_prolog` helpers, and register-passed callers that print `in_EAX`/`in_ECX`. Infer argument counts and types from every call site and from how the callee uses its registers. Reconcile them with ABI evidence: Win64 home space, `ret imm` on x86, variadic calls. |
 | Types | Propagate import prototypes and RTTI class layouts. Recover structures from base-plus-offset accesses, and arrays from indexed accesses. |
 | Control flow | Structure `try`/`catch` and `__try`/`__except` from exception metadata. Emit `switch` from resolved tables. Reduce `goto` with better loop structuring. |
 | Idioms | Inline `memcpy` and `memset`, stack strings, string decryption loops, API hashing (see [Type knowledge](#type-knowledge)), and the CRT and STL inlines (`std::string`, `std::vector`). |
