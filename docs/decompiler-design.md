@@ -164,8 +164,8 @@ Ghidra's data type archives (`.gdt`) are exported once to compact packs using Gh
 
 | Pack | Size | Contents |
 |---|---:|---|
-| `winapi64.pack` | 4.0 MB | 43,123 prototypes, 43,667 types (Win32, C library, kernel, Win32 metadata, native API) |
-| `winapi32.pack` | 4.0 MB | 42,995 prototypes, 43,603 types |
+| `winapi64.pack` | 4.1 MB | 43,123 prototypes, 43,667 types (Win32, C library, kernel, Win32 metadata, native API), named values of 1,065 enums and flag sets |
+| `winapi32.pack` | 4.1 MB | 42,995 prototypes, 43,603 types, named values of 1,064 sets |
 | `sysv64.pack`, `sysv32.pack` | ≈200 KB each | 6,633 prototypes, 1,229 types |
 | `macos64.pack` | | 14,256 prototypes (macOS 10.9) |
 | `golang64.pack`, `golang32.pack` | 1.7 / 1.6 MB | Go 1.15–1.25 API snapshots by OS and release |
@@ -175,6 +175,7 @@ Ghidra's data type archives (`.gdt`) are exported once to compact packs using Gh
 - **Supplements** add fixed loader, stack-protector, Objective-C, CoreFoundation and native Windows calls missing from the archives. Archive declarations win.
 - **Go** storage is assigned by a port of Ghidra's `GoParamStorageAllocator`. About 1.3% of amd64 signatures stay unapplied.
 - One x86 RAS callback has an unsupported by-value aggregate and stays unknown; a test fails if that count grows.
+- **Symbolic constants.** A parameter that the Win32 metadata types as an enumeration or flag set (the pack's `P:<function>` record) gets an enum type named after that set, of the parameter's own size and signedness, when the pack prototype is applied. Ghidra then types the constant arguments with it, and `StringPrintC` spells them from the set's `E:<name>` record: an enumeration prints a member's name only for that exact value (`FILE_END`, never `FILE_CURRENT | FILE_END` for 3, which Ghidra's own enum printing would produce); a flag set also prints an OR of members, in declaration order, when they cover every bit (`MEM_COMMIT | MEM_RESERVE`), and zero stays `0`. A value outside the set, or a bit no member names, stays numeric. `HKEY` constants (`HKEY_LOCAL_MACHINE`) come from the metadata's typed constants and print only for an exact value; `HANDLE` and `HWND` constants are ambiguous (`-1` is also the current-process handle) and are not used. A variable that receives such an argument is declared with the set's name (`PAGE_PROTECTION_FLAGS flProtect`). The pass changes types and printing only, not the p-code.
 
 Regeneration is development-only: [scripts/decompiler_types/README.md](https://github.com/Karib0u/binfera/blob/main/scripts/decompiler_types/README.md).
 

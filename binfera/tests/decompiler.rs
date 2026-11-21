@@ -110,7 +110,7 @@ fn win32_metadata_types_wininet_and_toolhelp_calls() -> anyhow::Result<()> {
     // Toolhelp: the snapshot handle, and the process record is the structure, not a byte buffer.
     let output = session.decompile_function(0x401d84)?;
     for expected in [
-        "hSnapshot = kernel32_CreateToolhelp32Snapshot(2,0);",
+        "hSnapshot = kernel32_CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);",
         "PROCESSENTRY32 _Dst_00;",
         "_Dst_00.dwSize = 0x128;",
         "kernel32_Process32First(hSnapshot,&_Dst_00)",

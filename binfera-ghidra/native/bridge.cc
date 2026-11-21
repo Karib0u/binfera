@@ -735,6 +735,59 @@ public:
     data.byteData.push_back(0);
   }
 };
+/// The named values a Windows API parameter takes, from the `E:` records of the Windows packs
+/// (scripts/decompiler_types/pack_win32_metadata.py), in the metadata's declaration order.
+struct SymbolicSet {
+  char kind = 0;  ///< 'f' a flag set, 'e' an enumeration, 'h' the constants of a handle type
+  std::vector<std::pair<uintb, std::string>> values;
+  /// The names that spell \p value, or false when it has none. An enumeration and a handle type
+  /// name only a value they list. A flag set also names an OR of its members, and only when the
+  /// members cover every bit; its zero is "no flags" and stays numeric.
+  bool spell(uintb value, std::vector<const std::string *> &names) const {
+    names.clear();
+    if (kind == 'f' && value == 0) return false;
+    for (const auto &[v, name] : values)
+      if (v == value) { names.push_back(&name); return true; }
+    if (kind != 'f') return false;
+    // Members wholly inside the value, widest first (FILE_GENERIC_READ before FILE_READ_DATA),
+    // each taking only bits no earlier choice took.
+    std::vector<size_t> order;
+    for (size_t i = 0; i < values.size(); ++i)
+      if (values[i].first != 0 && (values[i].first & ~value) == 0) order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+      return popcount(values[a].first) > popcount(values[b].first);
+    });
+    uintb left = value;
+    std::vector<size_t> chosen;
+    for (size_t i : order)
+      if ((values[i].first & left) == values[i].first) { chosen.push_back(i); left &= ~values[i].first; }
+    if (left != 0) return false;
+    std::sort(chosen.begin(), chosen.end());
+    for (size_t i : chosen) names.push_back(&values[i].second);
+    return true;
+  }
+  /// Parse an `E:` record, "<kind>\t<name>=<value>;...", masking values to \p size bytes.
+  static SymbolicSet parse(const std::string &record, int4 size) {
+    SymbolicSet set;
+    if (record.size() < 2 || record[1] != '\t' || std::string("feh").find(record[0]) == std::string::npos)
+      throw LowlevelError("malformed symbolic constant record");
+    set.kind = record[0];
+    size_t pos = 2;
+    while (pos < record.size()) {
+      size_t end = record.find(';', pos);
+      if (end == std::string::npos) end = record.size();
+      const size_t eq = record.find('=', pos);
+      if (eq == std::string::npos || eq >= end || eq == pos) throw LowlevelError("malformed symbolic constant record");
+      const std::string text = record.substr(eq + 1, end - eq - 1);
+      char *stop = nullptr;
+      const uintb value = text[0] == '-' ? uintb(std::strtoll(text.c_str(), &stop, 10)) : uintb(std::strtoull(text.c_str(), &stop, 10));
+      if (text.empty() || *stop) throw LowlevelError("malformed symbolic constant value");
+      set.values.emplace_back(value & calc_mask(size), record.substr(pos, eq - pos));
+      pos = end + 1;
+    }
+    return set;
+  }
+};
 // Render typed string addresses even when the compiler put literals in writable data.
 // This changes printing only: loads and stores retain their original memory semantics.
 class StringPrintC : public PrintC {
@@ -749,10 +802,51 @@ class StringPrintC : public PrintC {
     pushAtom(Atom(literal.str(), vartoken, EmitMarkup::const_color, op, vn));
     return true;
   }
+  /// Print a constant of a symbolic-constants type by name (SymbolicSet::spell). A value it cannot
+  /// spell prints as the integer, or for a handle as Ghidra's cast pointer.
+  bool pushSymbolic(uintb value, const Datatype *type, tagtype tag, const Varnode *vn, const PcodeOp *op,
+                    uint4 format) {
+    const SymbolicSet *set = nullptr;
+    if (type->isEnumType()) {
+      auto found = symbolic.find(type->getId());
+      if (found != symbolic.end()) set = &found->second;
+    } else if (type->getMetatype() == TYPE_PTR && windows_pack && !type->getName().empty()) {
+      set = handleSet(type);
+    }
+    if (!set) return false;
+    std::vector<const std::string *> names;
+    if (!set->spell(value & calc_mask(type->getSize()), names)) {
+      if (set->kind == 'h') return false;
+      push_integer(value, type->getSize(), type->getMetatype() == TYPE_INT, tag, vn, op, format);
+      return true;
+    }
+    // An OR of names prints as C's `|` (Ghidra's enum_cat has no spaces and is parenthesized
+    // inside a wider OR).
+    for (size_t i = 1; i < names.size(); ++i) pushOp(&bitwise_or, op);
+    for (const auto *name : names) pushAtom(Atom(*name, tag, EmitMarkup::const_color, op, vn, value));
+    return true;
+  }
+  /// The constants of a named handle type (HKEY), read once from its `E:` record.
+  const SymbolicSet *handleSet(const Datatype *type) {
+    auto found = handles.find(type->getName());
+    if (found == handles.end()) {
+      std::string record;
+      std::unique_ptr<SymbolicSet> set;
+      if (windows_pack->find("E:" + type->getName(), record) && !record.empty() && record[0] == 'h')
+        set.reset(new SymbolicSet(SymbolicSet::parse(record, type->getSize())));
+      found = handles.emplace(type->getName(), std::move(set)).first;
+    }
+    return found->second.get();
+  }
+  std::map<std::string, std::unique_ptr<SymbolicSet>> handles;
 public:
   bool c_types = true;
   bool unknown_types = false;
   bool writable_literals = false;
+  /// Named values of the enum types the symbolic-constants pass gave API parameters, by type id.
+  std::map<uint64_t, SymbolicSet> symbolic;
+  /// The Windows API pack, whose `E:` records name handle constants; null for other languages.
+  PrototypePack *windows_pack = nullptr;
   explicit StringPrintC(Architecture *arch) : PrintC(arch, "binfera-c") {}
   void opCast(const PcodeOp *op) override {
     // CAST preserves bits. FLOAT_INT2FLOAT and FLOAT_FLOAT2FLOAT are numeric
@@ -806,6 +900,7 @@ public:
   }
   void pushConstant(uintb value, const Datatype *type, tagtype tag, const Varnode *vn,
                     const PcodeOp *op, uint4 format) override {
+    if (pushSymbolic(value, type, tag, vn, op, format)) return;
     // Small UEFI addresses can remain untyped integers despite a discovered string symbol.
     // Only substitute address arguments with unknown/pointer type, never typed integer values.
     const bool call_argument = op && vn && (op->code() == CPUI_CALL || op->code() == CPUI_CALLIND) && op->getIn(0) != vn;
@@ -1352,6 +1447,7 @@ public:
     if (spec.default_model) arch.setDefaultModel(arch.getModel(spec.default_model));
     arch.setPrintLanguage("binfera-c");
     static_cast<StringPrintC *>(arch.print)->c_types = !spec.go_pack;
+    if (spec.windows) static_cast<StringPrintC *>(arch.print)->windows_pack = &prototype_pack(spec);
     // Windows x64 SDK layouts (winnt.h). DWORD and LONG are four bytes;
     // ANYSIZE_ARRAY is one in the declaration, not a runtime allocation bound.
     // See docs/decompiler-design.md for the declarations and provenance.
@@ -2498,15 +2594,15 @@ public:
   /// Apply a packed archive prototype to \p fd. Windows x64 has one ABI, so
   /// archive convention names such as __stdcall map to the default model.
   bool apply_pack_prototype(Funcdata *fd, const std::string &function) {
-    std::string xml;
+    std::string xml, entry = function;
     // Like Ghidra's ApplyFunctionDataTypesCmd, an archive function `free` also types a symbol
     // `_free` (the cdecl-decorated name Function ID reports on x86-32) when no exact name exists.
     if (!prototype_pack(spec).find("F:" + function, xml) &&
-        !(function.size() > 1 && function[0] == '_' && prototype_pack(spec).find("F:" + function.substr(1), xml))) {
+        !(function.size() > 1 && function[0] == '_' && prototype_pack(spec).find("F:" + (entry = function.substr(1)), xml))) {
       // Win32 exports sometimes omit the A suffix. Require both archive variants.
       std::string wide;
       if (!spec.windows) return false;
-      if (!prototype_pack(spec).find("F:" + function + "A", xml) ||
+      if (!prototype_pack(spec).find("F:" + (entry = function + "A"), xml) ||
           !prototype_pack(spec).find("F:" + function + "W", wide)) return false;
     }
     const size_t at = xml.find(" model=\"");
@@ -2543,6 +2639,7 @@ public:
       for (const auto &piece : storage)
         if (piece.type->getMetatype() != TYPE_VOID && piece.addr.isInvalid()) return false;
     }
+    if (spec.windows) symbolicParameters(entry, pieces);
     auto &proto = fd->getFuncProto();
     const bool noreturn = proto.isNoReturn() || decoded.isNoReturn();
     proto.setPieces(pieces);
@@ -2560,6 +2657,84 @@ public:
         proto.isInputLocked() && !proto.isDotdotdot() && !proto.hasInputErrors())
       proto.resolveExtraPop();
     return true;
+  }
+  /// The symbolic-constants pass (docs/decompiler-design.md): a parameter that the Win32 metadata
+  /// says takes an enumeration or a flag set (the `P:` record of \p function) becomes an enum type
+  /// of the parameter's size and signedness, named after the metadata's set, so Ghidra types the
+  /// constant arguments with it and the printer spells them (SymbolicSet::spell). A parameter that
+  /// is not an integer of up to 8 bytes keeps its type.
+  void symbolicParameters(const std::string &function, PrototypePieces &pieces) {
+    std::string record;
+    if (!prototype_pack(spec).find("P:" + function, record)) return;
+    size_t pos = 0;
+    while (pos < record.size()) {
+      size_t end = record.find(';', pos);
+      if (end == std::string::npos) end = record.size();
+      const size_t eq = record.find('=', pos);
+      if (eq != std::string::npos && eq < end) {
+        const size_t index = std::strtoul(record.c_str() + pos, nullptr, 10);
+        if (index < pieces.intypes.size()) {
+          Datatype *&type = pieces.intypes[index];
+          const auto meta = type->getMetatype();
+          if ((meta == TYPE_INT || meta == TYPE_UINT || meta == TYPE_UNKNOWN) && !type->isEnumType() &&
+              !type->isCharPrint() && type->getSize() >= 1 && type->getSize() <= 8)
+            if (Datatype *named = symbolicType(record.substr(eq + 1, end - eq - 1), type->getSize(), meta == TYPE_INT))
+              type = named;
+        }
+      }
+      pos = end + 1;
+    }
+  }
+  /// The enum type of an association ("VIRTUAL_ALLOCATION_TYPE+", or a union "A+|B+") at one
+  /// size and signedness, built once per session; null when the pack lacks one of its `E:` records.
+  Datatype *symbolicType(const std::string &association, int4 size, bool sign) {
+    SymbolicSet set;
+    std::string name;
+    if (!symbolicSet(association, size, set, name)) return nullptr;
+    const uint64_t id = name_hash("binfera.symbolic:" + association + "/" + std::to_string(size) + (sign ? "s" : "u"));
+    auto &printer = *static_cast<StringPrintC *>(arch.print);
+    auto built = symbolic_types.find(id);
+    if (built != symbolic_types.end()) return built->second;
+    // Ghidra's enum keeps one name per value; the first in declaration order wins, as in the header.
+    std::ostringstream xml;
+    xml << "<type name=\"" << name << "\" id=\"0x" << std::hex << id << std::dec << "\" metatype=\""
+        << (sign ? "enum_int" : "enum_uint") << "\" size=\"" << size << "\">";
+    std::set<uintb> seen;
+    for (const auto &[value, member] : set.values)
+      if (seen.insert(value).second) xml << "<val name=\"" << member << "\" value=\"" << intb(value) << "\"/>";
+    xml << "</type>";
+    std::istringstream input(xml.str());
+    DocumentStorage store;
+    XmlDecode decoder(&arch, store.parseDocument(input)->getRoot());
+    Datatype *type = arch.types->decodeType(decoder);
+    printer.symbolic.emplace(type->getId(), std::move(set));
+    symbolic_types.emplace(id, type);
+    return type;
+  }
+  std::map<uint64_t, Datatype *> symbolic_types;
+  /// The values of an association, its `E:` records concatenated in order, and the type name (the
+  /// first set's). False when a record is missing or is not an enumeration or flag set.
+  bool symbolicSet(const std::string &association, int4 size, SymbolicSet &set, std::string &name) {
+    set = SymbolicSet();
+    bool flags = true;
+    size_t pos = 0;
+    while (pos <= association.size()) {
+      size_t end = association.find('|', pos);
+      if (end == std::string::npos) end = association.size();
+      std::string part = association.substr(pos, end - pos);
+      const bool flag = !part.empty() && part.back() == '+';
+      if (flag) part.pop_back();
+      std::string record;
+      if (part.empty() || !prototype_pack(spec).find("E:" + part, record)) return false;
+      SymbolicSet piece = SymbolicSet::parse(record, size);
+      if (piece.kind != (flag ? 'f' : 'e')) return false;
+      flags = flags && flag;
+      if (name.empty()) name = part;
+      set.values.insert(set.values.end(), piece.values.begin(), piece.values.end());
+      pos = end + 1;
+    }
+    set.kind = flags ? 'f' : 'e';
+    return !set.values.empty();
   }
   TypeFactoryPack &typesPack() { return *static_cast<TypeFactoryPack *>(arch.types); }
   /// Decode a Go pack function payload ("<marks>|<prototype>") and install it on \p fd. False when
@@ -3009,8 +3184,24 @@ rust::String Session::validate_prototype_pack(uint32_t max_report) {
           const uint64_t target = impl->spec.external_base + impl->symbols * 16;
           auto *fd = impl->function(target, "validate_" + std::to_string(functions), false);
           if (!impl->apply_pack_prototype(fd, key.substr(2))) fail(key, "not found");
+        } else if (key.compare(0, 2, "P:") == 0) {
+          // Every association must name `E:` records that make an enumeration or a flag set.
+          std::string record;
+          prototype_pack(impl->spec).find(key, record);
+          size_t pos = 0;
+          while (pos < record.size()) {
+            size_t end = record.find(';', pos);
+            if (end == std::string::npos) end = record.size();
+            const size_t eq = record.find('=', pos);
+            SymbolicSet set;
+            std::string name;
+            if (eq == std::string::npos || eq >= end ||
+                !impl->symbolicSet(record.substr(eq + 1, end - eq - 1), 4, set, name))
+              fail(key, "no named values for " + record.substr(pos, end - pos));
+            pos = end + 1;
+          }
         }
-        // Other records (`P:` parameter-to-enum associations) are data for later passes.
+        // Other records (`E:` named values) are read through the `P:` records.
       } catch (const LowlevelError &e) {
         fail(key, e.explain);
       } catch (const DecoderError &e) {
