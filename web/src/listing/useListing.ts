@@ -1,7 +1,21 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { ImageInfo } from "../engine/image";
-import type { Analysis } from "../types";
-import { packRows, type BuildRequest, type ListingIndex, type ListingModel } from "./model";
+import type { Analysis, DecompiledFunction } from "../types";
+import { frameHeader, MAX_FRAME_LINES } from "../annotations";
+import { packRows, type BuildRequest, type DataItem, type ListingIndex, type ListingModel } from "./model";
+
+/** The data a function names: its typed symbols, and a label at every other address it refers to. */
+function dataItems(f: Pick<DecompiledFunction, "globals" | "data_refs">): DataItem[] | undefined {
+  if (!f.globals?.length && !f.data_refs?.length) return undefined;
+  const items: DataItem[] = (f.globals ?? []).map((g) => ({ va: g.address, size: g.size, name: g.name, kind: g.kind }));
+  const named = new Set(items.map((i) => i.va));
+  for (const r of f.data_refs ?? []) {
+    if (named.has(r.to)) continue;
+    named.add(r.to);
+    items.push({ va: r.to, size: 0, name: "DAT_" + r.to.toString(16).padStart(8, "0"), kind: "unknown" });
+  }
+  return items;
+}
 
 type Input = Pick<Analysis, "functions" | "strings" | "settled">;
 type Snapshot = ListingModel | "failed" | null;
@@ -79,7 +93,7 @@ class ListingStore {
     const changed = [];
     for (const [fn, f] of input.functions) {
       const before = previous?.functions.get(fn);
-      if (f.asm?.length && (f.asm !== before?.asm || f.labels !== before?.labels)) changed.push(fn);
+      if (f.asm?.length && (f.asm !== before?.asm || f.labels !== before?.labels || f.frame !== before?.frame || f.globals !== before?.globals)) changed.push(fn);
     }
     const removed = [];
     for (const [fn, f] of previous?.functions ?? []) {
@@ -113,12 +127,14 @@ class ListingStore {
       const packed = new Float64Array(size);
       let offset = 0;
       for (const fn of keys) {
-        const { asm, labels } = input.functions.get(fn)!;
+        const f = input.functions.get(fn)!;
+        const { asm, labels } = f;
         if (!asm?.length) continue;
         const end = offset + asm.length * 2;
         const rows = packed.subarray(offset, end);
         packRows(asm, rows);
-        request.changes.push([fn, { rows, labels }]);
+        const frameLines = Math.min(MAX_FRAME_LINES, frameHeader(f.frame).length);
+        request.changes.push([fn, { rows, labels, frameLines, data: dataItems(f) }]);
         offset = end;
       }
       if (initial) {

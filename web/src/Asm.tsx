@@ -11,8 +11,10 @@ const ROW = 20, VIRTUAL_THRESHOLD = 1500;
 export interface AsmHandle { scrollToAddress: (address: number, center?: boolean) => void }
 
 /** Assembly listing; branch/call targets link to functions and string addresses show the string. */
-export default function Asm({ rows, self, resolve, onGoto, strAt, textAt, label, active, onPick, capAt, isData, onData, slot, onImport, labels, focusable, arrows, arch, onCode, scrollRef }: {
+export default function Asm({ rows, self, resolve, onGoto, strAt, textAt, label, active, onPick, capAt, isData, onData, slot, onImport, labels, focusable, arrows, arch, onCode, scrollRef, argNotes }: {
   scrollRef?: Ref<AsmHandle>;
+  /** The call arguments an instruction sets up and the stack symbols it uses, by address (`annotations.ts`). */
+  argNotes?: Map<number, string>;
   /** Reads which address is a branch target: it goes to code, never to the hex view. */
   arch: Arch;
   /** A branch target outside these rows. */
@@ -85,7 +87,7 @@ export default function Asm({ rows, self, resolve, onGoto, strAt, textAt, label,
       <div className={"insn" + (active.has(ad) ? " hl" : "")} key={index} data-addr={ad} onClick={() => onPick(ad)}>
         <code className="ia">{ad.toString(16).padStart(8, "0")}</code>
         <code className="ib">{bytes}</code>
-        <code className="it">{labels?.[ad] && <span className="tk-f">{labels[ad]}: </span>}<span className="tk-k" data-tok={mnem}>{mnem}</span>{parts}{note && <span className="tk-c">  ; {JSON.stringify(note.length > 60 ? note.slice(0, 60) + "…" : note)}</span>}{capAt.has(ad) && <span className="tk-cap">  ; capa: {capAt.get(ad)!.join(", ")}</span>}{ad !== self && notes.commentAt(ad) && <span className="tk-c ucm" title={notes.commentAt(ad)}>  ; {notes.commentAt(ad, true)}</span>}</code>
+        <code className="it">{labels?.[ad] && <span className="tk-f">{labels[ad]}: </span>}<span className="tk-k" data-tok={mnem}>{mnem}</span>{parts}{argNotes?.get(ad) && <span className="tk-c tk-arg">  ; {argNotes.get(ad)}</span>}{note && <span className="tk-c">  ; {JSON.stringify(note.length > 60 ? note.slice(0, 60) + "…" : note)}</span>}{capAt.has(ad) && <span className="tk-cap">  ; capa: {capAt.get(ad)!.join(", ")}</span>}{ad !== self && notes.commentAt(ad) && <span className="tk-c ucm" title={notes.commentAt(ad)}>  ; {notes.commentAt(ad, true)}</span>}</code>
       </div>
     );
   };

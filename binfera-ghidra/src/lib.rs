@@ -147,6 +147,24 @@ mod ffi {
         writes: Vec<u64>,
         references: Vec<u64>,
     }
+    /// A named parameter of one call, and where the caller places its argument.
+    struct NativeCallArgument {
+        /// The call instruction.
+        call: u64,
+        index: u32,
+        name: String,
+        type_name: String,
+        /// The register holding the argument, empty when it is on the stack.
+        register_name: String,
+        on_stack: bool,
+        /// From the stack pointer at the call instruction, when on the stack.
+        stack_offset: i64,
+    }
+    /// The bytes an x86 call's callee pops besides its return address.
+    struct NativeCallPop {
+        call: u64,
+        bytes: i32,
+    }
     struct NativeOutput {
         text: String,
         file_warnings: Vec<String>,
@@ -165,6 +183,10 @@ mod ffi {
         globals: Vec<NativeGlobal>,
         /// Stack symbols by offset, then register parameters; empty if collecting them failed.
         frame: Vec<NativeStackSlot>,
+        /// Named call arguments; empty if collecting them failed.
+        call_args: Vec<NativeCallArgument>,
+        /// x86 calls with a known stack effect; empty elsewhere.
+        call_pops: Vec<NativeCallPop>,
         initial_ms: f64,
         data_ms: f64,
         returns_ms: f64,
@@ -394,7 +416,8 @@ mod ffi {
 pub use cxx::Exception as Error;
 pub use ffi::{
     CodeRange, CppParameter, DebugField, DebugParameter, DebugType, EmuStop, Language,
-    NativeGlobal, NativeOutput, NativeStackSlot, ValueType, VfTable,
+    NativeCallArgument, NativeCallPop, NativeGlobal, NativeOutput, NativeStackSlot, ValueType,
+    VfTable,
 };
 
 /// The packed Ghidra type and prototype archive for one language; empty where none is bundled.

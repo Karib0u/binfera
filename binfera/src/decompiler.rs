@@ -325,7 +325,8 @@ pub struct DecompilationTimings {
 }
 
 /// The class of a data symbol's type, as the decompiler's analysis settled it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ValueKind {
     Float,
     Signed,
@@ -336,7 +337,7 @@ pub enum ValueKind {
 }
 
 /// A data symbol the text names (`DAT_`, `PTR_`, `s_`, `u_`), typed by the analysis.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GlobalSymbol {
     pub name: String,
     pub address: u64,
@@ -379,7 +380,33 @@ pub struct Decompilation {
     /// Stack symbols by offset, then register parameters. Not serialized: the CLI's `--decompile-all` is its only consumer.
     #[serde(skip)]
     pub frame: Vec<StackSlot>,
+    /// The named parameters of each call and where their arguments go. Not serialized: the
+    /// CLI's `--decompile-all` is its only consumer.
+    #[serde(skip)]
+    pub call_args: Vec<CallArgument>,
+    /// x86 calls with a known stack effect: the call and the bytes its callee pops besides the
+    /// return address. Not serialized, like `call_args`.
+    #[serde(skip)]
+    pub call_pops: Vec<(u64, i32)>,
     pub timings: DecompilationTimings,
+}
+
+/// A named parameter of one call of a decompiled function, and where the caller places its argument.
+#[derive(Debug, Clone, Serialize)]
+pub struct CallArgument {
+    /// The call instruction.
+    pub call: u64,
+    /// The parameter's position, from zero.
+    pub index: u32,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    /// The register holding the argument; absent when it is on the stack.
+    #[serde(rename = "register", skip_serializing_if = "Option::is_none")]
+    pub register_name: Option<String>,
+    /// From the stack pointer at the call instruction, when the argument is on the stack.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack: Option<i64>,
 }
 
 /// A stack symbol of a decompiled function, with the instructions that use it.
@@ -2476,6 +2503,23 @@ impl DecompilerSession {
                     writes: slot.writes,
                     references: slot.references,
                 })
+                .collect(),
+            call_args: output
+                .call_args
+                .into_iter()
+                .map(|argument| CallArgument {
+                    call: argument.call,
+                    index: argument.index,
+                    name: argument.name,
+                    type_name: argument.type_name,
+                    register_name: (!argument.on_stack).then_some(argument.register_name),
+                    stack: argument.on_stack.then_some(argument.stack_offset),
+                })
+                .collect(),
+            call_pops: output
+                .call_pops
+                .into_iter()
+                .map(|pop| (pop.call, pop.bytes))
                 .collect(),
             timings: DecompilationTimings {
                 initialization_ms: self.initialization_ms,

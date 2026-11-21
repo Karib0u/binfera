@@ -950,6 +950,61 @@ static void collectStackFrame(Funcdata *fd, AddrSpace *stack, rust::Vec<binfera:
   }
 }
 
+/// A placeholder parameter name (`param_3`, `arg2`, Ghidra's `__undef`/`$$undef`), not one a prototype gives.
+static bool genericParameterName(const std::string &name) {
+  const auto numbered = [&](const char *prefix) {
+    const size_t n = strlen(prefix);
+    return name.size() > n && name.compare(0, n, prefix) == 0 &&
+           std::all_of(name.begin() + n, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+  };
+  return name.empty() || name.find("param_") == 0 || numbered("arg") || name.find("__undef") == 0 ||
+         name.find("$$undef") == 0;
+}
+
+/// The named parameters of each call of a finished function, with where the caller puts each
+/// argument: a register, or a stack offset from the stack pointer at the call instruction. A
+/// listing names the instructions that set them up from this, as IDA does.
+static void collectCallArguments(Funcdata *fd, AddrSpace *stack, rust::Vec<binfera::NativeCallArgument> &arguments,
+                                 rust::Vec<binfera::NativeCallPop> &pops) {
+  const int shift = 64 - int(stack->getAddrSize()) * 8;
+  const auto signedOffset = [&](uintb offset) { return int64_t(uint64_t(offset) << shift) >> shift; };
+  // An x86 call pushes its return address, so the callee's entry stack pointer is one slot
+  // below the caller's at the call. Other architectures keep it in a register.
+  bool pushes = false;
+  try { pushes = fd->getArch()->translate->getRegister("ESP").size == 4; } catch (...) {}
+  for (int4 i = 0; i < fd->numCalls(); ++i) {
+    const FuncCallSpecs *call = fd->getCallSpecs(i);
+    if (!call->isInputLocked()) continue;
+    const PcodeOp *op = call->getOp();
+    if (!op || op->isDead()) continue;
+    // The bytes the callee pops besides its return address (stdcall arguments), so a listing can
+    // step back over this call while it looks for an earlier call's pushed arguments.
+    if (pushes && call->getExtraPop() != ProtoModel::extrapop_unknown)
+      pops.push_back({op->getAddr().getOffset(), int32_t(call->getExtraPop()) - int32_t(stack->getAddrSize())});
+    for (int4 slot = 0; slot < call->numParams() && slot + 1 < op->numInput(); ++slot) {
+      const ProtoParameter *parameter = call->getParam(slot);
+      const std::string &name = parameter->getName();
+      if (genericParameterName(name)) continue;
+      binfera::NativeCallArgument out;
+      out.call = op->getAddr().getOffset();
+      out.index = uint32_t(slot);
+      out.name = name;
+      out.type_name = frameTypeName(parameter->getType());
+      const Address storage = parameter->getAddress();
+      if (storage.getSpace() == stack) {
+        out.on_stack = true;
+        out.stack_offset = signedOffset(storage.getOffset()) - (pushes ? int64_t(stack->getAddrSize()) : 0);
+      } else {
+        out.on_stack = false;
+        out.stack_offset = 0;
+        out.register_name = fd->getArch()->translate->getRegisterName(storage.getSpace(), storage.getOffset(), parameter->getSize());
+        if (out.register_name.empty()) continue;
+      }
+      arguments.push_back(std::move(out));
+    }
+  }
+}
+
 class StringPrintCapability : public PrintLanguageCapability {
 public:
   StringPrintCapability() { name = "binfera-c"; isdefault = false; }
@@ -2033,15 +2088,59 @@ public:
   void nameArgumentLocals(Funcdata *fd) {
     if (spec.go_pack || !fd->isHighOn()) return;
     auto *scope = fd->getScopeLocal();
+    auto candidates = argumentRoles(fd);
+    // Apply in symbol-id order, so suffixes do not depend on allocator addresses.
+    std::vector<Symbol *> ordered;
+    for (const auto &entry : candidates) {
+      const auto &names = entry.second;
+      const bool agree = std::all_of(names.begin(), names.end(), [&](const std::string &n) { return n == names.front(); });
+      if (entry.first->getCategory() == Symbol::no_category || agree) ordered.push_back(entry.first);
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const Symbol *a, const Symbol *b) { return a->getId() < b->getId(); });
+    for (auto *symbol : ordered) {
+      const auto &name = candidates[symbol].front();
+      if (symbol->getCategory() == Symbol::function_parameter && fd->getFuncProto().isInputLocked())
+        renamed_parameters.push_back({fd, symbol->getCategoryIndex(), symbol->getName(), symbol->isNameLocked()});
+      if (symbol->getName() != name) scope->renameSymbol(symbol, scope->makeNameUnique(name));
+      // An unlocked name on a type-locked parameter is reset to an undefined
+      // name on the next pass, which then prints as "__undef...".
+      if (symbol->getCategory() == Symbol::function_parameter) scope->setAttribute(symbol, Varnode::namelock);
+    }
+  }
+  /// The role names nameArgumentLocals would give each parameter of \p fd, by parameter index,
+  /// without renaming anything: only parameters that every use gives the same role. An inferred
+  /// callee prototype carries them, so a caller's argument takes the name its callee's API gives it.
+  std::map<int4, std::string> parameterRoleNames(Funcdata *fd) {
+    std::map<int4, std::string> names;
+    if (spec.go_pack || !fd->isHighOn()) return names;
+    for (const auto &entry : argumentRoles(fd)) {
+      const auto *symbol = entry.first;
+      const auto &roles = entry.second;
+      if (symbol->getCategory() != Symbol::function_parameter) continue;
+      if (std::all_of(roles.begin(), roles.end(), [&](const std::string &n) { return n == roles.front(); }))
+        names[symbol->getCategoryIndex()] = roles.front();
+    }
+    return names;
+  }
+  /// For each unlocked local or parameter passed directly (or by address) to a named, locked
+  /// API parameter, the names of the roles it is passed in, in call order. A role named by a
+  /// supplied prototype (an archive or a signature) outranks one carried up from an inferred
+  /// callee: when a symbol has both, only the supplied ones count.
+  std::map<Symbol *, std::vector<std::string>> argumentRoles(Funcdata *fd) {
+    auto *scope = fd->getScopeLocal();
     std::map<Symbol *, std::vector<std::string>> candidates;
+    std::map<Symbol *, std::vector<std::string>> inferred_roles;
+    std::set<uint64_t> inferred_callees;
+    for (const auto *callee : applied) inferred_callees.insert(callee->getAddress().getOffset());
     for (int4 i = 0; i < fd->numCalls(); ++i) {
       const auto *call = fd->getCallSpecs(i);
       if (!call->isInputLocked()) continue;
       const auto *op = call->getOp();
+      auto &roles = inferred_callees.count(call->getEntryAddress().getOffset()) ? inferred_roles : candidates;
       for (int4 slot = 1; slot < op->numInput() && slot <= call->numParams(); ++slot) {
         const auto *parameter = call->getParam(slot - 1);
         const auto &name = parameter->getName();
-        if (name.empty() || name.find("param_") == 0 || name.find("arg") == 0 || name.find("__undef") == 0 || name == "this") continue;
+        if (genericParameterName(name) || name == "this") continue;
         const Varnode *vn = op->getIn(slot);
         Symbol *symbol = nullptr;
         for (int depth = 0; depth < 8; ++depth) {
@@ -2062,27 +2161,13 @@ public:
              symbol->getCategory() == Symbol::function_parameter))
         {
           const std::string candidate = identifier(name, true);
-          if (!candidate.empty() && candidate.find("__undef") != 0) candidates[symbol].push_back(candidate);
+          if (!candidate.empty() && candidate.find("__undef") != 0) roles[symbol].push_back(candidate);
         }
       }
     }
-    // Apply in symbol-id order, so suffixes do not depend on allocator addresses.
-    std::vector<Symbol *> ordered;
-    for (const auto &entry : candidates) {
-      const auto &names = entry.second;
-      const bool agree = std::all_of(names.begin(), names.end(), [&](const std::string &n) { return n == names.front(); });
-      if (entry.first->getCategory() == Symbol::no_category || agree) ordered.push_back(entry.first);
-    }
-    std::sort(ordered.begin(), ordered.end(), [](const Symbol *a, const Symbol *b) { return a->getId() < b->getId(); });
-    for (auto *symbol : ordered) {
-      const auto &name = candidates[symbol].front();
-      if (symbol->getCategory() == Symbol::function_parameter && fd->getFuncProto().isInputLocked())
-        renamed_parameters.push_back({fd, symbol->getCategoryIndex(), symbol->getName(), symbol->isNameLocked()});
-      if (symbol->getName() != name) scope->renameSymbol(symbol, scope->makeNameUnique(name));
-      // An unlocked name on a type-locked parameter is reset to an undefined
-      // name on the next pass, which then prints as "__undef...".
-      if (symbol->getCategory() == Symbol::function_parameter) scope->setAttribute(symbol, Varnode::namelock);
-    }
+    for (auto &entry : inferred_roles)
+      if (!candidates.count(entry.first)) candidates.emplace(entry.first, std::move(entry.second));
+    return candidates;
   }
   void unlockOne(Funcdata *fd) {
     fd->getFuncProto().setInputLock(false);
@@ -2165,6 +2250,13 @@ public:
     }
     if (out.usable) {
       fd->getFuncProto().getPieces(out.pieces);
+      // Carry the API role names of the callee's parameters to its callers. Only generic names
+      // are replaced; the pieces' types are unchanged.
+      for (const auto &[index, name] : parameterRoleNames(fd)) {
+        if (index < 0 || size_t(index) >= out.pieces.innames.size()) continue;
+        auto &current = out.pieces.innames[index];
+        if (genericParameterName(current)) current = name;
+      }
       // A non-leaf or memory-dependent result can carry request-local pointer,
       // array or global types. Retain those results only within the original
       // request. Pure scalar leaves cannot observe another function's hint.
@@ -4260,6 +4352,14 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
         throw;
       } catch (...) {
         response.frame.clear();
+      }
+      try {
+        if (auto *stack = arch.getStackSpace()) collectCallArguments(fd, stack, response.call_args, response.call_pops);
+      } catch (const BudgetExceeded &) {
+        throw;
+      } catch (...) {
+        response.call_args.clear();
+        response.call_pops.clear();
       }
       impl->release(fd);
       impl->dropDataSymbols();

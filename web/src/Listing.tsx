@@ -4,11 +4,28 @@ import { ArrowPaths, cachedFunctionArrows, gutterWidth, MAX_ARROW_LANES, type Ar
 import { addressAtLine, atomAtLine, endOfPrefix, instructionAt, lineOf, type ListingModel } from "./listing/model";
 import { useListing } from "./listing/useListing";
 import type { Analysis, Arch } from "./types";
+import { frameHeader, instructionNotes, MAX_FRAME_LINES, slotLocation } from "./annotations";
+import type { ImageInfo } from "./engine/image";
 
 const ROW = 20;
 const hex = (n: number, pad = 0) => n.toString(16).padStart(pad, "0");
 
 const DIRECTIVE: Record<number, string> = { 1: "db", 2: "dw", 4: "dd", 8: "dq" };
+
+/** The value of a typed data item, read from the file; undefined where its bytes are not in it. */
+function dataValue(image: ImageInfo, va: number, size: number, type: string): { text: string; value?: number } | undefined {
+  const off = image.vaToOff(va);
+  if (off === null || off + size > image.bytes.length) return undefined;
+  const view = new DataView(image.bytes.buffer, image.bytes.byteOffset + off, size);
+  const le = image.littleEndian;
+  if (type === "float" && (size === 4 || size === 8)) {
+    const f = size === 4 ? view.getFloat32(0, le) : view.getFloat64(0, le);
+    return { text: Number.isFinite(f) ? String(f) : String(f) };
+  }
+  const n = size === 1 ? view.getUint8(0) : size === 2 ? view.getUint16(0, le) : size === 4 ? view.getUint32(0, le) : Number(view.getBigUint64(0, le));
+  if (type === "signed" && size <= 4 && n >= 2 ** (size * 8 - 1)) return { text: String(n - 2 ** (size * 8)), value: n };
+  return { text: n < 10 ? String(n) : (size === 8 && n > Number.MAX_SAFE_INTEGER ? "0x" + view.getBigUint64(0, le).toString(16) : "0x" + n.toString(16)), value: n };
+}
 
 function visibleArrows(model: ListingModel, arch: Arch, first: number, last: number) {
   const start = addressAtLine(model, first), end = addressAtLine(model, last - 1);
@@ -130,15 +147,54 @@ export default function Listing({ a, cursor, marked, tick, onCursor, label, reso
         </div>
       );
     } else if (at.kind === "fn") {
-      body = k === 0 ? null : (
-        <div className="l-fn" onClick={() => onOpenFn(at.fn)} title="Open the decompiled function">
-          <code className="ia">{hex(at.va, 8)}</code><b>{label(at.fn)}</b><span> proc</span>{exportName(at.fn) && <em className="exp-tag">export</em>}<small>{fnInfo(at.fn)}</small>
+      if (k < 2) {
+        body = k === 0 ? null : (
+          <div className="l-fn" onClick={() => onOpenFn(at.fn)} title="Open the decompiled function">
+            <code className="ia">{hex(at.va, 8)}</code><b>{label(at.fn)}</b><span> proc</span>{exportName(at.fn) && <em className="exp-tag">export</em>}<small>{fnInfo(at.fn)}</small>
+          </div>
+        );
+      } else {
+        // IDA's stack variable list: each parameter and local, with its type and where it lives.
+        const slots = frameHeader(model.functions.get(at.fn)?.frame);
+        const slot = slots[k - 2], cut = k - 2 === MAX_FRAME_LINES - 1 && slots.length > MAX_FRAME_LINES;
+        body = slot && (
+          <div className="l-line l-frame" onClick={() => onCursor(at.va)}>
+            <code className="ia">{hex(at.va, 8)}</code>
+            {cut
+              ? <small>; … {slots.length - k + 2} more in the Stack panel</small>
+              : <code><span className="tk-c">; </span><span className="tk-t">{slot.type}</span> <span className="tk-v">{slot.name}</span><span className="tk-c">  {slot.parameter ? "param" : "local"} {slotLocation(slot, a.arch)}</span></code>}
+          </div>
+        );
+      }
+    } else if (at.kind === "data") {
+      const value = at.size ? dataValue(a.image!, at.va, at.size, at.type) : undefined;
+      const points = at.type === "pointer" && value?.value !== undefined ? value.value : undefined;
+      const fn = points !== undefined ? resolve("0x" + points.toString(16)) : undefined;
+      const str = points !== undefined && fn === undefined ? strAt(points) : undefined;
+      const imp = points !== undefined && fn === undefined && str === undefined ? slot(points) : undefined;
+      body = (
+        <div className={"l-line l-data" + (cursor !== null && cursor >= at.va && cursor < at.va + Math.max(1, at.size) ? " hl" : "")} onClick={() => onCursor(at.va)}>
+          <code className="ia">{hex(at.va, 8)}</code>
+          <span className="tk-g l-dname">{at.name}</span>
+          {at.size > 0 && <code className="l-op">{DIRECTIVE[at.size]}</code>}
+          {at.size > 0 && value && (fn !== undefined
+            ? <a className="xref tk-f" href={"#" + hex(fn)} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenFn(fn); }}>offset {label(fn)}</a>
+            : str !== undefined
+              ? <a className="xref tk-s" href="#str" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onString(str); }}>offset {JSON.stringify(str.length > 40 ? str.slice(0, 40) + "…" : str)}</a>
+              : imp
+                ? <a className="xref tk-f" href="#imp" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport(imp.name); }}>offset {imp.name}</a>
+                : points !== undefined && isData(points)
+                  ? <a className="xref tk-n" href={"#" + hex(points)} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onData(points); }}>offset 0x{hex(points)}</a>
+                  : <code className="tk-n">{value.text}</code>)}
+          {at.size > 0 && !value && <code className="tk-n">?</code>}
+          {at.size > 0 && at.type !== "unknown" && <small>; {at.type}</small>}
+          {xrefCount(at.va) > 0 && <button className="hexlink" onClick={(e) => { e.stopPropagation(); onXrefs(at.va); }}>{xrefCount(at.va)} xrefs</button>}
         </div>
       );
     } else if (at.kind === "code") {
       const row = instructionAt(model, at, k);
       ctxVa = row[0];
-      body = <Asm arch={a.arch} onCode={onCursor} rows={[row]} labels={model.labels} self={-1} resolve={resolve} onGoto={onOpenFn} strAt={strAt} textAt={textAt} label={label} active={active} onPick={onCursor} capAt={noCaps} isData={isData} onData={onData} slot={slot} onImport={onImport} />;
+      body = <Asm arch={a.arch} onCode={onCursor} rows={[row]} labels={model.labels} self={-1} resolve={resolve} onGoto={onOpenFn} strAt={strAt} textAt={textAt} label={label} active={active} onPick={onCursor} capAt={noCaps} isData={isData} onData={onData} slot={slot} onImport={onImport} argNotes={instructionNotes(model.functions.get(at.fn), a.arch)} />;
     } else if (at.kind === "str") {
       body = (
         <div className={"l-line" + (cursor !== null && cursor >= at.va && cursor < at.va + at.len ? " hl" : "")} onClick={() => onCursor(at.va)}>

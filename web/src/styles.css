@@ -665,6 +665,9 @@ button.cap { cursor: pointer; border: 0; }
 .l-op { color: var(--c-kw); width: 15ch; flex: none; padding-left: 0; }
 .l-bytes { color: var(--c-num); }
 .l-line small { color: var(--c-com); font-style: italic; }
+.l-data .l-dname { min-width: 22ch; flex: none; overflow: hidden; text-overflow: ellipsis; }
+.l-data .l-op { width: 3ch; }
+.l-frame code:last-child { padding-left: 2ch; }
 .cg-bar h1 { margin: 0; font-size: 16px; }
 .cg-scroll { flex: 1; overflow: auto; min-height: 0; cursor: grab; touch-action: none; user-select: none; }
 .cg-scroll.panning { cursor: grabbing; }

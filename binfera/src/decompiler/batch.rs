@@ -89,6 +89,15 @@ pub struct BatchFunction {
     pub lines: Option<Vec<Vec<u64>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame: Option<Vec<super::StackSlot>>,
+    /// Named call arguments, for the listing's argument comments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_args: Option<Vec<super::CallArgument>>,
+    /// x86 calls with a known stack effect, as `[call, bytes popped]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_pops: Option<Vec<(u64, i32)>>,
+    /// The data symbols the text names, with their analyzed types: the listing's data items.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub globals: Option<Vec<super::GlobalSymbol>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -378,6 +387,9 @@ fn decompile_all_impl(
                     labels: Some(labels.into_iter().map(|(a, n)| (a, n.to_owned())).collect()),
                     lines: Some(result.line_addresses),
                     frame: Some(result.frame),
+                    call_args: (!result.call_args.is_empty()).then_some(result.call_args),
+                    call_pops: (!result.call_pops.is_empty()).then_some(result.call_pops),
+                    globals: (!result.globals.is_empty()).then_some(result.globals),
                     ..Default::default()
                 }
             }
