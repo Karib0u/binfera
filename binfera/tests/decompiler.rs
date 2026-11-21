@@ -56,6 +56,19 @@ fn register_loaded_from_an_import_slot_resolves_to_the_import() -> anyhow::Resul
     Ok(())
 }
 
+/// The start-up code stores `__exit` in a global once and nothing else writes it; the call through
+/// that global is a call to the function, and being a no-return one it ends the function.
+#[test]
+fn a_global_that_only_ever_holds_one_function_is_called_directly() -> anyhow::Result<()> {
+    let sample = include_bytes!("../../tests/testfiles/Practical Malware Analysis Lab 12-01.exe_");
+    let mut session = DecompilerSession::from_pe(sample)?;
+    let output = session.decompile_function(0x40145e)?;
+    let text = squeeze(&output.text);
+    assert!(text.contains("__exit(0xff);"), "{}", output.text);
+    assert!(!output.text.contains("(*PTR_FUN"), "{}", output.text);
+    Ok(())
+}
+
 /// The text without whitespace, so an expectation does not depend on where the printer wraps a line.
 fn squeeze(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()

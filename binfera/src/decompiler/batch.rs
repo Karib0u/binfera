@@ -38,6 +38,10 @@ pub enum BatchEvent {
         functions: Vec<u64>,
         #[serde(skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<u64, String>,
+        /// Globals the program fills with `GetProcAddress` and a literal name, by address: the API
+        /// each holds. A listing names them like imports.
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        resolved: BTreeMap<u64, String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         arch: Option<String>,
         warnings: Vec<String>,
@@ -212,6 +216,7 @@ fn decompile_all_impl(
             .filter_map(|&a| session.function_name(a).map(|n| (a, n)))
             .collect(),
         functions: addresses.clone(),
+        resolved: session.resolved_imports().clone(),
         arch: Some(arch_name.into()),
         warnings: session.warnings().to_vec(),
         packed: crate::packing::detect(&analysis.image, bytes),

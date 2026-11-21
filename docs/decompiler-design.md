@@ -116,6 +116,7 @@ The Vivisect `/GS` cookie-tail split is skipped: Ghidra keeps the check in its c
 
 - **Retries.** `BatchOptions.retry` takes `RetryPolicy::{Deferred, Skip, Only(Vec<u64>)}`; `BatchOptions.limits` can tighten the ordinary-attempt budget. Native workers select the retry stage with the hidden, repeatable `--decompile-retry ADDRESS`.
 - **Names before bodies.** `start.names` announces supplied function names. A resource-limited attempt keeps its assembly, calls, references and name, with `retry_pending: true`; a later record for the same address replaces it.
+- **Resolved APIs.** `start.resolved` maps each global the program fills with `GetProcAddress` and a literal name to the API it holds (the same list the session registers as imports), so the viewer shows those slots and calls like imports.
 - **Consumers.** Python's `decompile_all` passes `names`, `retry_pending`, `settled` and replacement records through. The MCP index keeps the last record per address, including its file offset and updated references, and falls back to inventory names when a record has none. Cached streams without these fields stay readable.
 
 ## Names
@@ -171,6 +172,7 @@ Ghidra's data type archives (`.gdt`) are exported once to compact packs using Gh
 | `golang64.pack`, `golang32.pack` | 1.7 / 1.6 MB | Go 1.15–1.25 API snapshots by OS and release |
 
 - **Windows imports** are typed only when the module is a known system DLL (`system_import_function`). Ghidra matches by name alone; this stricter policy keeps an unrelated DLL's same-named export untyped.
+- **Globals that hold one function.** `code_pointer_slots.rs` scans the machine code of the whole image, before any function is decompiled, for pointer globals whose every write stores the same recovered function entry, or that are never written and start as that entry. The bridge registers each as an external reference to the function (`add_code_pointer`), and Ghidra's `ActionDeindirect` turns `call [slot]` into a direct call with the callee's prototype. A global with another value, a store of an unknown register, a write that only modifies it, a taken address (`lea`, an immediate, `[slot + index]`, a pointer in the image's data) or an overlapping write is left alone; a write through a pointer to an enclosing object is not detected. PE images only: a GOT slot is written by the loader.
 - **Kernel** prototypes come from MinGW-w64 14.0.0 DDK headers and ReactOS 0.4.15's `fltkernel.h`.
 - **Supplements** add fixed loader, stack-protector, Objective-C, CoreFoundation and native Windows calls missing from the archives. Archive declarations win.
 - **Go** storage is assigned by a port of Ghidra's `GoParamStorageAllocator`. About 1.3% of amd64 signatures stay unapplied.

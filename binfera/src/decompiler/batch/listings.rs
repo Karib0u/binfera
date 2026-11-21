@@ -96,6 +96,7 @@ pub(super) fn emit_managed_methods(
             .map(|m| (u64::from(m.token), m.name.clone()))
             .collect(),
         functions: methods.iter().map(|m| u64::from(m.token)).collect(),
+        resolved: Default::default(),
         arch: Some("cil".into()),
         warnings: warnings.clone(),
         packed: None,
@@ -136,6 +137,7 @@ pub(super) fn emit_data_only_elf(
     emit(BatchEvent::Start {
         names: Default::default(),
         functions: Vec::new(),
+        resolved: Default::default(),
         arch: None,
         warnings: warnings.clone(),
         packed: crate::packing::detect_elf(bytes),

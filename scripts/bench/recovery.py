@@ -43,6 +43,10 @@ Three reports come from one run (see docs/roadmap.md, Methodology):
 
 A binary built before `--start-evidence` existed still diffs; it just has no
 tier-B or census columns.
+
+`--quality FILE` adds a fourth report, from scripts/bench/quality.py: what the decompiler prints
+(untyped imports, unresolved indirect calls, numeric API arguments), base against head. It
+decompiles every sample, so point `--samples` at a short list such as scripts/corpus-quality.txt.
 """
 
 from __future__ import annotations
@@ -65,6 +69,7 @@ from time import perf_counter
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # quality.py, for --quality
 from difftest import DEFAULT_SAMPLES_ROOT, read_sample_list  # noqa: E402
 
 RSS_TO_MIB = 1 / (1024 * 1024) if sys.platform == "darwin" else 1 / 1024
@@ -629,6 +634,11 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown", type=Path, nargs="?", const=Path("-"), help="write the summary here (- for stdout)"
     )
     parser.add_argument("--no-evidence", action="store_true", help="skip tier B and the census")
+    parser.add_argument(
+        "--quality", type=Path,
+        help="also write quality.py's report (untyped imports, indirect calls, numeric API arguments) "
+        "for the same base, head and samples here",
+    )
     args = parser.parse_args(argv)
     if args.base is None and args.base_bin is None:
         parser.error("one of --base and --base-bin is required")
@@ -751,7 +761,20 @@ def main(argv: list[str] | None = None) -> int:
         f"({summary['removed_blocking']} blocking)",
         file=sys.stderr,
     )
-    return 1 if summary["removed_blocking"] else 0
+    status = 1 if summary["removed_blocking"] else 0
+    if args.quality:
+        # Decompiles every sample with both binaries: keep --samples small.
+        import quality
+
+        argv = ["--samples", str(args.samples), "--workers", str(args.workers), "--timeout", str(args.timeout),
+                "--cache-dir", str(args.cache_dir), "--json", str(args.quality)]
+        for flag, rev, binary in (("base", args.base, args.base_bin), ("head", args.head, args.head_bin)):
+            if rev:
+                argv += [f"--{flag}", rev]
+            elif binary:
+                argv += [f"--{flag}-bin", str(binary)]
+        status = quality.main(argv) or status
+    return status
 
 
 if __name__ == "__main__":

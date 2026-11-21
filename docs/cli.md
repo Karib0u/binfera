@@ -71,7 +71,7 @@ Mach-O is detected automatically (or forced with `-f macho`), for thin or univer
 
 `--decompile-all` emits NDJSON in this order:
 
-1. `start`: sorted `functions`, optional `names` (decimal address keys to supplied names), architecture, packing and warnings.
+1. `start`: sorted `functions`, optional `names` (decimal address keys to supplied names), optional `resolved` (decimal addresses of globals the program fills with `GetProcAddress` and a literal name, to the API each holds), architecture, packing and warnings.
 2. `function`: text when available, assembly, graph, calls and data references. A resource-limited attempt retains its name and supporting data and sets `retry_pending: true`.
 3. `settled`: all ordinary attempts have finished. Consumers can build indexes and enable reports now.
 4. Deferred retry results, followed by `done`. A later record replaces an earlier record for the same address. Retries can discover additional callees after `settled`.

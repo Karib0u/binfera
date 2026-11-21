@@ -4,6 +4,16 @@ Notable changes to binfera. Format follows [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Added
+
+- **Resolved API names in the viewer:** the assembly, the graph and the listing show the API a global holds when the program loads it with `GetProcAddress` and a literal name (`call dword ptr ds:[ReadFile]`, `dd ReadFile ; resolved with GetProcAddress`), with argument comments on the call. The batch `start` record carries them as `resolved`.
+- **Calls through a global that holds one function:** a global the program only ever sets to the same function of its own, or never sets and starts as that function, prints calls as `FUN_00401234(a, b)` with the callee's prototype instead of `(*DAT_x)(a, b)`. A global with another value, a reset, a taken address or an unknown writer is left alone.
+- **Quality report:** `scripts/bench/quality.py` compares two binaries on untyped imports, unresolved indirect calls and numeric arguments at enum parameters, and a small subset runs in CI against a checked-in baseline.
+
+### Changed
+
+- **System DLL prototypes:** imports of `pdh`, `msi`, `credui`, `fwpkclnt`, `xinput1_4` and 48 other system DLLs (53 in all) now get their prototypes from the Windows packs.
+
 ## [1.0.1]
 
 ### Fixed

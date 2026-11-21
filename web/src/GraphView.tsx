@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ADDR_IN_ASM, asmAddress, buildCfg, layoutCfg, operandNote, rowFlow, type Arch, type AsmRow, type EdgeKind } from "./graph";
 import { importKey, tokenized, tokKey } from "./highlight";
+import { slotSource } from "./resolved";
 import { useNotes } from "./names";
 import type { FunctionGraph, CapaRule } from "./types";
 
@@ -314,7 +315,7 @@ function Insn({ ad, text, argNote, branch, onBranch, self, resolve, label, strAt
     parts.push(target !== undefined && target !== self
       ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={tokKey(label(target))} data-fn={target} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGoto(target); }}>{label(target)}</a>
       : held
-        ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={importKey(held)} title={held.dll + " · " + lit} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport?.(held.name); }}>{held.name}</a>
+        ? <a key={k++} href={"#" + lit} className="xref tk-f" data-tok={importKey(held)} title={slotSource(held) + " · " + lit} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onImport?.(held.name); }}>{held.name}</a>
       : v === branch
         ? <a key={k++} href={"#" + lit} className="xref tk-n" data-tok={tokKey(lit)} title="Go to this instruction" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBranch(v); }}>{lit}</a>
       : isData?.(v)

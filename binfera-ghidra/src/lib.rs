@@ -401,6 +401,12 @@ mod ffi {
             name: &str,
             noreturn: bool,
         ) -> Result<()>;
+        fn add_code_pointer(
+            self: Pin<&mut Session>,
+            slot: u64,
+            target: u64,
+            name: &str,
+        ) -> Result<bool>;
         fn decompile(
             self: Pin<&mut Session>,
             address: u64,
@@ -597,6 +603,13 @@ impl Session {
     pub fn add_import(&mut self, address: u64, name: &str, noreturn: bool) -> Result<(), Error> {
         self.inner.pin_mut().add_import(address, name, noreturn)
     }
+    /// Declare that the pointer-sized data at `slot` only ever holds the entry of the registered
+    /// function `target`, so a call through the slot is a call to that function. Returns false,
+    /// changing nothing, when `target` is not a registered function.
+    pub fn add_code_pointer(&mut self, slot: u64, target: u64, name: &str) -> Result<bool, Error> {
+        self.inner.pin_mut().add_code_pointer(slot, target, name)
+    }
+
     /// Known callee stack cleanup, excluding the return address; -1 means unknown.
     pub fn stack_purge(&mut self, address: u64) -> Result<i32, Error> {
         self.inner.pin_mut().stack_purge(address)

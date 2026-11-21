@@ -10,7 +10,7 @@ import type { RawCodeOptions } from "./engine/engine.worker";
 import { shellcodePayload } from "./engine/shellcode";
 
 type Event =
-  | { type: "start"; warnings?: string[]; functions: number[]; names?: Record<string, string>; arch?: Arch; packed?: Packing | null }
+  | { type: "start"; warnings?: string[]; functions: number[]; names?: Record<string, string>; resolved?: Record<string, string>; arch?: Arch; packed?: Packing | null }
   | { type: "settled" }
   | { type: "done"; warnings?: string[] }
   | ({ type: "function" } & DecompiledFunction);
@@ -80,6 +80,8 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
           namesChanged = true;
         }
       }
+      // Every shard reports the same globals.
+      if (e.resolved) a.resolved = new Map(Object.entries(e.resolved).map(([address, name]) => [Number(address), name]));
       a.arch = e.arch ?? null;
       a.packed = e.packed ?? null;
     }
@@ -183,6 +185,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       a.strings = [];
       a.stringsTotal = 0;
       a.shellcode = undefined;
+      a.resolved = undefined;
       a.arch = null;
       a.packed = null;
       a.fileWarnings = undefined;

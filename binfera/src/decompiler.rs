@@ -34,6 +34,7 @@ pub use batch::{
 };
 
 mod candidates;
+mod code_pointer_slots;
 mod conventions;
 pub(crate) mod ctypes;
 mod effects;
@@ -449,6 +450,8 @@ pub struct DecompilerSession {
     import_thunks: BTreeSet<u64>,
     local_labels: BTreeSet<u64>,
     funclet_labels: BTreeMap<u64, (u64, String)>,
+    /// Globals the program fills with `GetProcAddress` and a literal name, and the API each holds.
+    resolved_imports: BTreeMap<u64, String>,
     initialization_ms: f64,
     limits: ResourceLimits,
     convention: CallingConvention,
@@ -1606,14 +1609,7 @@ impl DecompilerSession {
                 .get(address)
                 .filter(|name| !name.is_empty())
                 .map(|name| bounded_name(&display_name(name), *address))
-                .unwrap_or_else(|| {
-                    // Ghidra pads default names to the address width of the image.
-                    if wide {
-                        format!("FUN_{address:x}")
-                    } else {
-                        format!("FUN_{address:08x}")
-                    }
-                });
+                .unwrap_or_else(|| default_function_name(*address, wide));
             native
                 .add_function(
                     *address,
@@ -1712,6 +1708,7 @@ impl DecompilerSession {
             }
         }
         // APIs loaded with `GetProcAddress` into a global: type each global like the import it holds.
+        let mut resolved = BTreeMap::new();
         if convention.is_windows() {
             for (slot, name) in resolved_imports::find(analysis, &import_thunks(analysis)) {
                 if in_code(slot) || image.section_containing(slot).is_none() {
@@ -1721,6 +1718,26 @@ impl DecompilerSession {
                     .add_import(slot, &bounded_name(&name, slot), false)
                     .map_err(init)?;
                 native.apply_prototype(slot, &name).map_err(init)?;
+                resolved.insert(slot, name);
+            }
+            // A global that only ever holds one of the program's own functions: a call through it
+            // is a call to that function.
+            for (slot, target) in code_pointer_slots::find(analysis) {
+                if in_code(slot)
+                    || resolved.contains_key(&slot)
+                    || funclet_labels.contains_key(&target)
+                    || !in_code(target)
+                {
+                    continue;
+                }
+                let function = names
+                    .get(&target)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| bounded_name(&display_name(name), target))
+                    .unwrap_or_else(|| default_function_name(target, wide));
+                native
+                    .add_code_pointer(slot, target, &format!("PTR_{function}"))
+                    .map_err(init)?;
             }
         }
         if convention == CallingConvention::WindowsX86 {
@@ -1955,6 +1972,7 @@ impl DecompilerSession {
             import_thunks: import_thunks(analysis).into_keys().collect(),
             local_labels,
             funclet_labels,
+            resolved_imports: resolved,
             initialization_ms: started.elapsed().as_secs_f64() * 1000.0,
             limits: ResourceLimits::default(),
             convention,
@@ -2327,6 +2345,12 @@ impl DecompilerSession {
             .get()
             .ok_or_else(|| DecompileError::Initialization("type archive unavailable".into()))?;
         unit::build(pack, wide, &bodies).map_err(DecompileError::Initialization)
+    }
+
+    /// Globals the program fills with `GetProcAddress` and a literal name, and the API each holds.
+    /// The C view names them like imports; a listing shows them the same way.
+    pub fn resolved_imports(&self) -> &BTreeMap<u64, String> {
+        &self.resolved_imports
     }
 
     /// A supplied symbol, export, signature or Go name, without decompiling the body.
@@ -3624,6 +3648,62 @@ fn system_import_function(name: &str) -> Option<&str> {
         "winspool",
         "wlanapi",
         "wldap32",
+        // More system DLLs whose exports the same pack types: performance counters, credential
+        // and certificate UI, network-management client stubs, the installer, DirectX and Media
+        // Foundation. A third-party DLL does not share these names.
+        "authz",
+        "bthprops",
+        "clusapi",
+        "credui",
+        "cryptnet",
+        "cryptui",
+        "d2d1",
+        "d3d11",
+        "dhcpcsvc",
+        "dsound",
+        "dwrite",
+        "dxgi",
+        "dxva2",
+        "fwpkclnt",
+        "gdi32full",
+        "glu32",
+        "ksproxy",
+        "lz32",
+        "mf",
+        "mfplat",
+        "mfreadwrite",
+        "mqrt",
+        "msi",
+        "mstask",
+        "netutils",
+        "newdev",
+        "ntdsapi",
+        "ntmarta",
+        "oledlg",
+        "pdh",
+        "propsys",
+        "rasdlg",
+        "rpcns4",
+        "rtutils",
+        "samcli",
+        "scarddlg",
+        "sensapi",
+        "sfc",
+        "slc",
+        "slwga",
+        "srclient",
+        "srvcli",
+        "tapi32",
+        "tdh",
+        "traffic",
+        "winbio",
+        "winusb",
+        "wkscli",
+        "wmvcore",
+        "wscapi",
+        "wsnmp32",
+        "xinput1_4",
+        "xmllite",
         // C runtime DLLs: the packs hold the C library and the startup and helper exports.
         "crtdll",
         "msvcr70",
@@ -3651,6 +3731,15 @@ fn system_import_function(name: &str) -> Option<&str> {
     // (`api-ms-win-crt-string-l1-1-0.dll`, the UCRT) arrive as `api_ms_win_...`.
     let api_set = module.starts_with("api-ms-win-") || module.starts_with("api_ms_win_");
     (MODULES.contains(&module) || api_set).then_some(function)
+}
+
+/// Ghidra's default name for a function, padded to the address width of the image.
+fn default_function_name(address: u64, wide: bool) -> String {
+    if wide {
+        format!("FUN_{address:x}")
+    } else {
+        format!("FUN_{address:08x}")
+    }
 }
 
 fn in_executable_ranges(ranges: &[(u64, u64)], address: u64) -> bool {
@@ -4126,6 +4215,20 @@ mod tests {
         );
         assert_eq!(system_import_function("mylib.strlen"), None);
         assert_eq!(system_import_function("strlen"), None);
+    }
+
+    #[test]
+    fn performance_counter_and_other_system_dlls_are_listed() {
+        for (import, function) in [
+            ("pdh.PdhOpenQueryA", "PdhOpenQueryA"),
+            ("PDH.dll.PdhCollectQueryData", "PdhCollectQueryData"),
+            ("fwpkclnt.sys.FwpmEngineOpen0", "FwpmEngineOpen0"),
+            ("msi.MsiOpenPackageW", "MsiOpenPackageW"),
+            ("xinput1_4.XInputGetState", "XInputGetState"),
+        ] {
+            assert_eq!(system_import_function(import), Some(function), "{import}");
+        }
+        assert_eq!(system_import_function("pdhui.PdhOpenQueryA"), None);
     }
 
     #[test]

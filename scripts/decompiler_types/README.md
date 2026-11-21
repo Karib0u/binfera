@@ -161,7 +161,7 @@ No pack holds the decorated names that `msvcrt.dll` and the other CRT DLLs expor
 
 ## Coverage
 
-`coverage.py` measures how many named PE imports reach the decompiler without a prototype, over `tests/testfiles` (or `--corpus DIR`), per DLL and per API. It separates a missing pack entry from a DLL missing in the allow-list above. It needs a built `binfera` (`--binfera PATH`).
+`coverage.py` measures how many named PE imports reach the decompiler without a prototype, over `tests/testfiles` (or `--corpus DIR`), per DLL and per API. It separates a missing pack entry from a DLL missing in the allow-list above. It needs a built `binfera` (`--binfera PATH`). `--json FILE` also lists the untyped imports of each file (`per_file`). `scripts/bench/quality.py` imports its lookup to report untyped imports next to unresolved indirect calls and numeric API arguments, base against head; the CI subset is `scripts/corpus-quality.txt`.
 
 ## Darwin (`macos64.pack`)
 

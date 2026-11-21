@@ -3027,6 +3027,26 @@ void Session::add_import(uint64_t address, rust::Str name, bool noreturn) {
       Address(arch.getDefaultCodeSpace(), target), identifier(name));
   });
 }
+bool Session::add_code_pointer(uint64_t slot, uint64_t target, rust::Str name) {
+  std::lock_guard<std::mutex> lock(engine_mutex);
+  return checked([&] {
+    impl->ready();
+    auto &arch = impl->arch;
+    if (slot > UINT64_MAX - 7 || slot + impl->ptr() > impl->spec.address_limit) throw std::runtime_error("code pointer slot address overflow");
+    // The target is a function the caller registered: its prototype, whether supplied or inferred, is
+    // the one the call prints with. An unregistered target is left alone.
+    auto *scope = arch.symboltab->getGlobalScope();
+    if (!scope->queryFunction(Address(arch.getDefaultCodeSpace(), target))) return false;
+    impl->invalidateInferred();
+    arch.symboltab->clearPropertyRange(Varnode::readonly,
+      Range(arch.getDefaultCodeSpace(), slot, slot + impl->ptr() - 1));
+    // The same external reference an import slot has, naming the function itself: a call through
+    // the slot is deindirected to it (`ActionDeindirect`).
+    scope->addExternalRef(Address(arch.getDefaultCodeSpace(), slot),
+      Address(arch.getDefaultCodeSpace(), target), identifier(name));
+    return true;
+  });
+}
 bool Session::set_callsite_arguments(uint64_t caller, uint64_t site, uint64_t target, uint32_t count) {
   std::lock_guard<std::mutex> lock(engine_mutex);
   return checked([&] {

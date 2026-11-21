@@ -26,6 +26,7 @@ public:
   void set_function_ranges(rust::Slice<const CodeRange> ranges);
   void add_function(uint64_t address, rust::Str name, bool noreturn);
   void add_import(uint64_t address, rust::Str name, bool noreturn);
+  bool add_code_pointer(uint64_t slot, uint64_t target, rust::Str name);
   int32_t stack_purge(uint64_t address);
   void set_stack_purge(uint64_t address, uint32_t bytes);
   void add_branch(uint64_t site, uint64_t target, uint32_t length, uint32_t pop);

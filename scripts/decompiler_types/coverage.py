@@ -3,6 +3,10 @@
 
 usage: coverage.py [--binfera PATH] [--corpus DIR] [--packs DIR] [--top N] [--json FILE]
 
+The lookup is importable (`untyped_imports`, `read_function_names`, `read_enum_parameters`,
+`allowed_modules`); scripts/bench/quality.py reports it per file next to the decompiler's output.
+The JSON holds the per-DLL and per-API tables and, under `per_file`, the untyped imports of each file.
+
 Runs `binfera FILE --image-info --json` over every PE file directly inside the corpus directory
 (default tests/testfiles) and looks each named import up in the matching Windows pack
 (`winapi64.pack` for x86-64 images, `winapi32.pack` for x86), the way the decompiler does:
@@ -29,28 +33,53 @@ import zlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def read_function_names(path):
-    """Every `F:` key of a CXPROTO1 pack (format: pack_prototypes.py)."""
-    data = path.read_bytes()
+def read_pack_lines(data, prefixes):
+    """The records of a CXPROTO1 pack (format: pack_prototypes.py) whose key starts with a prefix, as
+    (key, value) pairs; the value is the rest of the line after the first tab."""
     if data[:8] != b"CXPROTO1":
-        raise SystemExit(f"{path}: not a prototype pack")
+        raise SystemExit("not a prototype pack")
     count, = struct.unpack_from("<I", data, 8)
     position, blocks = 12, []
     for _ in range(count):
         offset, length, _raw, key_size = struct.unpack_from("<IIIH", data, position)
         position += 14 + key_size
         blocks.append((offset, length))
-    names = set()
+    wanted = tuple(p.encode() for p in prefixes)
     for offset, length in blocks:
         raw = zlib.decompress(data[position + offset:position + offset + length])
         for line in raw.split(b"\n"):
-            if line.startswith(b"F:"):
-                names.add(line[2:].split(b"\t", 1)[0].decode("utf-8", "replace"))
-    return names
+            if line.startswith(wanted):
+                key, _, value = line.partition(b"\t")
+                yield key.decode("utf-8", "replace"), value.decode("utf-8", "replace")
 
 
-def allowed_modules():
-    source = (ROOT / "binfera/src/decompiler.rs").read_text()
+def read_function_names(path):
+    """Every `F:` key of a CXPROTO1 pack (format: pack_prototypes.py); `path` is the file or its bytes."""
+    data = path if isinstance(path, bytes) else pathlib.Path(path).read_bytes()
+    return {key[2:] for key, _ in read_pack_lines(data, ["F:"])}
+
+
+def read_enum_parameters(path):
+    """`P:` records of a Windows pack: {function: {parameter index (from 0): enum name}}, the parameters
+    the symbolic-constants pass prints by name (pack_win32_metadata.py). A trailing `+` marks a flag set
+    and is dropped; a union (`A+|B+`) keeps its text. `path` is the file or its bytes."""
+    data = path if isinstance(path, bytes) else pathlib.Path(path).read_bytes()
+    out = {}
+    for key, value in read_pack_lines(data, ["P:"]):
+        parameters = {}
+        for association in value.split(";"):
+            index, _, enum = association.partition("=")
+            if index.isdigit() and enum:
+                parameters[int(index)] = enum.rstrip("+")
+        if parameters:
+            out[key[2:]] = parameters
+    return out
+
+
+def allowed_modules(source=None):
+    """The DLLs `system_import_function` accepts, from binfera/src/decompiler.rs (or `source`, its text)."""
+    if source is None:
+        source = (ROOT / "binfera/src/decompiler.rs").read_text()
     body = re.search(r"fn system_import_function.*?const MODULES: &\[&str\] = &\[(.*?)\];", source, re.S)
     return set(re.findall(r'"([^"]+)"', body.group(1)))
 
@@ -67,6 +96,28 @@ def module_key(dll):
         if dll.endswith(suffix):
             return dll[: -len(suffix)]
     return dll
+
+
+def untyped_imports(imports, names, modules):
+    """The named imports (as `--image-info` lists them) the decompiler leaves without a prototype:
+    [(dll, function, cause)], `cause` being `no_prototype` or `module_not_listed`. `names` is the
+    pack's function names and `modules` the allow-list."""
+    out = []
+    for entry in imports:
+        function = entry.get("name")
+        if not function:
+            continue
+        dll = module_key(entry.get("dll") or "")
+        found = lookup(names, function)
+        reachable = dll in modules or dll.startswith(("api-ms-win-", "api_ms_win_"))
+        if not (found and reachable):
+            out.append((dll, function, "no_prototype" if not found else "module_not_listed"))
+    return out
+
+
+def pack_name(arch):
+    """The Windows pack file name for an `--image-info` architecture name, or None."""
+    return {"x64": "winapi64.pack", "x86": "winapi32.pack"}.get(arch)
 
 
 def run(binfera, path):
@@ -98,6 +149,7 @@ def main():
     per_dll = collections.defaultdict(collections.Counter)
     per_api = collections.defaultdict(set)          # (dll, function) -> files, untyped imports
     per_api_cause = {}
+    per_file = {}
     files_seen = 0
     with cf.ThreadPoolExecutor(8) as pool:
         for name, arch, imports in pool.map(lambda p: run(args.binfera, p), files):
@@ -105,20 +157,15 @@ def main():
                 continue
             files_seen += 1
             names = packs[arch]
-            for entry in imports:
-                function = entry.get("name")
-                if not function:
-                    continue
-                dll = module_key(entry.get("dll") or "")
-                api_set = dll.startswith(("api-ms-win-", "api_ms_win_"))
-                found = lookup(names, function)
-                reachable = dll in modules or api_set
-                totals["named"] += 1
-                per_dll[dll]["named"] += 1
-                if found and reachable:
-                    continue
-                cause = "no_prototype" if not found else "module_not_listed"
-                if not found and function.startswith(("?", "_Z")):
+            named_here = [e for e in imports if e.get("name")]
+            totals["named"] += len(named_here)
+            for entry in named_here:
+                per_dll[module_key(entry.get("dll") or "")]["named"] += 1
+            missing = untyped_imports(imports, names, modules)
+            per_file[name] = {"named": len(named_here), "untyped": len(missing),
+                              "apis": sorted(f"{dll}!{function}" for dll, function, _ in missing)}
+            for dll, function, cause in missing:
+                if cause == "no_prototype" and function.startswith(("?", "_Z")):
                     # Typed at analysis time from the decoration when every type is a scalar or
                     # pointer (`demangle::Prototype`); no pack holds these.
                     totals["mangled"] += 1
@@ -145,7 +192,7 @@ def main():
         print(f"{len(per_api[key]):6d}  {key[0]}!{key[1]}  [{per_api_cause[key]}]")
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({
-            "files": files_seen, "named": named, "untyped": untyped,
+            "files": files_seen, "named": named, "untyped": untyped, "per_file": per_file,
             "causes": {k: totals[k] for k in ("no_prototype", "module_not_listed")},
             "dlls": {d: dict(c) for d, c in per_dll.items()},
             "apis": [{"dll": k[0], "name": k[1], "files": len(v), "cause": per_api_cause[k]}

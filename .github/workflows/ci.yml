@@ -541,3 +541,16 @@ jobs:
           -p binfera -p binfera-ghidra -p binfera-cli
           --features binfera/decompiler,binfera-ghidra/native,binfera-cli/decompiler
           --lib --tests
+      # Output quality on seven small PE files: untyped imports, calls the decompiler could not
+      # name, constants at enum parameters. A count above scripts/bench/quality-baseline.json
+      # fails; after a change that lowers one, regenerate the baseline (scripts/corpus-quality.txt).
+      # One platform: the counts are the same everywhere, so the other two would only repeat it.
+      # The binary is the one the tests above built.
+      - name: Decompiler quality counts
+        if: runner.os == 'Linux'
+        run: >
+          python3 scripts/bench/quality.py
+          --head-bin target/release/binfera
+          --samples scripts/corpus-quality.txt
+          --baseline scripts/bench/quality-baseline.json --check
+          --workers 4
