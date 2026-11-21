@@ -44,6 +44,7 @@ mod golang_names;
 mod leaf_effects;
 mod macho;
 mod memset_loops;
+mod resolved_imports;
 mod rust;
 mod stack_protector;
 mod stack_purge;
@@ -1679,6 +1680,18 @@ impl DecompilerSession {
             if let Some(prototype) = demangled {
                 // A C++ import's decoration gives its prototype, `this` first for a method.
                 apply_demangled(&mut native, *address, &prototype);
+            }
+        }
+        // APIs loaded with `GetProcAddress` into a global: type each global like the import it holds.
+        if convention.is_windows() {
+            for (slot, name) in resolved_imports::find(analysis, &import_thunks(analysis)) {
+                if in_code(slot) || image.section_containing(slot).is_none() {
+                    continue;
+                }
+                native
+                    .add_import(slot, &bounded_name(&name, slot), false)
+                    .map_err(init)?;
+                native.apply_prototype(slot, &name).map_err(init)?;
             }
         }
         if convention == CallingConvention::WindowsX86 {
