@@ -7,6 +7,7 @@ import { useNotes } from "../names";
 import Asm, { type AsmHandle } from "../Asm";
 import { cachedFunctionArrows } from "../BranchArrows";
 import { applyNames, Code, importKey } from "../highlight";
+import { fileHandleOrigins } from "../fileHandleOrigins";
 import { resolvedSlots } from "../resolved";
 import MoreMenu, { type MenuItem } from "../MoreMenu";
 import { panesOf, VIEW_NAMES, type CodeView, type Layout } from "../workspace/location";
@@ -127,6 +128,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const argNotes = useMemo(() => instructionNotes(f, a.arch), [f, a.arch]);
   const importNames = useMemo(() => new Set([...(a.image?.imports ?? []), ...resolvedSlots(a.resolved)].flatMap((i) => [importKey(i), i.name])), [a.image, a.resolved]);
   const vocabulary = useMemo(() => codeVocabulary(f?.frame, (name) => importNames.has(name), f?.text), [f?.frame, f?.text, importNames]);
+  const handleHints = useMemo(() => f?.text && (mobile || paneView === "c")
+    ? fileHandleOrigins(f.text, (name) => importNames.has(name)) : undefined, [f?.text, importNames, mobile, paneView]);
   const [copied, setCopied] = useState(false);
   // The decompiler prints each statement on one line; the pane wraps it to its width.
   const [wrap, setWrap] = useState(true);
@@ -299,6 +302,14 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     else revealIn(cPane.current, ".ln.hl", true);
   }, [layout]);
 
+  const pickCLine = (line: number) => {
+    setFocus({ kind: "c", line });
+    // A brace or declaration has no instruction of its own: the nearest line that has one moves the cursor.
+    let first: number | undefined;
+    for (let d = 0; d < lines.length && first === undefined; d++) first = lines[line - d]?.[0] ?? lines[line + d]?.[0];
+    if (first !== undefined) { picked.current = first; onCursor(first); }
+  };
+
   const cContent = (
     <>
               {!f && <div className="notice"><span className="spin" /> Decompiling…</div>}
@@ -313,13 +324,12 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
                       <ul>{f.warnings?.map((w, i) => <li key={i}>{w}</li>)}</ul>
                     </details>
                   )}
-                  <Code text={trimmed.trimEnd()} lineOffset={lineOffset} comments={lineComments} active={hlLines} onLine={(line) => {
-                    setFocus({ kind: "c", line });
-                    // A brace or declaration has no instruction of its own: the nearest line that has one moves the cursor.
-                    let first: number | undefined;
-                    for (let d = 0; d < lines.length && first === undefined; d++) first = lines[line - d]?.[0] ?? lines[line + d]?.[0];
-                    if (first !== undefined) { picked.current = first; onCursor(first); }
-                  }} resolve={noSelf} display={display} onGoto={onGoto} onString={openString} strAt={strAt} inlineStrings={inlineStr} data={{ is: isData, go: onData }} vocabulary={vocabulary} />
+                  <Code text={trimmed.trimEnd()} lineOffset={lineOffset} comments={lineComments} active={hlLines} onLine={pickCLine}
+                    handleOrigins={handleHints?.size ? { hints: handleHints, jump: (line) => {
+                      pickCLine(line);
+                      revealIn(cPane.current, `[data-ln="${line}"]`);
+                    } } : undefined}
+                    resolve={noSelf} display={display} onGoto={onGoto} onString={openString} strAt={strAt} inlineStrings={inlineStr} data={{ is: isData, go: onData }} vocabulary={vocabulary} />
                 </>
               )}
               {a.decompileError && <div className="notice error">Decompiler: {a.decompileError}</div>}
@@ -445,7 +455,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
         {functionComments}
         {wordStyle}
         <div className="m-body" {...codeEvents} {...swipe}>
-          {mTab === "c" && <div className="cp-pane">{capChips}{cContent}</div>}
+          {mTab === "c" && <div className="cp-pane" ref={cPane}>{capChips}{cContent}</div>}
           {mTab === "asm" && <div className="cp-pane">{capChips}{aContent}</div>}
           {mTab === "graph" && <div className="cp-pane graph-pane">{graphContent}</div>}
           {mTab === "calls" && <div className="cp-pane graph-pane">{callsContent}</div>}

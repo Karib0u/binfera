@@ -1,4 +1,5 @@
-import { Fragment, type CSSProperties } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import type { FileHandleOrigin } from "./fileHandleOrigins";
 
 const KEYWORDS = "if|else|while|for|do|return|goto|break|continue|switch|case|default|sizeof|struct|union|enum|typedef";
 const TYPES = "void|char|short|int|long|unsigned|signed|float|double|bool|byte|ushort|uint|ulong|code|undefined\\d*|u?int\\d+|xunknown\\d+|_?_?(?:stdcall|cdecl|fastcall|thiscall)|size_t|ssize_t|wchar_t|u?intptr_t|ptrdiff_t|u?int\\d+_t";
@@ -107,7 +108,7 @@ export const unescapeLiteral = (lit: string) =>
     c[0] === "x" ? String.fromCharCode(parseInt(c.slice(1), 16)) : ({ n: "\n", r: "\r", t: "\t", "0": "\0" } as Record<string, string>)[c] ?? c);
 
 /** Minimal C-ish highlighter, enough to make decompiler output scannable. One block per source line. */
-export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, onGoto, onString, strAt, inlineStrings = true, data, display, vocabulary }: {
+export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, onGoto, onString, strAt, inlineStrings = true, data, display, vocabulary, handleOrigins }: {
   /** Names the spelling does not classify: this function's variables and types, and imported functions. */
   vocabulary?: CodeVocabulary;
   /** Analyst or agent comments by line index (in the full output), shown at the end of the line. */
@@ -126,6 +127,7 @@ export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, 
   /** Indexes (in the full output) of highlighted lines. */
   active?: Set<number>;
   onLine?: (index: number) => void;
+  handleOrigins?: { hints: Map<number, FileHandleOrigin>; jump: (line: number) => void };
   /** Maps an identifier or hex literal to a function entry, if it is one. */
   resolve?: (token: string) => number | undefined;
   onGoto?: (address: number) => void;
@@ -133,6 +135,7 @@ export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, 
   onString?: (content: string, address?: number) => void;
 }) {
   const lines = text.split("\n");
+  const codeId = useId();
   // The arrow keys move the selected line while the code itself has focus; Tab still reaches its links.
   const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!onLine || e.target !== e.currentTarget || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
@@ -149,8 +152,8 @@ export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, 
         // The line's own indent, so a wrapped continuation hangs under the statement (see .cockpit.wrap .ln).
         const indent = line.length - line.trimStart().length;
         return (
-          <div key={i} data-ln={index} className={"ln" + (active?.has(index) ? " hl" : "")} style={indent ? { "--ind": `${indent}ch` } as CSSProperties : undefined} onClick={() => onLine?.(index)}>
-            {highlightLine(line, resolve, onGoto, onString, strAt, inlineStrings, data, display, vocabulary)}
+          <div key={i} id={handleOrigins ? `${codeId}-line-${index}` : undefined} data-ln={index} className={"ln" + (active?.has(index) ? " hl" : "")} style={indent ? { "--ind": `${indent}ch` } as CSSProperties : undefined} onClick={() => onLine?.(index)}>
+            {highlightLine(line, resolve, onGoto, onString, strAt, inlineStrings, data, display, vocabulary, handleOrigins?.hints.get(index), handleOrigins?.jump, codeId)}
             {comments?.get(index) && <span className="tk-c ucm" title={comments.get(index)}>  // {comments.get(index)}</span>}
           </div>
         );
@@ -169,12 +172,20 @@ function highlightLine(
   data?: { is: (address: number) => boolean; go: (address: number) => void },
   display?: (token: string) => string | undefined,
   vocabulary?: CodeVocabulary,
+  origin?: FileHandleOrigin,
+  jump?: (line: number) => void,
+  codeId?: string,
 ) {
   const out: React.ReactNode[] = [];
   let last = 0, k = 0;
   for (const m of text.matchAll(TOKEN)) {
     const i = m.index!;
     if (i > last) out.push(<Fragment key={k++}>{tokenized(text.slice(last, i))}</Fragment>);
+    if (origin?.column === i && jump) {
+      out.push(<HandleOriginLink key={k++} name={m[0]} shown={display?.(m[0]) ?? m[0]} origin={origin} jump={jump} href={`#${codeId}-line-${origin.line}`} />);
+      last = i + m[0].length;
+      continue;
+    }
     let cls = CLASSES[m.findIndex((g, n) => n > 0 && g !== undefined)];
     // A function named without a call (a pointer to it is taken) is still a function.
     let named = false;
@@ -234,4 +245,50 @@ function highlightLine(
   }
   out.push(<Fragment key={k++}>{tokenized(text.slice(last))}</Fragment>);
   return out.length === 1 && text === "" ? "\u200b" : out;
+}
+
+function HandleOriginLink({ name, shown, origin, jump, href }: {
+  name: string; shown: string; origin: FileHandleOrigin; jump: (line: number) => void; href: string;
+}) {
+  const id = useId();
+  const link = useRef<HTMLAnchorElement>(null);
+  const [position, setPosition] = useState<CSSProperties>();
+  const visible = position !== undefined;
+  useEffect(() => {
+    const anchor = link.current;
+    if (!visible || !anchor) return;
+    const refresh = () => setPosition(document.activeElement === anchor ? originTipPosition(anchor) : undefined);
+    window.addEventListener("scroll", refresh, true);
+    window.addEventListener("resize", refresh);
+    return () => { window.removeEventListener("scroll", refresh, true); window.removeEventListener("resize", refresh); };
+  }, [visible]);
+  const call = origin.api + (origin.path ? `(${origin.path}, …)` : "(…)");
+  return (
+    <a ref={link} className="xref tk-v" href={href} data-tok={tokKey(shown)} data-id={name}
+      aria-label={`Go to opening call for ${shown}`} aria-describedby={id}
+      onMouseEnter={(e) => setPosition(originTipPosition(e.currentTarget))} onFocus={(e) => setPosition(originTipPosition(e.currentTarget))}
+      onMouseLeave={(e) => { if (document.activeElement !== e.currentTarget) setPosition(undefined); }}
+      onBlur={(e) => { if (!e.currentTarget.matches(":hover")) setPosition(undefined); }}
+      onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setPosition(undefined); } }}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setPosition(undefined);
+        e.currentTarget.closest<HTMLElement>(".code")?.focus({ preventScroll: true });
+        jump(origin.line);
+      }}>
+      {shown}<span id={id} role="tooltip" className="handle-origin-tip" hidden={!visible} style={position}>Opened by <code>{call}</code></span>
+    </a>
+  );
+}
+
+function originTipPosition(link: HTMLAnchorElement): CSSProperties | undefined {
+  const rect = link.getBoundingClientRect();
+  const pane = link.closest(".cp-pane")?.getBoundingClientRect();
+  if (rect.bottom < Math.max(0, pane?.top ?? 0) || rect.top > Math.min(window.innerHeight, pane?.bottom ?? window.innerHeight)) return;
+  const width = Math.min(320, window.innerWidth - 16);
+  return {
+    width, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+    ...(window.innerHeight - rect.bottom >= 112 ? { top: rect.bottom } : { bottom: window.innerHeight - rect.top }),
+  };
 }

@@ -443,6 +443,8 @@ body.pane-dragging * { cursor: grabbing !important; }
 .ln.hl, .insn.hl { background: color-mix(in srgb, var(--c-kw) 18%, transparent); box-shadow: inset 2px 0 0 var(--c-kw); }
 .insn { padding: 0 8px; margin: 0 -8px; border-radius: 4px; cursor: default; }
 .str-hint { font-style: italic; opacity: .75; }
+.handle-origin-tip { position: fixed; z-index: 30; box-sizing: border-box; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); box-shadow: 0 4px 14px #0004; font: 12px/1.5 var(--sans); text-indent: 0; white-space: normal; overflow-wrap: anywhere; }
+.handle-origin-tip code { color: var(--c-fn); font-family: var(--mono); }
 
 /* ---- phones: an app-style layout (tab bar, full-screen pages) ---- */
 .app.mobile { height: 100dvh; }
