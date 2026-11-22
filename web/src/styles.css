@@ -447,6 +447,8 @@ body.pane-dragging * { cursor: grabbing !important; }
 /* ---- phones: an app-style layout (tab bar, full-screen pages) ---- */
 .app.mobile { height: 100dvh; }
 .app.mobile header { padding: calc(10px + env(safe-area-inset-top)) 16px 10px; gap: 12px; }
+/* Firefox on Android left the header unpainted until a scroll while analysis ran (its progress bar animates); its own layer keeps it drawn. */
+.app.mobile header { transform: translateZ(0); }
 .app.mobile .file b { font-size: 16px; }
 .app.mobile .file span { font-size: 13px; }
 .app.mobile .ghost { min-height: 36px; padding: 0 14px; }
