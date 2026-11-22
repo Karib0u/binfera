@@ -304,14 +304,6 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     else revealIn(cPane.current, ".ln.hl", true);
   }, [layout]);
 
-  const [mTab, setMTab] = useState<CodeView | "refs">("c");
-  const showMobileAsm = (ad: number) => {
-    if (cursor !== ad) picked.current = ad;
-    focusInstruction(ad);
-    onCursor(ad);
-    setMTab("asm");
-  };
-
   const cContent = (
     <>
               {!f && <div className="notice"><span className="spin" /> Decompiling…</div>}
@@ -320,7 +312,9 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
                 <>
                   {!mobile && <div className="c-tools"><button onClick={copy} title="Copy the decompiled C, with your names">{copied ? "Copied" : "Copy C"}</button><button aria-pressed={wrap} onClick={() => setWrap((w) => !w)} title="Wrap long lines">Wrap</button></div>}
                   <PackedNotice a={a} />
-                  <FunctionWarnings f={f} onShowAsm={mobile ? showMobileAsm : onShowAsm} />
+                  {(f.incomplete || (f.warnings?.length ?? 0) > 0) && (
+                    <FunctionWarnings f={f} onShowAsm={mobile ? showMobileAsm : onShowAsm} />
+                  )}
                   <Code text={trimmed.trimEnd()} lineOffset={lineOffset} comments={lineComments} active={hlLines} onLine={(line) => {
                     setFocus({ kind: "c", line });
                     // A brace or declaration has no instruction of its own: the nearest line that has one moves the cursor.
@@ -360,6 +354,13 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const frameContent = <StackFrame frame={f?.frame} arch={a.arch} pending={!f} onWord={setWord} onInstruction={(ad) => { focusInstruction(ad); onCursor(ad); }} />;
 
   const [expandedCapsFor, setExpandedCapsFor] = useState<number | null>(null);
+  const [mTab, setMTab] = useState<CodeView | "refs">("c");
+  function showMobileAsm(ad: number) {
+    if (cursor !== ad) picked.current = ad;
+    focusInstruction(ad);
+    onCursor(ad);
+    setMTab("asm");
+  }
   const touch = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { setMTab((tab) => tab === "calls" ? "calls" : "c"); }, [address]);
   const handledReq = useRef(listingReq);

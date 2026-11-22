@@ -28,7 +28,6 @@ function uncertainCalls(warning: string) {
 }
 
 export function FunctionWarnings({ f, onShowAsm }: { f: DecompiledFunction; onShowAsm?: (va: number) => void }) {
-  if (!f.incomplete && !f.warnings?.length) return null;
   return <details className="warn">
     <summary>Output may be incomplete{f.unknown_callees ? " · unknown callees" : ""}</summary>
     <ul>{f.warnings?.map((warning, i) => {
