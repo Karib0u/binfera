@@ -3,7 +3,7 @@
  "files": {
   "2f43138aa75fb12ac482b486cbc98569.dll_": {
    "errors": 0,
-   "indirect_calls": 8,
+   "indirect_calls": 9,
    "numeric_api_args": 1,
    "unknown_callee_calls": 20,
    "untyped_imports": 0
@@ -24,7 +24,7 @@
   },
   "883bf161937f8dc6e766b07000110254.exe_": {
    "errors": 0,
-   "indirect_calls": 66,
+   "indirect_calls": 67,
    "numeric_api_args": 1,
    "unknown_callee_calls": 126,
    "untyped_imports": 0
