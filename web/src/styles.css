@@ -502,7 +502,9 @@ body.pane-dragging * { cursor: grabbing !important; }
 .m-body .cp-pane { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding: 12px 16px 28px; }
 .cockpit.m .code { font-size: 13px; line-height: 1.7; }
 .cockpit.m .ln { min-height: 1.7em; }
-.cockpit.wrap .ln { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A wrapped line hangs 4ch under its statement: the padding and the negative text-indent cancel
+   on the first row, whose own leading spaces still indent it. */
+.cockpit.wrap .ln { white-space: pre-wrap; overflow-wrap: break-word; padding-left: calc(8px + var(--ind, 0ch) + 4ch); text-indent: calc(-1 * (var(--ind, 0ch) + 4ch)); }
 .cockpit.m .asm { font-size: 12.5px; line-height: 1.75; display: block; }
 /* Plain block rows with a hanging indent: no flex or negative margins, which browsers lay out differently. */
 .cockpit.m .insn { display: block; margin: 0; padding: 0 0 0 11ch; text-indent: -11ch; white-space: pre-wrap; overflow-wrap: anywhere; }

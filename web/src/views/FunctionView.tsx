@@ -128,7 +128,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const importNames = useMemo(() => new Set([...(a.image?.imports ?? []), ...resolvedSlots(a.resolved)].flatMap((i) => [importKey(i), i.name])), [a.image, a.resolved]);
   const vocabulary = useMemo(() => codeVocabulary(f?.frame, (name) => importNames.has(name), f?.text), [f?.frame, f?.text, importNames]);
   const [copied, setCopied] = useState(false);
-  const [wrap, setWrap] = useState(!!mobile);
+  // The decompiler prints each statement on one line; the pane wraps it to its width.
+  const [wrap, setWrap] = useState(true);
   const [inspector, setInspector] = useState<"refs" | "stack">("refs");
   const inlineStr = true; // strings a data label points at are written inline
   // Analyst names and export names replace the decompiler's in the body, and in what is copied.
