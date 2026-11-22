@@ -933,11 +933,11 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     if (owners.length) return `in ${fnLabel(owners[0], a.functions.get(owners[0])?.name)}`;
     return image?.sectionAt(va)?.name ? `in ${image.sectionAt(va)!.name}, outside any function` : "outside any function";
   };
-  const navigatePanes = (va: number) => {
+  const navigatePanes = (va: number, fn?: number) => {
     if (typeof sel !== "number") return;
-    const next = locatePane(va, { address: sel, cursor });
+    const target = fn ?? locatePane(va, { address: sel, cursor }).address;
     setCursor(va);
-    if (next.address !== sel) setSel(next.address, true);
+    if (target !== sel) setSel(target, true);
   };
   const functionProps = (at: number, here: number | null, nav?: (va: number) => void): FnViewProps => ({
     a, address: at, cursor: here, rules: byFn.get(at) ?? [], resolve, onGoto: nav ?? setSel, mobile,
@@ -957,10 +957,10 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     onRenameAt: (ad, n) => { const name = n === (a.functions.get(ad)?.name ?? "") ? "" : n; notes.rename(ad, name); embedded?.onRenamed(ad, name); bump(); },
     listOpen: listPref, onToggleList: () => setListPref(!listPref), railOpen, onToggleRail: toggleRail, onToggleSplit: toggleSplit,
   });
-  const renderPane: PaneRenderer = (view, here, nav, focused) => {
+  const renderPane: PaneRenderer = (view, here, nav, focused, asm) => {
     if (view === "hex") return image ? <HexView compact image={image} cursor={here.cursor} tick={here.cursor ?? 0} selection={hexSel} onCursor={nav} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs} onOpenCode={nav} /> : <p className="empty">The file is not loaded.</p>;
     if (view === "strings" || view === "imports") return <PaneData view={view} a={a} cursor={here.cursor} strRefs={strRefs} importRefs={importRefs} label={label} indicators={indicators} navigate={nav} onBytes={(va, len) => showHex(va, len)} siteOf={siteOf} />;
-    return <FunctionView {...functionProps(here.address, here.cursor, nav)} mobile={false} paneView={view} shortcutsEnabled={focused} />;
+    return <FunctionView {...functionProps(here.address, here.cursor, nav)} {...asm} mobile={false} paneView={view} shortcutsEnabled={focused} />;
   };
   const fnView = typeof sel === "number" && <FunctionView {...functionProps(sel, cursor)} renderPane={renderPane} locate={locatePane} outside={outsideOf} onPaneNavigate={navigatePanes} />;
 
