@@ -76,6 +76,16 @@ bool inferenceGap(const std::string &text) {
 }
 // docFunction clears its partial state only for LowlevelError. A limit or an output failure leaves
 // queued tokens and indentation behind, which would then appear in later functions' text.
+/// One logical line per statement: viewers wrap to their own width, with a hanging indent. Ghidra's
+/// default 100-column limit broke calls before their argument list (`f` then `(a, b, ...)` on the next
+/// line, indented 20 columns), which a narrow pane or a phone cut off or wrapped onto a blank line.
+/// A null pointer prints as `NULL` rather than `(HANDLE)0x0`.
+constexpr int4 PRINT_LINE_WIDTH = 2000;
+static void configurePrinter(PrintLanguage *print) {
+  print->setMaxLineSize(PRINT_LINE_WIDTH);
+  if (auto *c = dynamic_cast<PrintC *>(print)) c->setNULLPrinting(true);
+}
+
 struct PrinterReset {
   PrintLanguage *print;
   std::ostream *fallback;
@@ -901,6 +911,14 @@ public:
   void pushConstant(uintb value, const Datatype *type, tagtype tag, const Varnode *vn,
                     const PcodeOp *op, uint4 format) override {
     if (pushSymbolic(value, type, tag, vn, op, format)) return;
+    // A Windows HANDLE compared with all ones is the failure value of CreateFile and its kin. Only a
+    // comparison: elsewhere -1 is also GetCurrentProcess(), so it keeps Ghidra's spelling.
+    if (windows_pack && op && (op->code() == CPUI_INT_EQUAL || op->code() == CPUI_INT_NOTEQUAL) &&
+        type->getMetatype() == TYPE_PTR && type->getName() == "HANDLE" &&
+        value == calc_mask(type->getSize())) {
+      pushAtom(Atom("INVALID_HANDLE_VALUE", tag, EmitMarkup::const_color, op, vn, value));
+      return;
+    }
     // Small UEFI addresses can remain untyped integers despite a discovered string symbol.
     // Only substitute address arguments with unknown/pointer type, never typed integer values.
     const bool call_argument = op && vn && (op->code() == CPUI_CALL || op->code() == CPUI_CALLIND) && op->getIn(0) != vn;
@@ -4454,6 +4472,7 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
         output.exceptions(std::ios::badbit | std::ios::failbit);
         arch.print->setOutputStream(&output);
         arch.print->setMarkup(false);
+        configurePrinter(arch.print);
         try {
           arch.print->docFunction(fd);
         } catch (const LowlevelError &e) {
@@ -4479,6 +4498,7 @@ NativeOutput Session::decompile(uint64_t address, uint32_t timeout_ms, uint32_t 
           arch.print->setOutputStream(&markedOut);
           arch.print->setMarkup(true);
           arch.print->setPackedOutput(false);
+          configurePrinter(arch.print);
           arch.print->docFunction(fd);
           std::vector<std::pair<uint32_t, uint64_t>> ops;
           for (auto it = fd->beginOpAll(); it != fd->endOpAll(); ++it)

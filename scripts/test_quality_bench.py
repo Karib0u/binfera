@@ -28,6 +28,10 @@ class IndirectCalls(unittest.TestCase):
     def test_a_cast_or_a_name_is_not_an_indirect_call(self):
         self.assertEqual(quality.indirect_call_sites("f((int)(*p)); g(x)(1); h = (code *)(1); k(*p)(2);"), [])
 
+    def test_a_wrapped_argument_list_is_still_a_call(self):
+        text = "  (iVar6 = (**(code **)(*piStackX_8 + 0x50))\n                     (piStackX_8,0), x);"
+        self.assertEqual(quality.indirect_call_sites(text), ["**(code **)(*piStackX_8 + 0x50)"])
+
     def test_an_unbalanced_tail_is_ignored(self):
         self.assertEqual(quality.indirect_call_sites("x = (*p"), [])
 

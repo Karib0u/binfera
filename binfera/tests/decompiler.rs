@@ -152,7 +152,7 @@ fn phnt_types_a_native_api_call() -> anyhow::Result<()> {
     let text = squeeze(&output.text);
     for expected in [
         "ULONGReturnLength",
-        "iVar1=ntdll_NtQuerySystemInformation(SystemHandleInformation,(PVOID)0x0,0,ReturnLength);",
+        "iVar1=ntdll_NtQuerySystemInformation(SystemHandleInformation,NULL,0,ReturnLength);",
         "ntdll_NtQuerySystemInformation(SystemHandleInformation,_Memory,ReturnLength[0],ReturnLength);",
     ] {
         assert!(text.contains(expected), "{expected}\n{}", output.text);
@@ -736,10 +736,9 @@ fn x86_32_decorated_runtime_names_get_their_archive_prototypes() -> anyhow::Resu
     let sample = include_bytes!("../../tests/testfiles/bc452cc1128ccf7fa9f76d83cda79132740414973600fed14509749fe946816e.exe_");
     let mut session = DecompilerSession::from_pe(sample)?;
     let output = session.decompile_function(0x408821)?;
-    // The demangled name is long enough that the printer breaks the line before the arguments.
     let flat: String = output.text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        flat.contains("ATL::CSimpleArray<HINSTANCE__*,ATL::CSimpleArrayEqualHelper<HINSTANCE__*>>::RemoveAll ((int *)(param_1 + 0x2c));"),
+        flat.contains("ATL::CSimpleArray<HINSTANCE__*,ATL::CSimpleArrayEqualHelper<HINSTANCE__*>>::RemoveAll((int *)(param_1 + 0x2c));"),
         "{}",
         output.text
     );

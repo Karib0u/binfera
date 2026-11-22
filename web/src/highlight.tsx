@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, type CSSProperties } from "react";
 
 const KEYWORDS = "if|else|while|for|do|return|goto|break|continue|switch|case|default|sizeof|struct|union|enum|typedef";
 const TYPES = "void|char|short|int|long|unsigned|signed|float|double|bool|byte|ushort|uint|ulong|code|undefined\\d*|u?int\\d+|xunknown\\d+|_?_?(?:stdcall|cdecl|fastcall|thiscall)|size_t|ssize_t|wchar_t|u?intptr_t|ptrdiff_t|u?int\\d+_t";
@@ -81,13 +81,20 @@ export function tokenized(text: string): React.ReactNode {
   const out: React.ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(WORD)) {
-    if (m.index! > last) out.push(text.slice(last, m.index));
+    if (m.index! > last) out.push(...breakable(text.slice(last, m.index), last));
     out.push(<span key={m.index} data-tok={tokKey(m[0])}>{m[0]}</span>);
     last = m.index! + m[0].length;
   }
-  if (!out.length) return text;
-  out.push(text.slice(last));
+  if (!out.length) return text.includes(",") ? breakable(text, 0) : text;
+  out.push(...breakable(text.slice(last), last));
   return out;
+}
+
+/** Punctuation with a line-break opportunity after each comma: the decompiler writes `f(a,b,c)`
+ * with no spaces, so a wrapped line would otherwise split an identifier. `<wbr>` is not copied. */
+function breakable(text: string, at: number): React.ReactNode[] {
+  if (!text.includes(",")) return [text];
+  return text.split(",").flatMap((part, i, all) => i < all.length - 1 ? [part + ",", <wbr key={`w${at}-${i}`} />] : [part]);
 }
 
 /** The decompiled text with analyst names in place of the original function names. */
@@ -139,8 +146,10 @@ export function Code({ text, lineOffset = 0, active, onLine, comments, resolve, 
     <div className="code" tabIndex={onLine ? 0 : undefined} aria-label="Decompiled code" onKeyDown={onKey}>
       {lines.map((line, i) => {
         const index = i + lineOffset;
+        // The line's own indent, so a wrapped continuation hangs under the statement (see .cockpit.wrap .ln).
+        const indent = line.length - line.trimStart().length;
         return (
-          <div key={i} data-ln={index} className={"ln" + (active?.has(index) ? " hl" : "")} onClick={() => onLine?.(index)}>
+          <div key={i} data-ln={index} className={"ln" + (active?.has(index) ? " hl" : "")} style={indent ? { "--ind": `${indent}ch` } as CSSProperties : undefined} onClick={() => onLine?.(index)}>
             {highlightLine(line, resolve, onGoto, onString, strAt, inlineStrings, data, display, vocabulary)}
             {comments?.get(index) && <span className="tk-c ucm" title={comments.get(index)}>  // {comments.get(index)}</span>}
           </div>

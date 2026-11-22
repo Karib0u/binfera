@@ -2326,7 +2326,7 @@ fn null_pointer_is_not_a_literal_in_a_zero_based_image() -> Result<(), Box<dyn s
     session.set_signature(0x1000, ValueType::CharPointer, &[])?;
     let output = session.decompile(0x1000, 5000, 1000, 1_000_000)?;
     assert!(!output.text.contains('"'), "{}", output.text);
-    assert!(output.text.contains("0x0"), "{}", output.text);
+    assert!(output.text.contains("return NULL;"), "{}", output.text);
     Ok(())
 }
 

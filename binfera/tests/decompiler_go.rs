@@ -52,8 +52,7 @@ fn register_abi_names_signatures_and_goroutine() -> anyhow::Result<()> {
         output.text
     );
     assert!(
-        output.text.contains(".~r1.tab == (void *)0x0")
-            || output.text.contains(".~r1.tab != (void *)0x0"),
+        output.text.contains(".~r1.tab == NULL") || output.text.contains(".~r1.tab != NULL"),
         "{}",
         output.text
     );
