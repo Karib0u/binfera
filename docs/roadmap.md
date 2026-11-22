@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-21. This page lists planned work and how it will be measured. It also lists what already exists, so that work is not planned twice. Priorities describe relative value, not delivery dates.
+Updated: 2026-11-22. This page lists planned work, ranked by **reward for effort**, and how each item is tested. It also lists what already exists, so that work is not planned twice.
 
 **Scope.** binfera answers "what does this one executable do?" by reading its code. These belong to the File Analysis Bus project instead: file-format parsing, unpacking, analysis of installer and bytecode scripts, and verdicts.
 
@@ -22,7 +22,7 @@ This must hold for the binaries analysts actually get: stripped, often packed, a
 5. **A recall gain must not hide a precision loss.** Measure both over the whole corpus before merging.
 6. **Rust owns the analyst's model; Ghidra analyzes it.** binfera stores what the analyst asserts and replays it into the native decompiler. It does not reimplement Ghidra's type system.
 7. **Extend Ghidra at stated seams.** Vendored sources stay byte-identical to `SHA256SUMS`. Output improvements go, in order of preference, into facts binfera supplies (prototypes, types, resolved tables), rules and actions registered by the bridge, and, last, a build-time hook in `binfera-ghidra/build.rs` that asserts its anchor and is listed in `third_party/ghidra/README.md` with a regression test.
-8. **Prioritize by frequency in the malware corpus.** An item's rank follows how many corpus binaries it affects and how many functions or results it changes, measured by the harness. Coverage of Windows system binaries alone does not raise a priority.
+8. **Rank by what the analyst reads, divided by effort.** An item's reward is the number of functions whose output goes from wrong or unreadable to right, measured on the [review set](#review-set) and the corpus. How often a pattern appears in the corpus is not reward by itself. Wrong output comes before unreadable output, and unreadable before missing.
 
 ## Already covered (do not re-plan)
 
@@ -41,26 +41,99 @@ This must hold for the binaries analysts actually get: stripped, often packed, a
 - **Typed input to the decompiler:** debug types (structures, pointers, arrays, aliases), locked signatures, typed stack locals and named data symbols, all through the Ghidra bridge.
 - **Windows type packs:** Win32 metadata, the phnt native API and loader structures, and CRT exports (#57). APIs resolved by `GetProcAddress` with a literal name into a global are registered as imports and typed (#59). A global that only ever holds one of the program's own functions is called directly (#64).
 - **Prototype propagation:** a caller inherits API parameter names and types from the inferred prototypes of its callees (#58).
-- **Decompilation:** x86, x86-64, AArch64, ARM32/Thumb and MIPS32.
+- **Decompilation:** x86, x86-64, AArch64, ARM32/Thumb and MIPS32. One line per statement, wrapped by the viewer with a hanging indent; `NULL` and `INVALID_HANDLE_VALUE` (#65). Win32 enum and flag arguments by name (#62). Calls through a register loaded from an import slot (#61).
 - **Other analysis:** capa, function emulation and diffing.
 - **Viewers:** entropy, hex, strings and imports, and a .NET IL listing. An IDA-style listing with typed data items (`dd offset FUN_x`, `dd ?` for uninitialized data) and a frame header per function; argument and stack-variable comments in the assembly; import-stub names (#58); the API names of `GetProcAddress` globals in the assembly and the listing (#64).
 - **Measurement:** the recovery benchmark harness, `scripts/bench/recovery.py` (#52), the type-coverage report, `scripts/decompiler_types/coverage.py` (#57), and the output-quality report, `scripts/bench/quality.py` (#64): untyped imports, unresolved indirect calls and numeric API arguments per file, base against head, with a CI subset.
 - **Archives:** zip and 7z, with known-password probing.
 - **Integrations:** MCP and the agent.
 
-## P0
+## How work is ranked
 
-### Measurement
+Each item states three things:
 
-| Item | Work |
+| Field | Meaning |
 |---|---|
-| Benchmark harness | **First version done (#52).** Remaining: a small subset in CI. A script that runs the per-change workflow (see [Methodology](#methodology)) over a corpus manifest and compares two commits. It writes recall, precision, merged and split bodies, and timing as JSON. A small subset runs in CI. Its first truth source is tier B evidence extracted from the existing corpus, so it is useful before the symbol corpus exists. |
-| Evidence census | For each evidence source (`.pdata`, Guard CF, thunk tables, FH4, C scope tables, `.eh_frame`, Go `pclntab`, and so on), report how many corpus binaries contain it and how many starts it alone contributes. This orders the recovery items below. |
-| Baseline | Publish the first numbers per format, architecture and compiler in [benchmarks.md](benchmarks.md), and set the targets in [Definition of "best"](#definition-of-best) from them. |
-| Symbol corpus | Fetch about 200 Windows binaries with PDBs (x86, x64, ARM64) and about 200 Linux binaries with debuginfo. Commit the extracted truth (start, size, name) as manifests, not the binaries. |
-| Compiler matrix | A reproducible build of test programs with MSVC, clang-cl, gcc, clang, Go and Rust first; MinGW, Delphi and Nim later (Delphi needs a commercial toolchain). Build at `-O0`, `-O2` and `-Os`, with LTO, incremental and not. Keep symbols for the truth; analyze stripped copies. |
+| **Effort** | **S**: under about 200 lines, a day. **M**: a few days. **L**: weeks, or a design that must be proven first. |
+| **Reward** | The functions whose output changes from wrong or unreadable to right, with the measurement behind the number. |
+| **Done when** | A check that can fail: a review-set reading, a `quality.py` count, or a test. An item without one is not ready to start. |
 
-### Windows function recovery
+**Why the order changed (2026-11-22).** The first ranking followed how often a pattern appears in the corpus. Measured afterwards, that predicted reward poorly:
+
+- The type-knowledge passes (#57–#64) helped each sample that uses their pattern, but moved the corpus totals little: unresolved indirect calls 1,789 → 1,741 and untyped imports 3,628 → 3,619.
+- A first attempt at the hidden-API passes (decoded names, hashes, syscalls; about 3,100 lines) left its target sample unchanged, and was not merged.
+- A 43-line fix (#65) made every long call on every sample readable. It was not on the roadmap: an analyst found it by reading one function on a phone.
+
+So the plan now starts from what analysts read. The [review set](#review-set) is the first item, and every output change reports its effect on it.
+
+**Where the output stands.** Measured over 11 samples (9 malware demos and 2 corpus PEs, 8,412 functions) on 2026-11-22:
+
+| Defect | Functions | Share | Typical cause |
+|---|---:|---:|---|
+| Flagged incomplete | 4,537 | 53% | A callee of the program's own has no known prototype, so arguments or a used return value may be missing. |
+| `goto` in the body | 1,253 | 15% | Loop and `switch` structuring. |
+| Exception-frame setup printed as code | 514 | 6% | `*in_FS_OFFSET = &local` for an x86 `__try` (MSVC) or `try` (Delphi; 474 in DarkGate), and the handler shown as a separate function. |
+| `unaff_` registers | 514 | 6% | Frames set up by a helper (`__SEH_prolog`), and callee-saved registers. |
+| `in_` register parameters | 368 | 4% | Register-passed arguments the prototype does not declare. |
+| Unrecovered switch table | 177 | 2% | Jump-table resolution. |
+| Bad instruction data | 172 | 2% | Decoding into data, or a wrong function start. |
+
+## Now: output an analyst can trust
+
+Ordered by reward for effort. Wrong output before unreadable output.
+
+| # | Item | Effort | Reward | Done when |
+|---|---|---|---|---|
+| 1 | <a id="review-set"></a>**Review set.** About 30 functions from the demos and the corpus (WannaCry, NotPetya, DarkGate, BlackCat, Hive, Stuxnet, and so on), each with a hand-written expected reading: what it does, the calls and arguments that must appear, and the lines that must not (`unaff_`, `*in_FS_OFFSET =`). Add the share of incomplete functions and the defect counts above to `quality.py`. | S | Enables every item below: each PR states which readings it fixed or broke. | The set runs in CI next to the `quality.py` subset and fails when a passing reading regresses. The [Methodology](#metrics) output review set grows from it to about 100 functions. |
+| 2 | **x86 exception frames.** Recognize the MSVC SEH3 and SEH4 prologue and the Delphi `try` frame on `fs:[0]`. Hide the setup and teardown; print the try level writes as `__try {` … `}`; print the `__finally` or `__except` handler inside its function with the function's own variable names, instead of as a separate `FUN_x` reading `*(unaff_EBP + -0x28)`. Stack slots read only by the handler (`hFile` in WannaCry `0x4018f9`) then stay in the frame, so the listing names them. | M | 514 functions (6%), and the output is wrong today: the cleanup (`CloseHandle(hFile)`) is missing from the function that owns it. | WannaCry `0x4018f9` prints `__try { … } __finally { … CloseHandle(hFile); }`; no review-set function prints `*in_FS_OFFSET =`; the count of functions with frame setup falls by at least 80% on the demos. |
+| 3 | **`unaff_` and `in_` registers.** A frame set up by `__SEH_prolog`/`__SEH_prolog4` gives `EBP` its value; a register-passed argument is added to the callee's prototype when every caller sets it. | M | 882 functions (10%) show a placeholder register. | `unaff_EBP` does not appear in any demo function that uses the SEH prolog helpers; `in_` and `unaff_` counts in `quality.py` fall, with no review-set regression. |
+| 4 | **Signatures of the program's own functions.** Callee-first over the call graph, iterated within recursive groups: what the callee reads before writing and whether it sets the return register, combined with what every call site passes and reads back, checked against `ret imm`, Win64 home space and variadic calls. Supplied signatures always win. | L | The largest: 53% of functions are incomplete, about 4,000 uncertain calls. | The incomplete share falls by half on the demos; at least 20 changed call sites checked by hand against the assembly; output identical with `--jobs 1`, `2` and `4`; batch time on BlackCat, Hive and DarkGate within 1.5× of today. |
+| 5 | **Switch tables and bad instruction data.** Resolve the tables in the [jump-table row](#function-recovery) below; find why decoding runs into data. | M | 349 functions (4%), whose control flow is cut short. | Both warning counts in `quality.py` fall by half, with no new function start rejected by the recovery benchmark. |
+
+## Next: the viewer
+
+Cheap, and seen on every function.
+
+| Item | Effort | Reward | Done when |
+|---|---|---|---|
+| **Where a value comes from.** Hovering a variable shows the statement that sets it (`hFile = CreateFileA(lpFileName, GENERIC_READ, …) @ 0x40193a`), and a click goes there. The decompiler knows each variable's writes; export them for every variable, not only stack slots. | S–M | Replaces scrolling back for each variable, the most common reading step. | A web test hovers `hFile` in WannaCry `0x4018f9` and gets the `CreateFileA` line. |
+| **Stack slots by name in the assembly.** `mov [ebp+hFile], eax` instead of `mov [ebp-28h], eax`, as IDA does. | S, after item 2 | Every function with a stack frame. | The listing of WannaCry `0x4018f9` shows `hFile` on the store after `CreateFileA` and on both reads. |
+| **What a handle refers to.** At each use of a handle, a comment with the call that opened it: `ReadFile(hFile /* CreateFileA(lpFileName) */, …)`, with the string when the name is a constant or a caller passes one. Files, registry keys, mutexes, sockets and processes. Neither IDA nor Ghidra does this. | M | Malware reading: which file, key or mutex an operation touches. | Review-set functions that use handles show the opening call at each use. |
+
+## Next: analyst-editable semantics
+
+When the engine cannot infer a type or prototype, the analyst states it once and it flows through the decompiler. Effort L in all; step 1 is done.
+
+The bridge can already inject typed structures, locked signatures and typed stack locals. That is how DWARF field names reach the output. What is missing is a persistent model owned by the analyst, which binfera replays into the decompiler.
+
+Two parts of today's model are weak:
+
+- Renames are text rewrites over cached C (`rewrite_identifiers` in `binfera-mcp/src/tools.rs`).
+- The project store only holds string edits.
+
+Deliver the steps in this order:
+
+| Step | Work |
+|---|---|
+| 1. Proof of concept | Written. Properties 1–4 and 8 pass with today's bridge; 5 and 7 pass only by rebuilding the native session; 6 and 7 through the store wait on step 2. The test `binfera/tests/decompiler_user_types.rs` uses a stripped function that accesses a struct through an untyped pointer. It must show eight things:<ul><li>a user struct is injected without DWARF;</li><li>a signature refers to it;</li><li>field accesses appear in the output;</li><li>callers benefit where data flow allows;</li><li>renaming a field changes the output;</li><li>the edit survives reopening the project;</li><li>removing it restores the original;</li><li>output does not depend on which functions were decompiled first.</li></ul> |
+| 2. Semantic model | Add `binfera/src/decompiler/semantics.rs`, a neutral Rust model.<ul><li>Types: primitive, pointer, array, struct, enum and alias.</li><li>Function signatures, and type bindings to data and stack locations.</li><li>Type IDs scoped to a type library, so types can be shared across samples of a family.</li><li>Validation of size, alignment, overlap and recursion before anything reaches C++.</li><li>SQLite schema version 4: tables for types, bindings and signatures, using the existing revision, change-journal and undo machinery, with transactional edits.</li><li>A C-declaration parser as an input format, for analysts, agents and imported headers.</li></ul> |
+| 3. Bridge | Today a type id is fixed for the life of a native session: re-sending an id with a new layout is silently ignored, and the internal `_dwarf_<id>` suffix can reach the printed output. User and DWARF types share one id space and one load at session build. Generalize `add_debug_types()` into one loader for any type graph, with separate id spaces per source and internal names that never print, and `set_debug_signature()` into `set_user_signature()`. Add global-data and stack-slot typing with storage validation. Do not change the vendored Ghidra algorithms. |
+| 4. Session replay | Load user types after DWARF, type packs and library data, and before signatures. Precedence: user, then DWARF and trusted symbols, then type packs, then binfera's inference. User edits must clear the bridge's inferred cross-function facts (`invalidateInferred`) and change the inference-cache key. Today only `set_debug_signature` clears them; the type loader must too. Analyst edits must not be carried on `Analysis`, which the base analysis cache stores. |
+| 5. Reanalysis and caches | A completed Ghidra structure cannot be changed in place.<ul><li>A changed layout gets a new version under a fresh internal name, and its bindings are repointed to it.</li><li>Deletions, or an overlay that has drifted, rebuild the native session, but not the Rust recovery analysis.</li><li>Split the caches. The base analysis cache is keyed by binary SHA-256 and engine version. The pseudocode cache adds the overlay hash, the function address and the options. Comments and stars do not invalidate pseudocode.</li><li>Start by invalidating all pseudocode; later, only the functions that depend on a changed type.</li></ul> |
+| 6. Workflows | Ship three workflows across desktop, browser and MCP: define a struct and assign it to a parameter; edit a prototype; type a data location. The UI shows a C preview. Add the MCP tools `list_types`, `define_type`, `set_function_signature` and `set_data_type`, and import or export type libraries. Replace text-rewrite renames with native symbols. Before starting, confirm the browser build uses the same bridge path. Desktop and MCP share the SQLite store; the browser persists the same snapshot locally. |
+| 7. Local variables (later) | Allow retyping locals only once their identity survives reanalysis. Key them by storage plus first-use address (the use point `add_debug_local` leaves empty today), not by names like `iVar3`. |
+
+## Later: when a review-set function needs it
+
+These are planned and specified, but each waits until a review-set reading fails because of it. Then it moves up with that reading as its test.
+
+**Hidden API calls.** Results of `GetProcAddress` kept in locals and struct fields, `LdrGetProcedureAddress`, API hashes, direct syscalls, decoded names and strings. A first attempt at all five (about 3,100 lines, not merged) left its target sample unchanged. Restart one pass at a time, from a sample where the review set shows the defect.
+
+**Packed images.** Count the packed files in the corpus before giving this a slot: the packer check flags none of the 11 samples measured above.
+
+**Function recovery.** Tier B recall is 99.9% (#52) and the x64 interior false starts are gone (#56). What remains mostly affects Microsoft binaries, except jump tables (item 5 above).
+
+### Function recovery
 
 Order these by the evidence census. Guard CF and the C++ handler tables are common in Microsoft binaries and may be rare in malware. The first census (376 PE and ELF files in `tests/testfiles`) found 100% tier B recall on PE x64 and about 1,300 starts inside x64 `.pdata` extents, so false starts came first; #56 removed the 1,090 on PE x64 with tier B recall unchanged.
 
@@ -74,7 +147,15 @@ Order these by the evidence census. Guard CF and the C++ handler tables are comm
 | x64 C scope tables | Read the filter, handler and termination funclets from `__C_specific_handler` scope records. | `UNWIND_INFO` names the handler. |
 | `__CxxFrameHandler4` | Decode the compressed FH4 catch and unwind maps. | `UNWIND_INFO` names the handler. |
 
-## P1
+### Recovery measurement
+
+| Item | Work |
+|---|---|
+| Benchmark harness | **First version done (#52).** Remaining: a small subset in CI. A script that runs the per-change workflow (see [Methodology](#methodology)) over a corpus manifest and compares two commits. It writes recall, precision, merged and split bodies, and timing as JSON. A small subset runs in CI. Its first truth source is tier B evidence extracted from the existing corpus, so it is useful before the symbol corpus exists. |
+| Evidence census | For each evidence source (`.pdata`, Guard CF, thunk tables, FH4, C scope tables, `.eh_frame`, Go `pclntab`, and so on), report how many corpus binaries contain it and how many starts it alone contributes. This orders the recovery items below. |
+| Baseline | Publish the first numbers per format, architecture and compiler in [benchmarks.md](benchmarks.md), and set the targets in [Definition of "best"](#definition-of-best) from them. |
+| Symbol corpus | Fetch about 200 Windows binaries with PDBs (x86, x64, ARM64) and about 200 Linux binaries with debuginfo. Commit the extracted truth (start, size, name) as manifests, not the binaries. |
+| Compiler matrix | A reproducible build of test programs with MSVC, clang-cl, gcc, clang, Go and Rust first; MinGW, Delphi and Nim later (Delphi needs a commercial toolchain). Build at `-O0`, `-O2` and `-Os`, with LTO, incremental and not. Keep symbols for the truth; analyze stripped copies. |
 
 ### Packed and dumped images
 
@@ -125,36 +206,13 @@ The Win32 metadata repository is MIT, but its notice says the metadata does not 
 | Strings | Run identified decryption routines in the existing function emulator, and annotate their call sites with the plaintext. | The emulator's result at the call site. |
 | Measure | **Done (#64):** `scripts/bench/quality.py` reports untyped imports, `(*X)(...)` call sites, unknown-callee calls and numeric constants at enum parameters per file, compares two binaries and writes JSON. Seven small PEs (`scripts/corpus-quality.txt`) run in CI on Linux, about 30 seconds, and fail when a count rises above `scripts/bench/quality-baseline.json`. Remaining: gate a release on the whole corpus, not the subset. | |
 
-### Analyst-editable semantics
-
-Step 1 does not depend on the measurement work and can start alongside P0.
-
-The bridge can already inject typed structures, locked signatures and typed stack locals. That is how DWARF field names reach the output. What is missing is a persistent model owned by the analyst, which binfera replays into the decompiler.
-
-Two parts of today's model are weak:
-
-- Renames are text rewrites over cached C (`rewrite_identifiers` in `binfera-mcp/src/tools.rs`).
-- The project store only holds string edits.
-
-Deliver the steps in this order:
-
-| Step | Work |
-|---|---|
-| 1. Proof of concept | Written. Properties 1–4 and 8 pass with today's bridge; 5 and 7 pass only by rebuilding the native session; 6 and 7 through the store wait on step 2. The test `binfera/tests/decompiler_user_types.rs` uses a stripped function that accesses a struct through an untyped pointer. It must show eight things:<ul><li>a user struct is injected without DWARF;</li><li>a signature refers to it;</li><li>field accesses appear in the output;</li><li>callers benefit where data flow allows;</li><li>renaming a field changes the output;</li><li>the edit survives reopening the project;</li><li>removing it restores the original;</li><li>output does not depend on which functions were decompiled first.</li></ul> |
-| 2. Semantic model | Add `binfera/src/decompiler/semantics.rs`, a neutral Rust model.<ul><li>Types: primitive, pointer, array, struct, enum and alias.</li><li>Function signatures, and type bindings to data and stack locations.</li><li>Type IDs scoped to a type library, so types can be shared across samples of a family.</li><li>Validation of size, alignment, overlap and recursion before anything reaches C++.</li><li>SQLite schema version 4: tables for types, bindings and signatures, using the existing revision, change-journal and undo machinery, with transactional edits.</li><li>A C-declaration parser as an input format, for analysts, agents and imported headers.</li></ul> |
-| 3. Bridge | Today a type id is fixed for the life of a native session: re-sending an id with a new layout is silently ignored, and the internal `_dwarf_<id>` suffix can reach the printed output. User and DWARF types share one id space and one load at session build. Generalize `add_debug_types()` into one loader for any type graph, with separate id spaces per source and internal names that never print, and `set_debug_signature()` into `set_user_signature()`. Add global-data and stack-slot typing with storage validation. Do not change the vendored Ghidra algorithms. |
-| 4. Session replay | Load user types after DWARF, type packs and library data, and before signatures. Precedence: user, then DWARF and trusted symbols, then type packs, then binfera's inference. User edits must clear the bridge's inferred cross-function facts (`invalidateInferred`) and change the inference-cache key. Today only `set_debug_signature` clears them; the type loader must too. Analyst edits must not be carried on `Analysis`, which the base analysis cache stores. |
-| 5. Reanalysis and caches | A completed Ghidra structure cannot be changed in place.<ul><li>A changed layout gets a new version under a fresh internal name, and its bindings are repointed to it.</li><li>Deletions, or an overlay that has drifted, rebuild the native session, but not the Rust recovery analysis.</li><li>Split the caches. The base analysis cache is keyed by binary SHA-256 and engine version. The pseudocode cache adds the overlay hash, the function address and the options. Comments and stars do not invalidate pseudocode.</li><li>Start by invalidating all pseudocode; later, only the functions that depend on a changed type.</li></ul> |
-| 6. Workflows | Ship three workflows across desktop, browser and MCP: define a struct and assign it to a parameter; edit a prototype; type a data location. The UI shows a C preview. Add the MCP tools `list_types`, `define_type`, `set_function_signature` and `set_data_type`, and import or export type libraries. Replace text-rewrite renames with native symbols. Before starting, confirm the browser build uses the same bridge path. Desktop and MCP share the SQLite store; the browser persists the same snapshot locally. |
-| 7. Local variables (later) | Allow retyping locals only once their identity survives reanalysis. Key them by storage plus first-use address (the use point `add_debug_local` leaves empty today), not by names like `iVar3`. |
-
-### Decompiler output
+### Other decompiler output
 
 | Area | Remaining work |
 |---|---|
-| Signatures | **#61:** a call through a register reloaded from an import slot in a loop (`mov esi, [HeapAlloc]` … `call esi`) resolves to the import with its prototype. Remaining: `unaff_EBP` after the x86 `__SEH_prolog` helpers, and register-passed callers that print `in_EAX`/`in_ECX`. Infer argument counts and types from every call site and from how the callee uses its registers. Reconcile them with ABI evidence: Win64 home space, `ret imm` on x86, variadic calls. |
+| Signatures | Items 3 and 4 above. |
 | Types | Propagate import prototypes and RTTI class layouts. Recover structures from base-plus-offset accesses, and arrays from indexed accesses. |
-| Control flow | Structure `try`/`catch` and `__try`/`__except` from exception metadata. Emit `switch` from resolved tables. Reduce `goto` with better loop structuring. |
+| Control flow | x86 `__try` is item 2 above. Remaining: x64 `__try` from `__C_specific_handler` scope records, C++ `try`/`catch` from FH3 and FH4 tables, `switch` from resolved tables, and fewer `goto` (15% of functions) through better loop structuring. |
 | Idioms | Inline `memcpy` and `memset`, stack strings, string decryption loops, API hashing (see [Type knowledge](#type-knowledge)), and the CRT and STL inlines (`std::string`, `std::vector`). |
 | Correctness gate | In CI, run differential emulation of the IR against the machine code on the compiler matrix. |
 | Go | AArch64 support; string constants; signatures for the program's own methods; the closure context register; the goroutine register on x86 and before Go 1.17. |
@@ -226,7 +284,7 @@ The metrics are computed per binary, then grouped by format, architecture, compi
 - **Types:** parameter and local types compared to PDB or DWARF types, where symbols exist.
 - **Correctness:** differential emulation of the IR against the machine code, recompiling small leaf functions, and round-tripping the compiler matrix through decompile, recompile and test.
 - **Readability:** counts of `goto`, casts, temporaries and unnamed globals. These are tracked as trends, not gates.
-- **Output review set:** about 100 malware functions (string decryption, API resolution, configuration parsing, C2 dispatch) with a hand-checked expected reading. Each release reports, for each function, whether the output still supports that reading.
+- **Output review set:** started as [item 1](#review-set) with about 30 functions, growing to about 100 malware functions (string decryption, API resolution, configuration parsing, C2 dispatch) with a hand-checked expected reading. Each release reports, for each function, whether the output still supports that reading.
 - **Cost:** wall time and peak memory, per function and per image.
 
 ### Corpus
