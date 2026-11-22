@@ -16,7 +16,9 @@ function Harness({ f, mode }: { f: DecompiledFunction; mode: "asm" | "graph" | "
   const [cursor, setCursor] = useState<number | null>(null);
   Object.assign(window, { navigate: setCursor, currentCursor: cursor });
   const props = {
-    a: { functions: new Map([[f.address, f]]), names: new Map(), strings: [], arch: "x86" }, address: f.address, rules: [],
+    a: { functions: new Map([[f.address, f]]), names: new Map(), strings: [], arch: "x86",
+      image: { imports: ["CreateFileA", "CreateFileW", "ReadFile"].map((name) => ({ dll: "kernel32.dll", name })) } },
+    address: f.address, rules: [],
     resolve: noop, onGoto: noop, xrefsReady: true, strings: [], onString: noop, strAt: noop, textAt: noop,
     cursor, onCursor: setCursor, isData: () => false, onData: noop, slot: noop, onImport: noop,
     starred: false, onStar: noop, onRename: noop, onRenameAt: noop, onXrefs: noop, xrefReq: 0, renameReq: 0,

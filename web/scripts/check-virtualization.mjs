@@ -104,6 +104,54 @@ try {
   await page.locator(".insn.hl").click();
   assert.ok(await page.locator('[data-ln="2"].hl').count(), "assembly selection marks C");
 
+  const open = String.raw`  hFile = kernel32_CreateFileW(L"C:\\sample;{.txt",GENERIC_READ,0,NULL,OPEN_EXISTING,0,NULL);`;
+  const read = "  BVar1 = kernel32_ReadFile(hFile,lpBuffer,4,&count,NULL);";
+  const readFixture = (name, statements) => {
+    const source = ["", `BOOL ${name}(void)`, "", "{", "  HANDLE hFile;", ...statements, read, "}"];
+    const opening = synthetic.asm[1][0], reading = synthetic.asm[2][0];
+    return { ...synthetic, text: source.join("\n"), asm: synthetic.asm.slice(0, 3),
+      lines: source.map((line) => line === open ? [opening] : line === read ? [reading] : []) };
+  };
+  const straight = readFixture("read_straight", [open, ...Array(40).fill("  PrepareBuffer(lpBuffer);")]);
+  await mount(straight, "sync");
+  const handle = page.getByRole("link", { name: "Go to opening call for hFile" });
+  const tooltip = page.getByRole("tooltip");
+  await handle.hover();
+  assert.match(await tooltip.textContent(), /Opened by CreateFileW\(L"C:\\\\sample;\{\.txt"/);
+  await tooltip.click();
+  await page.waitForFunction((ad) => window.currentCursor === ad, synthetic.asm[1][0]);
+  assert.equal(await page.locator(".ln.hl").textContent(), open);
+  assert.ok(await inPane(".ln.hl"), "origin jump reveals the opening statement");
+  assert.ok(await inPane(".insn.hl"), "origin jump reveals mapped assembly");
+  await handle.focus();
+  await tooltip.waitFor();
+  await handle.press("Escape");
+  await tooltip.waitFor({ state: "hidden" });
+  await handle.press("Enter");
+  assert.ok(await inPane(".ln.hl"), "keyboard activation reveals the opening statement");
+  assert.ok(await page.locator(".code:focus").count(), "origin jump returns focus to the code");
+
+  const dynamic = readFixture("read_dynamic", ["  hFile = kernel32_CreateFileA(GetPath(),GENERIC_READ,0,NULL,OPEN_EXISTING,0,NULL);"]);
+  await mount(dynamic, "sync");
+  await handle.focus();
+  assert.equal(await tooltip.textContent(), "Opened by CreateFileA(…)");
+
+  const ambiguous = [
+    ["conditional", ["  if (flag)", open]],
+    ["merge", [open, "  if (flag) {", "    hFile = other;", "  }"]],
+    ["shadowed", [open, "  {", "    HANDLE hFile;", read, "  }"]],
+    ["overwritten", [open, "  hFile = other;"]],
+    ["escaped", ["  SavePointer(&(", "    hFile));", open, "  FillHandle();"]],
+    ["compound", [open.replace(/;$/, " + Other();")]],
+    ["commented", [`  /* ${open}`, "  */"]],
+  ];
+  for (const [name, statements] of ambiguous) {
+    await mount(readFixture(`read_${name}`, statements), "sync");
+    await page.getByText(`read_${name}`, { exact: true }).waitFor();
+    assert.equal(await handle.count(), 0, name);
+  }
+  console.log("File handles: opening call, literal path, keyboard and pointer jumps, and ambiguous flow: passed");
+
   await mount(synthetic, "mobile");
   await page.evaluate((ad) => window.navigate(ad), synthetic.asm.at(-1)[0]);
   await page.getByRole("tab", { name: "Asm", exact: true }).click();
