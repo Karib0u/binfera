@@ -89,12 +89,13 @@ def indirect_call_sites(text: str) -> list[str]:
             end += 1
         else:
             return sites
-        rest = text[end + 1:end + 3].lstrip()
-        if rest.startswith("("):
+        # The argument list may follow on the next line when the printer wraps a long call.
+        if CALL_ARGUMENTS.match(text, end + 1):
             sites.append(text[at + 1:end])
         at += 2
 
 
+CALL_ARGUMENTS = re.compile(r"\s*\(")
 IDENTIFIER_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 NUMBER = re.compile(r"^(?:\([A-Za-z_][\w\s\*]*\))*\s*(-?(?:0[xX][0-9a-fA-F]+|[0-9]+))[uUlL]*$")
 KEYWORDS = {"if", "while", "for", "switch", "return", "sizeof", "do", "else"}
