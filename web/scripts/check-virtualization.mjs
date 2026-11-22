@@ -14,7 +14,8 @@ try {
     bundle: true, format: "esm", write: false });
   await build({ entryPoints: [fileURLToPath(new URL("virtualization/harness.tsx", import.meta.url))], bundle: true,
     outfile: join(temp, "app.js"), jsx: "automatic", logLevel: "error",
-    define: { "process.env.NODE_ENV": '"production"', "import.meta.url": '"http://localhost/app.js"' },
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.url": '"http://localhost/app.js"', "import.meta.env.SSR": "false",
+      __BINFERA_BUILD__: '{"version":"test","commit":null}' },
     plugins: [{ name: "engine-free", setup(b) {
       b.onResolve({ filter: /\/engine\/assets$/ }, () => ({ path: "engine-assets", namespace: "test" }));
       b.onLoad({ filter: /.*/, namespace: "test" }, () => ({ contents: "export const NATIVE = false;" }));
@@ -109,6 +110,79 @@ try {
   await page.waitForSelector(".insn.hl");
   assert.ok(await inPane(".insn.hl"), "opening the phone Asm tab reveals the cursor");
   assert.equal(await page.locator(".insn.hl").evaluate((el) => el.getBoundingClientRect().height), 20);
+
+  const [direct, indirect, both] = [4100, 8000, 9000].map((i) => synthetic.asm[i][0]);
+  const hex = (va) => `0x${va.toString(16)}`;
+  const missing = 0x500000;
+  const prefix = "Unknown callee prototype: forwarded arguments or return types may be missing. Supply signatures for reliable call reconstruction.";
+  const malformed = `${prefix} Uncertain calls (1): ${hex(direct)} -> truncated`;
+  const details = [
+    `${hex(direct)} -> named_target (arguments)`, `${hex(indirect)} -> indirect call (return)`,
+    `${hex(both)} -> 0x401000 (arguments, return)`,
+    ...Array.from({ length: 5 }, (_, i) => `${hex(missing + i)} -> other_target (return)`),
+  ];
+  const diagnostics = {
+    ...linked, incomplete: true, unknown_callees: true,
+    asm: linked.asm.map((row) => row[0] === direct || row[0] === both ? [row[0], "e800000000", "call 401000h"]
+      : row[0] === indirect ? [row[0], "ffd0", "call eax"] : row),
+    lines: [[], [synthetic.address, direct], [], []],
+    warnings: ["Ordinary warning.", malformed, `${prefix} Uncertain calls (10): ${details.join("; ")}; 2 more calls`],
+  };
+  const openWarnings = async () => {
+    const disclosure = page.locator(".cp-pane details.warn");
+    await disclosure.waitFor();
+    if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click();
+    return disclosure;
+  };
+  const callAt = (va) => page.getByRole("link", { name: hex(va), exact: true });
+  const expectCallSelected = async (pane, va) => {
+    const selected = pane.locator(".insn.hl");
+    await selected.and(pane.locator(`[data-addr="${va}"]`)).waitFor();
+    assert.equal(await selected.count(), 1, "only the exact call-site instruction is selected");
+    assert.ok(await selected.evaluate((el) => {
+      const row = el.getBoundingClientRect(), box = el.closest(".cp-pane").getBoundingClientRect();
+      return row.top >= box.top && row.bottom <= box.bottom;
+    }), "the call site is visible in Asm");
+  };
+
+  await page.evaluate((f) => window.mountWorkspace(f), diagnostics);
+  const cPane = page.getByRole("region", { name: "C pane", exact: true });
+  const asmPanes = page.getByRole("region", { name: "Asm pane", exact: true });
+  const warnings = await openWarnings();
+  assert.equal(await asmPanes.count(), 0, "start in C-only layout");
+  await warnings.getByText("Ordinary warning.", { exact: true }).waitFor();
+  await warnings.getByText(malformed, { exact: true }).waitFor();
+  await warnings.getByText("2 more calls", { exact: true }).waitFor();
+  await warnings.getByText(hex(missing), { exact: true }).waitFor();
+  assert.equal(await warnings.getByRole("link").count(), 3, "only mapped call sites are actionable");
+  await warnings.getByText(/named_target.*uncertain arguments$/).waitFor();
+  await warnings.getByText(/indirect call.*uncertain return value$/).waitFor();
+  await warnings.getByText(/0x401000.*uncertain arguments and return value$/).waitFor();
+  await callAt(direct).press("Enter");
+  await expectCallSelected(asmPanes, direct);
+  assert.match(await asmPanes.getAttribute("class"), /is-active/);
+  assert.match(new URL(page.url()).hash, new RegExp(`view=c\\+asm&at=${hex(direct)}$`));
+  await openWarnings();
+  await callAt(indirect).click();
+  await expectCallSelected(asmPanes, indirect);
+  await asmPanes.locator(".cp-pane").evaluate((el) => { el.scrollTop = 0; });
+  await asmPanes.locator(`[data-addr="${indirect}"]`).waitFor({ state: "detached" });
+  await callAt(indirect).click();
+  await expectCallSelected(asmPanes, indirect);
+  await cPane.getByRole("button", { name: "Disable pane sync" }).click();
+  await callAt(both).click();
+  await expectCallSelected(asmPanes.and(page.locator(".unlinked")), both);
+  await expectCallSelected(asmPanes.and(page.locator(":not(.unlinked)")), indirect);
+  assert.match(new URL(page.url()).hash, new RegExp(`&at=${hex(indirect)}$`), "an independent jump preserves the shared cursor");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate((f) => window.mountWorkspace(f), diagnostics);
+  await openWarnings();
+  await callAt(direct).click();
+  await expectCallSelected(page.locator(".m-body"), direct);
+  assert.equal(await page.getByRole("tab", { name: "Asm", exact: true }).getAttribute("aria-selected"), "true");
+  await page.setViewportSize({ width: 1100, height: 800 });
+  console.log("Call diagnostics: exact offscreen targets, C-only layout, linked and independent panes, mobile Asm, and warning fallback passed");
 
   const f = process.argv[2] ? JSON.parse(await readFile(process.argv[2], "utf8")) : synthetic;
   for (const mode of ["asm", "graph"]) {

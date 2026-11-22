@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import Listing from "../../src/Listing";
 import { createImage } from "../../src/engine/image";
 import { FunctionView, type FnViewProps } from "../../src/views/FunctionView";
+import Workspace from "../../src/workspace/Workspace";
+import { locOf } from "../../src/workspace/location";
 import type { Analysis, DecompiledFunction } from "../../src/types";
 import "../../src/styles.css";
 
@@ -27,6 +29,17 @@ function Harness({ f, mode }: { f: DecompiledFunction; mode: "asm" | "graph" | "
 }
 
 Object.assign(window, { mount: (f: DecompiledFunction, mode: "asm" | "graph" | "sync" | "mobile") => root.render(<Harness key={++run} f={f} mode={mode} />) });
+
+Object.assign(window, { mountWorkspace: (f: DecompiledFunction) => {
+  const a: Analysis = {
+    image: null, functions: new Map([[f.address, f]]), order: [f.address], names: new Map(), strings: [],
+    entry: f.address, fileName: "calls.bin", size: 0, arch: "x86", packed: null, stringsTotal: 0,
+    capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: true, done: true,
+  };
+  const key = ++run;
+  history.replaceState({ binfera: true, run: key, i: 0, ...locOf(f.address), at: f.address }, "");
+  root.render(<Workspace key={key} a={a} onNew={noop} onFile={noop} run={key} active initial={{ sel: f.address, at: f.address, layout: "c" }} />);
+} });
 
 const base = 0x400000;
 const span = 64 * 4;

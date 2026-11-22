@@ -5,7 +5,9 @@ import { dropSideAt, movePane, panesIn, splitPane, treeOf, updatePane, withoutPa
 
 export type { PanePlace } from "./paneTree";
 export interface PaneRenderer {
-  (view: CodeView, place: PanePlace, navigate: (va: number) => void, active: boolean): ReactNode;
+  (view: CodeView, place: PanePlace, navigate: (va: number) => void, active: boolean, asm: {
+    onShowAsm: (va: number) => void; asmJump?: { va: number };
+  }): ReactNode;
 }
 
 function ViewIcon({ view }: { view: CodeView }) {
@@ -65,7 +67,7 @@ function savedTree(layout: string): PaneTree | null {
 
 /** Linked panes share a location; independent panes keep their own location when moved. */
 export default function CodePanes({ layout, setLayout, place, onNavigate, locate, render, fileName, fileTitle = fileName, label, outside }: {
-  layout: string; setLayout: (v: string) => void; place: PanePlace; onNavigate: (va: number) => void;
+  layout: string; setLayout: (v: string) => void; place: PanePlace; onNavigate: (va: number, fn?: number) => void;
   locate: (va: number, current: PanePlace) => PanePlace; render: PaneRenderer; fileName: string; fileTitle?: string; label: (va: number) => string;
   /** Where the cursor is when it is not inside the function a pane shows (a header, data, another function); null when it is inside. */
   outside?: (fn: number, va: number) => string | null;
@@ -73,6 +75,9 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
   const [tree, setTree] = useState<PaneTree>(() => savedTree(layout) ?? treeOf(panesOf(layout).map((view, id) => ({ id, view, place: null }))));
   const nextId = useRef(Math.max(...panesIn(tree).map((p) => p.id)) + 1);
   const [active, setActive] = useState<number | null>(null);
+  const [asmJump, setAsmJump] = useState<{ id: number; va: number } | null>(null);
+  // A jump also reveals the instruction when the shared cursor is already there.
+  useEffect(() => { if (asmJump) setAsmJump(null); }, [asmJump]);
   const [drag, setDrag] = useState<{ id: number; x: number; y: number; over: { id: number; side: DropSide } | null } | null>(null);
   const treeRef = useRef(tree);
   treeRef.current = tree;
@@ -150,6 +155,19 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
         if (pane.place === null) onNavigate(va);
         else setTree((t) => updatePane(t, pane.id, (p) => ({ ...p, place: locate(va, here) })));
       };
+      const onShowAsm = (va: number) => {
+        let id = pane.id;
+        if (pane.place) {
+          update(updatePane(tree, id, (p) => ({ ...p, view: "asm", place: { address: here.address, cursor: va } })));
+        } else {
+          const existing = panes.find((p) => p.view === "asm" && p.place === null);
+          id = existing?.id ?? nextId.current++;
+          if (!existing) update(splitPane(tree, pane.id, { id, view: "asm", place: null }, "vertical"));
+          onNavigate(va, here.address);
+        }
+        setActive(id);
+        setAsmJump({ id, va });
+      };
       const away = here.cursor != null ? outside?.(here.address, here.cursor) ?? null : null;
       return <section key={pane.id} data-pane-id={pane.id} className={"cp-slot editor-group" + (pane.place ? " unlinked" : "") + (activeId === pane.id ? " is-active" : "") + (drag?.id === pane.id ? " is-lifted" : "")} aria-label={VIEW_NAMES[pane.view] + " pane"}
         onPointerDownCapture={() => setActive(pane.id)} onFocusCapture={() => setActive(pane.id)}>
@@ -172,7 +190,7 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
         {away !== null && here.cursor != null
           ? <div className="pane-breadcrumb outside" title={`The cursor is at 0x${here.cursor.toString(16)}, ${away}, not in ${label(here.address)}`}><span title={fileTitle}>{fileName}</span><i aria-hidden>›</i><code>0x{here.cursor.toString(16)}</code><em>{away}</em><button onClick={() => go(here.address)}>Back to {label(here.address)}</button></div>
           : <div className="pane-breadcrumb" title={`${fileTitle} / ${label(here.address)} / 0x${(here.cursor ?? here.address).toString(16)}`}><span title={fileTitle}>{fileName}</span><i aria-hidden>›</i><span>{label(here.address)}</span><i aria-hidden>›</i><code>0x{(here.cursor ?? here.address).toString(16)}</code></div>}
-        <div className="pane-content">{render(pane.view, here, go, activeId === pane.id)}</div>
+        <div className="pane-content">{render(pane.view, here, go, activeId === pane.id, { onShowAsm, asmJump: asmJump?.id === pane.id ? asmJump : undefined })}</div>
         {over && <div className={"pane-drop-zone drop-" + over.side}><span>{over.side === "center" ? "Swap places" : `Dock ${over.side}`}</span></div>}
       </section>;
     }} />

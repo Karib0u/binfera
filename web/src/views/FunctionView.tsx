@@ -13,6 +13,7 @@ import { panesOf, VIEW_NAMES, type CodeView, type Layout } from "../workspace/lo
 import { revealIn, Splitter, useMedia, useStored } from "../workspace/panels";
 import CodePanes, { type PanePlace, type PaneRenderer } from "../workspace/CodePanes";
 import { PackedNotice } from "./AnalysisStatus";
+import { FunctionWarnings } from "./FunctionWarnings";
 import { NATIVE } from "../engine/assets";
 import { StackFrame } from "./StackFrame";
 import { instructionNotes } from "../annotations";
@@ -109,7 +110,9 @@ export interface FnViewProps {
   renderPane?: PaneRenderer;
   outside?: (fn: number, va: number) => string | null;
   locate?: (va: number, current: PanePlace) => PanePlace;
-  onPaneNavigate?: (va: number) => void;
+  onPaneNavigate?: (va: number, fn?: number) => void;
+  onShowAsm?: (va: number) => void;
+  asmJump?: { va: number };
   /** The Listing, with the instructions of the selected C line marked. */
   listing: (marked: Set<number>) => React.ReactNode; callGraph: (onOpen: (ad: number) => void) => React.ReactNode;
   /** Phone only: bumped when the strip is tapped, to show the listing; the strip itself; the ⋯ menu's shared items; opening search. */
@@ -119,7 +122,7 @@ export interface FnViewProps {
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -248,6 +251,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     // A click in another ASM pane selects just that instruction here too; any other arrival shows the whole C line.
     if (f.asm.some((r) => r[0] === cursor)) { selfScroll.current = true; setFocus({ kind: "a", ad: cursor, group: asmPick !== cursor }); } // arriving: the whole C line's instructions, as a click on that line shows
   }, [cursor, address, f]);
+  const focusInstruction = (ad: number) => { selfScroll.current = true; setFocus({ kind: "a", ad }); };
+  useEffect(() => { if (asmJump) focusInstruction(asmJump.va); }, [asmJump]);
   const capAt = useMemo(() => {
     const m = new Map<number, string[]>();
     for (const r of rules) for (const ad of r.addresses) m.set(ad, [...(m.get(ad) ?? []), r.name]);
@@ -299,6 +304,14 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     else revealIn(cPane.current, ".ln.hl", true);
   }, [layout]);
 
+  const [mTab, setMTab] = useState<CodeView | "refs">("c");
+  const showMobileAsm = (ad: number) => {
+    if (cursor !== ad) picked.current = ad;
+    focusInstruction(ad);
+    onCursor(ad);
+    setMTab("asm");
+  };
+
   const cContent = (
     <>
               {!f && <div className="notice"><span className="spin" /> Decompiling…</div>}
@@ -307,12 +320,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
                 <>
                   {!mobile && <div className="c-tools"><button onClick={copy} title="Copy the decompiled C, with your names">{copied ? "Copied" : "Copy C"}</button><button aria-pressed={wrap} onClick={() => setWrap((w) => !w)} title="Wrap long lines">Wrap</button></div>}
                   <PackedNotice a={a} />
-                  {(f.incomplete || (f.warnings?.length ?? 0) > 0) && (
-                    <details className="warn">
-                      <summary>Output may be incomplete{f.unknown_callees ? " · unknown callees" : ""}</summary>
-                      <ul>{f.warnings?.map((w, i) => <li key={i}>{w}</li>)}</ul>
-                    </details>
-                  )}
+                  <FunctionWarnings f={f} onShowAsm={mobile ? showMobileAsm : onShowAsm} />
                   <Code text={trimmed.trimEnd()} lineOffset={lineOffset} comments={lineComments} active={hlLines} onLine={(line) => {
                     setFocus({ kind: "c", line });
                     // A brace or declaration has no instruction of its own: the nearest line that has one moves the cursor.
@@ -349,10 +357,9 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     </>
   );
 
-  const frameContent = <StackFrame frame={f?.frame} arch={a.arch} pending={!f} onWord={setWord} onInstruction={(ad) => { selfScroll.current = true; setFocus({ kind: "a", ad }); onCursor(ad); }} />;
+  const frameContent = <StackFrame frame={f?.frame} arch={a.arch} pending={!f} onWord={setWord} onInstruction={(ad) => { focusInstruction(ad); onCursor(ad); }} />;
 
   const [expandedCapsFor, setExpandedCapsFor] = useState<number | null>(null);
-  const [mTab, setMTab] = useState<CodeView | "refs">("c");
   const touch = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { setMTab((tab) => tab === "calls" ? "calls" : "c"); }, [address]);
   const handledReq = useRef(listingReq);
