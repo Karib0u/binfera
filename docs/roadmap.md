@@ -319,7 +319,7 @@ Every class 3, 4 or 5 start binfera produces becomes a regression test.
 
 ### Definition of "best"
 
-Targets are set per format and architecture once the [baseline](#measurement) is published, and are raised as results improve. The initial aims, to be confirmed against the baseline, on PE x86, x64 and ARM64, ELF x64 and AArch64, and Mach-O ARM64:
+Targets are set per format and architecture once the [baseline](#recovery-measurement) is published, and are raised as results improve. The initial aims, to be confirmed against the baseline, on PE x86, x64 and ARM64, ELF x64 and AArch64, and Mach-O ARM64:
 
 - Start recall of at least 99.5% and precision of at least 99.9% where tier B truth covers every function (x64 `.pdata`, `.eh_frame`, `LC_FUNCTION_STARTS`). x86 PE has its own, lower target.
 - Merged or split bodies below 0.1%.
