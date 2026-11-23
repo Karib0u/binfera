@@ -295,11 +295,19 @@ pub(super) fn collect_pe_seeds(
         }
     }
     if let Some(load_config) = &pe.load_config_data {
-        if let (Some(table), Some(count)) = (
-            load_config.directory.se_handler_table,
-            load_config.directory.se_handler_count,
-        ) {
+        let config = &load_config.directory;
+        if let (Some(table), Some(count)) = (config.se_handler_table, config.se_handler_count) {
             collect_safe_seh_seeds(bytes.len(), image, table, count, seeds, diagnostics);
+        }
+        // GuardFlags ends at byte 148 in PE32+ and at byte 92 in PE32.
+        if config.size >= if pe.is_64 { 148 } else { 92 } {
+            if let (Some(table), Some(count), Some(flags)) = (
+                config.guard_cf_function_table,
+                config.guard_cf_function_count,
+                config.guard_flags,
+            ) {
+                collect_guard_cf_seeds(image, table, count, flags, seeds, diagnostics);
+            }
         }
     }
     if let Some(directory) = pe
@@ -657,6 +665,64 @@ pub(super) fn msvc_x64_eh_entries(image: &LoadedImage) -> BTreeSet<u64> {
         }
     }
     entries
+}
+
+pub(super) fn collect_guard_cf_seeds(
+    image: &LoadedImage,
+    table: u64,
+    count: u64,
+    flags: u32,
+    seeds: &mut SeedMap,
+    diagnostics: &mut Vec<RecoveryDiagnostic>,
+) {
+    use goblin::pe::load_config::IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT;
+
+    if flags & IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT == 0 || table == 0 || count == 0 {
+        return;
+    }
+    // The high four bits encode the number of metadata bytes after each 32-bit RVA.
+    let stride = 4 + (flags >> 28) as usize;
+    let raw = usize::try_from(count)
+        .ok()
+        .and_then(|count| count.checked_mul(stride))
+        .and_then(|len| {
+            image
+                .file_backed_at(table, len)
+                .filter(|raw| raw.len() == len)
+        });
+    let Some(raw) = raw else {
+        diagnostics.push(RecoveryDiagnostic {
+            address: table,
+            message: "Guard CF function table is not fully file-backed".to_string(),
+        });
+        return;
+    };
+    let rva = |entry: &[u8]| u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]);
+    let entries = raw.chunks_exact(stride);
+    if !entries
+        .clone()
+        .is_sorted_by(|left, right| rva(left) < rva(right))
+    {
+        diagnostics.push(RecoveryDiagnostic {
+            address: table,
+            message: "Guard CF function table RVAs are not strictly increasing".to_string(),
+        });
+        return;
+    }
+    for entry in entries {
+        // Suppressed entries do not supply independent evidence of a callable start.
+        if entry.get(4).is_some_and(|flags| flags & 0x03 != 0) {
+            continue;
+        }
+        if let Some(address) = image.image_base.checked_add(u64::from(rva(entry))) {
+            if image
+                .file_backed_at(address, 1)
+                .is_some_and(|raw| raw.len() == 1)
+            {
+                add_seed(image, seeds, address, SeedKind::GuardCf);
+            }
+        }
+    }
 }
 
 pub(super) fn collect_safe_seh_seeds(

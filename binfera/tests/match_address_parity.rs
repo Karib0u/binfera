@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::Path;
 
+use binfera::address::Address;
 use binfera::api::{analyze, Input};
 use binfera::capabilities::MatchingRuleSet;
 use binfera::parallel::AnalysisOptions;
@@ -15,11 +16,19 @@ use flate2::read::GzDecoder;
 #[test]
 fn recovered_functions_match_all_reference_rule_addresses() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let expected: BTreeMap<String, BTreeMap<String, BTreeSet<RdAddress>>> =
+    let mut expected: BTreeMap<String, BTreeMap<String, BTreeSet<RdAddress>>> =
         serde_json::from_reader(GzDecoder::new(
             File::open(root.join("tests/reference-results/capa-10.0.0/matches.json.gz")).unwrap(),
         ))
         .unwrap();
+    // The pinned reference does not seed Guard CF entries. This entry calls RtlGenRandom,
+    // imported under its SystemFunction036 name.
+    expected
+        .get_mut("17264e3126a97c319a6a0c61e6da951e.dll_")
+        .unwrap()
+        .entry("generate random numbers via RtlGenRandom".to_string())
+        .or_default()
+        .insert(RdAddress::from(&Address::Absolute(0x5fda_ca40)));
     let mut paths = Vec::new();
     collect_rule_file_paths(&root.join("rules"), &mut paths);
     paths.sort();

@@ -9,14 +9,14 @@
 //! operand or a signature name such addresses; the rule here keeps them out of the function list.
 //!
 //! Only the binary's own metadata (an export, the entry point, a TLS callback, a symbol, the
-//! incremental-link thunk table, MSVC exception or throw metadata) or a direct `call` that lands
-//! on an instruction boundary can name an entry inside a row. That happens for hand-written
+//! incremental-link thunk table, Guard CF, MSVC exception or throw metadata) or a direct
+//! `call` that lands on an instruction boundary can name an entry inside a row. That happens for hand-written
 //! multi-entry routines and for a malformed `.pdata`. Such a start is kept and reported, never
 //! dropped silently.
 use super::*;
 
 /// Seed kinds read from the image's own metadata that name a function entry by themselves.
-const NAMED_ENTRY: [SeedKind; 8] = [
+const NAMED_ENTRY: [SeedKind; 9] = [
     SeedKind::EntryPoint,
     SeedKind::Export,
     SeedKind::TlsCallback,
@@ -25,6 +25,7 @@ const NAMED_ENTRY: [SeedKind; 8] = [
     SeedKind::MsvcException,
     SeedKind::MsvcThrowMetadata,
     SeedKind::Dwarf,
+    SeedKind::GuardCf,
 ];
 
 /// Whether `address` lies strictly inside an unwind row of the sorted `unwound` extents (from
