@@ -79,14 +79,23 @@ jobs:
       - name: Check the live site
         run: |
           set -euo pipefail
-          # The landing page must reference this build's hashed bundle; edge caches can lag a moment.
+          # The landing page and demo index can reach the edge at different times.
           asset="$(grep -o '/assets/index-[^"]*\.js' dist/index.html | head -1)"
           for attempt in $(seq 1 12); do
-            if curl -fsS https://binfera.io/ | grep -qF "$asset"; then break; fi
-            [ "$attempt" = 12 ] && { echo "error: binfera.io does not serve $asset" >&2; exit 1; }
+            if ! curl -fsS --max-time 10 https://binfera.io/ | grep -F "$asset" >/dev/null; then
+              pending="landing page does not reference $asset"
+            elif ! curl -fsS --max-time 10 https://binfera.io/demos/index.json | cmp -s - dist/demos/index.json; then
+              pending="demo index differs from this build"
+            else
+              break
+            fi
+            if [ "$attempt" = 12 ]; then
+              echo "error: binfera.io $pending" >&2
+              exit 1
+            fi
+            echo "Waiting for binfera.io: $pending"
             sleep 10
           done
-          curl -fsS https://binfera.io/demos/index.json | cmp - public/demos/index.json
           curl -fsS -o /dev/null https://binfera.io/install.sh
           curl -fsS -o /dev/null https://binfera.io/install.ps1
           npm run test:deployment
