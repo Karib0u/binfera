@@ -744,28 +744,25 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       </button>
     </div>
   );
+  /** Phone: the same list, windowed. A function with capability matches gets a second line; both heights are fixed so the window can be computed. */
   const fnList = (
-  <div className="list">
-    {list.map((ad) => {
-      const f = a.functions.get(ad);
-      const rules = byFn.get(ad);
-      const name = fnLabel(ad, f?.name);
-      const mark = embedded?.marks.get(ad);
-      return (
-        <button key={ad} aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }} ref={(el) => { if (el && sel === ad) el.scrollIntoView({ block: "nearest" }); }}>
-          <span className="fn">
-            <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
-            {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small>{hex(ad)}</small>}
-            {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
-          </span>
-          {rules && <em className="pill">{rules.length}</em>}
-          {!f && <span className="dot" title="pending" />}
-          {f?.error && <span className="dot err" title="failed" />}
-        </button>
-      );
-    })}
-    {!list.length && <p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
-  </div>
+    <VirtualList className="m-fnlist" items={list} rowHeight={(ad) => (byFn.has(ad) ? 82 : 60)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
+      empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
+      render={(ad) => {
+        const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
+        return (
+          <button aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
+            <span className="fn">
+              <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
+              {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small>{hex(ad)}</small>}
+              {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
+            </span>
+            {rules && <em className="pill">{rules.length}</em>}
+            {!f && <span className="dot" title="pending" />}
+            {f?.error && <span className="dot err" title="failed" />}
+          </button>
+        );
+      }} />
   );
 
   const label = (ad: number) => fnLabel(ad, a.functions.get(ad)?.name);
@@ -1057,7 +1054,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   }, [mobile, detail, sel]);
   const progressBar = !a.done && <div className="bar"><i style={{ width: `${Math.max(4, (a.loading ? a.loading.fraction ?? 0.04 : progress) * 100)}%` }} /></div>;
 
-  const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} text={notes.commentAt(commentEdit.address) ?? ""}
+  const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} mobile={mobile} text={notes.commentAt(commentEdit.address) ?? ""}
     onSave={(text) => { notes.setComment(commentEdit.address, text); bump(); setCommentEdit(null); }} onClose={() => setCommentEdit(null)} />;
 
   if (mobile) {

@@ -67,3 +67,24 @@
 .hex.m .hrow { font-size: 12.5px; gap: 10px; padding: 0 12px; }
 .hex.m .hchars { display: flex; }
 .hex.m .hc { cursor: pointer; }
+
+/* The sheet stays above the on-screen keyboard (see keyboard.ts). */
+.sheet-back { padding-bottom: var(--kb, 0px); }
+.sheet { max-height: min(78dvh, 640px, calc(var(--vvh, 100dvh) - 24px)); }
+.sheet-head { flex: none; touch-action: none; cursor: grab; user-select: none; }
+.sheet-head .sheet-grab { cursor: inherit; }
+.sheet-head .sheet-title { padding-top: 0; }
+.sheet-comment { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.sheet-comment label { font-size: 13px; color: var(--muted); }
+.sheet-comment textarea { width: 100%; box-sizing: border-box; min-height: 96px; padding: 10px 12px; border-radius: 12px; font: 16px/1.45 var(--mono); resize: none; }
+.sheet-comment small { color: var(--muted); font-size: 12px; }
+.sheet-comment .row { display: flex; gap: 8px; }
+.sheet-comment .row button { flex: 1; min-height: 48px; border-radius: 12px; font-size: 15px; font-weight: 600; }
+.sheet-comment .row button[type=submit] { background: var(--text); color: var(--bg); }
+.sheet-comment .row button.ghost { border: 1px solid var(--line); }
+
+/* Function list: rows have a fixed height so the list can be windowed. */
+.m-fnlist { padding: 0 !important; }
+.m-fnlist .item { height: 100%; box-sizing: border-box; overflow: hidden; }
+.m-fnlist .fn { min-width: 0; }
+.m-fnlist .fn-caps { white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; }
