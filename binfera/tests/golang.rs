@@ -1,5 +1,6 @@
 //! The Go function table and build information on real binaries, one per table layout.
 use binfera::extract::image::LoadedImage;
+use binfera::extract::recovery::{self, SeedKind};
 use binfera::golang::{self, pclntab::Layout, GoVersion};
 
 fn read(sample: &[u8]) -> anyhow::Result<golang::GoBinary> {
@@ -13,6 +14,24 @@ fn named(go: &golang::GoBinary, name: &str) -> Option<u64> {
         .iter()
         .find(|function| function.name == name)
         .map(|function| function.entry)
+}
+
+#[test]
+fn capability_recovery_uses_go_function_table() -> anyhow::Result<()> {
+    for sample in [
+        include_bytes!("../../tests/testfiles/4122acca2f9ea98fc3f3ad040688e4ce.exe_").as_slice(),
+        include_bytes!(
+            "../../tests/testfiles/3da7c2c70a2d93ac4643f20339d5c7d61388bddd77a4a5fd732311efad78e535.elf_"
+        )
+        .as_slice(),
+    ] {
+        let analysis = recovery::analyze(sample)?;
+        let entry = named(&read(sample)?, "main.main")
+            .ok_or_else(|| anyhow::anyhow!("missing main.main in the Go table"))?;
+        assert!(analysis.seeds[&entry].contains(&SeedKind::GoFunctionTable));
+        assert!(analysis.functions.contains_key(&entry));
+    }
+    Ok(())
 }
 
 struct Case {

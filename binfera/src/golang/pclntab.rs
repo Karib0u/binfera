@@ -13,7 +13,7 @@
 //! The table sits in a read-only data section (`.gopclntab` in ELF, inside `.rdata` in PE); the
 //! loader maps ELF segments rather than sections, so it is found by its header everywhere.
 use super::{read_uint, GoVersion};
-use crate::extract::image::LoadedImage;
+use crate::extract::image::{Architecture, LoadedImage};
 
 /// A function as the Go linker recorded it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +103,12 @@ const VALIDATE: usize = 16;
 /// The function table of `image`: the first header, in section order, whose first entries name
 /// executable code with readable names.
 pub fn find(image: &LoadedImage) -> Option<FunctionTable> {
+    if !matches!(
+        image.architecture,
+        Architecture::X86 | Architecture::X64 | Architecture::AArch64
+    ) {
+        return None;
+    }
     let pointer = image.architecture.pointer_width();
     for section in &image.sections {
         let Some(bytes) = image.bytes_at(section.address, usize::MAX) else {
