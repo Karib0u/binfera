@@ -14,6 +14,8 @@
     "test:hex": "node scripts/check-hex.mjs",
     "test:mobile": "node scripts/check-mobile.mjs",
     "test:touch": "node scripts/check-touch.mjs",
+    "test:stages": "node scripts/check-stages.mjs",
+    "test:compare-report": "node scripts/check-compare-report.mjs",
     "test:layout": "node scripts/check-workspace-layout.mjs",
     "test:textdiff": "node scripts/check-textdiff.mjs",
     "test:entropy": "node scripts/check-entropy.mjs",

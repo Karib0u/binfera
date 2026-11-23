@@ -129,6 +129,7 @@ export default function App() {
     <>
       {tree && folder && <FolderView folder={folder} onFolder={setFolder} onFile={(f) => start(f)} onBack={() => setTree(false)} />}
       {a && <div style={{ display: landing || tree ? "none" : "contents" }}><Workspace key={run} a={a} run={run} active={!landing} initial={initial} onNew={showNew} onFile={(f) => start(f)}
+        onCompare={() => { compare.setA(currentFile.current); compare.setB(null); showNew(); }}
         onAnalyzeAgain={NATIVE ? undefined : () => { if (currentFile.current) start(currentFile.current, a.demo, true, currentRaw.current, true); }}
         onShellcodeChange={raw => { if (currentFile.current) start(currentFile.current, a.demo, true, raw); }} /></div>}
       {(!a || landing) && !tree && (

@@ -17,6 +17,13 @@ function Part({ title, count, open: initial = false, children }: { title: string
   );
 }
 
+/** What can be opened as a file of its own: an executable, or an archive that may hold one. */
+const OPENABLE = new Set(["PE", "ELF", "Mach-O", "ZIP"]);
+
+/** Bytes cut out of the file as a new file, named after where they came from. */
+const piece = (image: Image, fileName: string, label: string, off: number, length: number) =>
+  new File([image.bytes.slice(off, off + length)], `${fileName}.${label}.bin`);
+
 function save(image: Image, fileName: string, label: string, off: number, length: number) {
   const data = image.bytes.slice(off, off + length);
   const url = URL.createObjectURL(new Blob([data], { type: "application/octet-stream" }));
@@ -88,7 +95,7 @@ function SignatureCard({ signature: s }: { signature: Signature }) {
 
 const MAX_RESOURCE_ROWS = 2000;
 
-function Resources({ image, fileName, resources, onPick }: { image: Image; fileName: string; resources: Resource[]; onPick: (va: number) => void }) {
+function Resources({ image, fileName, resources, onPick, onAnalyze }: { image: Image; fileName: string; resources: Resource[]; onPick: (va: number) => void; onAnalyze?: (file: File) => void }) {
   return (
     <div className="fv-scroll">
       <table className="fv-table">
@@ -100,7 +107,10 @@ function Resources({ image, fileName, resources, onPick }: { image: Image; fileN
               <td className={"num" + ((r.entropy ?? 0) >= 7.5 ? " flag" : "")}>{r.entropy?.toFixed(2) ?? "–"}</td>
               <td className={r.detected === "PE" || r.detected === "ELF" || r.detected === "Mach-O" ? "flag" : ""}>{r.detected ?? ""}</td>
               <td className="num">{hex(r.va)}</td>
-              <td>{r.off !== undefined && <button className="fv-save" onClick={(e) => { e.stopPropagation(); save(image, fileName, `${r.type}-${r.name}`.replace(/[^\w-]/g, "_"), r.off!, r.size); }}>Save</button>}</td>
+              <td className="fv-acts">
+                {r.off !== undefined && onAnalyze && r.detected && OPENABLE.has(r.detected) && <button className="fv-save" title={`Analyze this ${r.detected} as its own file`} onClick={(e) => { e.stopPropagation(); onAnalyze(piece(image, fileName, `${r.type}-${r.name}`.replace(/[^\w-]/g, "_"), r.off!, r.size)); }}>Analyze</button>}
+                {r.off !== undefined && <button className="fv-save" onClick={(e) => { e.stopPropagation(); save(image, fileName, `${r.type}-${r.name}`.replace(/[^\w-]/g, "_"), r.off!, r.size); }}>Save</button>}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -135,7 +145,7 @@ function StructureRows({ structure: s, onPick }: { structure: Structure; onPick:
 }
 
 /** What the file says about itself: triage facts, findings, resources, signatures and raw headers. */
-export function FileView({ image, fileName, cursor, onPick }: { image: Image; fileName: string; cursor: number | null; onPick: (va: number) => void }) {
+export function FileView({ image, fileName, cursor, onPick, onAnalyze }: { image: Image; fileName: string; cursor: number | null; onPick: (va: number) => void; onAnalyze?: (file: File) => void }) {
   const d = image.details;
   if (!d) return <div className="view fv"><h1>File</h1><p className="empty">This engine build does not report file details.</p><Part title="Sections" count={image.sections.length} open>{() => <SectionsList image={image} cursor={cursor} onPick={onPick} />}</Part></div>;
   const anomalies = [...d.anomalies].sort((x, y) => Number(y.severity === "warn") - Number(x.severity === "warn"));
@@ -168,7 +178,7 @@ export function FileView({ image, fileName, cursor, onPick }: { image: Image; fi
       )}
       {d.resources.length > 0 && (
         <Part title="Resources" count={d.resources.length} open={d.resources.length <= 50}>
-          {() => <Resources image={image} fileName={fileName} resources={d.resources} onPick={onPick} />}
+          {() => <Resources image={image} fileName={fileName} resources={d.resources} onPick={onPick} onAnalyze={onAnalyze} />}
         </Part>
       )}
       {d.overlay && (
@@ -179,7 +189,10 @@ export function FileView({ image, fileName, cursor, onPick }: { image: Image; fi
               <dt>Size</dt><dd>{size(d.overlay!.size)}</dd>
               <dt>Entropy</dt><dd>{d.overlay!.entropy.toFixed(2)}</dd>
               <dt>Contents</dt><dd>{d.overlay!.kind ?? "not recognized"}</dd>
-              <dt>Bytes</dt><dd><button className="fv-save" onClick={() => save(image, fileName, "overlay", d.overlay!.off, d.overlay!.size)}>Save</button></dd>
+              <dt>Bytes</dt><dd>
+                {onAnalyze && d.overlay!.kind && OPENABLE.has(d.overlay!.kind) && <button className="fv-save" title={`Analyze this ${d.overlay!.kind} as its own file`} onClick={() => onAnalyze(piece(image, fileName, "overlay", d.overlay!.off, d.overlay!.size))}>Analyze</button>}{" "}
+                <button className="fv-save" onClick={() => save(image, fileName, "overlay", d.overlay!.off, d.overlay!.size)}>Save</button>
+              </dd>
             </dl>
           )}
         </Part>
