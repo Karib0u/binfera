@@ -260,16 +260,11 @@ fn macho_cputype_name(cputype: u32) -> &'static str {
 /// flow-neutral either way (no cryptographic modelling).
 const SUPPORTED_MACHO_ARCHES: [&str; 3] = ["x86_64", "arm64", "arm64e"];
 
-/// Like [`macho_cputype_name`] but distinguishes `arm64` from `arm64e` by
-/// cpusubtype (`CPU_SUBTYPE_ARM64_E`), matching Apple's own naming
-/// (`goblin::mach::constants::cputype::get_arch_name_from_types`, the same
-/// table `lipo -detailed_info`/`file` read from). `cpusubtype` must already
-/// have `CPU_SUBTYPE_MASK`'s feature-flag byte cleared -- both
-/// [`goblin::mach::fat::FatArch::cpusubtype`] and [`goblin::mach::header::Header::cpusubtype`]
-/// do this themselves; [`peek_macho_cpusubtype`] (the pre-parse path) does
-/// it explicitly.
+/// Name the CPU and subtype after masking the feature flags stored in both
+/// universal and thin headers.
 fn macho_arch_name(cputype: u32, cpusubtype: u32) -> &'static str {
-    goblin::mach::constants::cputype::get_arch_name_from_types(cputype, cpusubtype)
+    use goblin::mach::constants::cputype::{get_arch_name_from_types, CPU_SUBTYPE_MASK};
+    get_arch_name_from_types(cputype, cpusubtype & !CPU_SUBTYPE_MASK)
         .unwrap_or_else(|| macho_cputype_name(cputype))
 }
 
@@ -300,22 +295,17 @@ fn peek_macho_cputype(bytes: &[u8], magic_be: u32) -> Result<u32, ImageError> {
 /// Same pre-parse peek as [`peek_macho_cputype`], for `mach_header_64`'s
 /// very next field (`cpusubtype`, offset 8) -- needed to distinguish
 /// `arm64` from `arm64e` (both `CPU_TYPE_ARM64`) before slice selection
-/// decides whether the rest of the header is even worth parsing. The
-/// feature-flag byte (`CPU_SUBTYPE_MASK`, e.g. `CPU_SUBTYPE_LIB64` or the
-/// arm64e ptrauth-ABI bits) is cleared, matching what
-/// `FatArch::cpusubtype`/`Header::cpusubtype` do internally.
+/// decides whether the rest of the header is even worth parsing.
 fn peek_macho_cpusubtype(bytes: &[u8], magic_be: u32) -> Result<u32, ImageError> {
-    use goblin::mach::constants::cputype::CPU_SUBTYPE_MASK;
     let raw = bytes
         .get(8..12)
         .and_then(|value| <[u8; 4]>::try_from(value).ok())
         .ok_or_else(|| ImageError::Macho("truncated Mach-O header".to_string()))?;
-    let cpusubtype = if magic_be == MH_CIGAM_64 {
+    Ok(if magic_be == MH_CIGAM_64 {
         u32::from_le_bytes(raw)
     } else {
         u32::from_be_bytes(raw)
-    };
-    Ok(cpusubtype & !CPU_SUBTYPE_MASK)
+    })
 }
 
 /// Deterministic, host-independent Mach-O slice selection. `arch` explicit
