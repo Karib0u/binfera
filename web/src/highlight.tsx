@@ -68,6 +68,11 @@ export function codeVocabulary(frame: { name: string; type: string }[] | undefin
   return { vars, types, isFunction };
 }
 
+const LOCAL_NAME = /^(?:(?:param|local|[a-z]{1,3}Var|[a-z]+Stack)_?\w*|(?:in|unaff|extraout)_\w+)$/;
+/** Whether an identifier is a variable of the open function: a decompiler-made name (`iVar3`, `auStack_28`, `unaff_EBX`, `in_EAX`), or one
+ *  the function declares, such as a DWARF local or a recovered parameter. */
+export const isLocalName = (id: string, vocabulary?: CodeVocabulary) => LOCAL_NAME.test(id) || !!vocabulary?.vars.has(id);
+
 /** What identifies a word across C, assembly and the graph: its text, or its value for a number, so 0xc and 0Ch match. */
 export function tokKey(word: string) {
   if (/^0x[0-9a-f]+$/i.test(word) || /^[0-9][0-9a-f]*h$/i.test(word)) return "n" + parseInt(word, 16);

@@ -10,7 +10,7 @@ type Image = NonNullable<Analysis["image"]>;
 function Part({ title, count, open: initial = false, children }: { title: string; count?: string | number; open?: boolean; children: () => ReactNode }) {
   const [opened, setOpened] = useState(initial);
   return (
-    <details className="fv-sec" open={initial} onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
+    <details className="fv-sec" data-part={title.toLowerCase()} open={initial} onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
       <summary>{title}{count !== undefined && <em>{count}</em>}</summary>
       {opened && <div className="fv-body">{children()}</div>}
     </details>

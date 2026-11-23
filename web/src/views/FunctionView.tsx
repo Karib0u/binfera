@@ -18,7 +18,7 @@ import { FunctionWarnings } from "./FunctionWarnings";
 import { NATIVE } from "../engine/assets";
 import { StackFrame } from "./StackFrame";
 import { instructionNotes } from "../annotations";
-import { codeVocabulary } from "../highlight";
+import { codeVocabulary, isLocalName } from "../highlight";
 
 function DecompileNotice({ a, address }: { a: Analysis; address: number }) {
   const [busy, setBusy] = useState(false);
@@ -187,15 +187,14 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     },
     onMouseLeave: hidePeek, onScrollCapture: hidePeek,
   };
-  const codeEvents = {
-    ...peekEvents,
-    onClickCapture: (e: React.MouseEvent) => {
-      hidePeek();
-      const el = (e.target as Element).closest?.("[data-tok]") as HTMLElement | null;
-      setWord(el?.dataset.tok ?? null);
-      picked_id.current = el?.dataset.id ?? null;
-    },
+  const pickWord = (e: React.MouseEvent) => {
+    hidePeek();
+    const el = (e.target as Element).closest?.("[data-tok]") as HTMLElement | null;
+    setWord(el?.dataset.tok ?? null);
+    picked_id.current = el?.dataset.id ?? null;
   };
+  // A right-click picks the word too, so the menu's Rename acts on it as n does.
+  const codeEvents = { ...peekEvents, onClickCapture: pickWord, onContextMenuCapture: pickWord };
   const peekCard = peek && <FnPeek a={a} address={peek.address} rect={peek.rect} caps={capsOf(peek.address)} display={fnDisplay} />;
   useEffect(() => {
     if (!shortcutsEnabled) { handledRename.current = renameReq; return; }
@@ -205,7 +204,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     const id = picked_id.current;
     const r = id ? resolve(id) : undefined;
     if (id && r !== undefined && r !== address) setVarEdit({ id, fn: r, rect: wordRect() });                       // n on a called function renames it
-    else if (id && r === undefined && /^(?:param|local|[a-z]{1,3}Var)_?\w*$/.test(id)) setVarEdit({ id, rect: wordRect() }); // n on a local renames the variable
+    else if (id && r === undefined && isLocalName(id, vocabulary)) setVarEdit({ id, rect: wordRect() }); // n on a local renames the variable
     else setEditing(true);
   }, [renameReq]);
   // x: the references to the word last clicked, else to this function.
@@ -218,7 +217,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     const id = picked_id.current, r = id ? resolve(id) : undefined;
     const tail = id && (id.startsWith("0x") ? id : /_([0-9a-fA-F]{5,16})$/.exec(id)?.[1]);
     const lit = tail ? parseInt(tail, 16) : NaN;
-    onXrefs(r !== undefined ? r : !Number.isNaN(lit) ? lit : id && /^[A-Za-z_][\w$@?]*$/.test(id) && !/^(?:param|local|[a-z]{1,3}Var)_?\w*$/.test(id) ? id : address);
+    onXrefs(r !== undefined ? r : !Number.isNaN(lit) ? lit : id && /^[A-Za-z_][\w$@?]*$/.test(id) && !isLocalName(id, vocabulary) ? id : address);
   }, [xrefReq]);
   useEffect(() => { picked_id.current = null; setVarEdit(null); }, [address]);
   const finishVar = (name?: string) => {

@@ -171,6 +171,7 @@ jobs:
       - name: Web engine checks
         run: |
           npm run test:analyze
+          npm run test:workbench
           npm run test:compare
           npm run test:shellcode
           npm run test:archive

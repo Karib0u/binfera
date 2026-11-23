@@ -45,6 +45,7 @@ import { NATIVE } from "../engine/assets";
 import { importThunk } from "../annotations";
 import { resolvedSlots } from "../resolved";
 import { callDepths, importance, progress as triageProgress, triageFunctions, type FnSort } from "../triage";
+import { codeVocabulary, isLocalName } from "../highlight";
 import type { RawCodeOptions } from "../engine/engine.worker";
 
 /** The page's own title, from index.html, to restore on leaving a file. */
@@ -805,10 +806,18 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       fnInfo={(ad) => { const r = byFn.get(ad); return `; called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}${r ? " · " + r.map((x) => x.name).join(", ") : ""}`; }} />
   );
   const pickSection = (va: number) => showHex(va);
+  // The overview's Sections cards open the File page at its section table, not at the top of the page.
+  const [scrollTo, setScrollTo] = useState<"sections" | null>(null);
+  const showSections = () => { setSel("hex"); if (!mobile) setScrollTo("sections"); };
+  useEffect(() => {
+    if (!scrollTo || sel !== "hex") return;
+    root.current?.querySelector(`[data-part="${scrollTo}"]`)?.scrollIntoView({ block: "start" });
+    setScrollTo(null);
+  }, [scrollTo, sel]);
   const overview = (
     <div className="ov-container">
       <div className="ov">
-        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => setSel(k)} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
+        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
         {image && <div className="ov-wide">
           <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />
@@ -819,7 +828,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           {image && !mobile && (
             <aside className="ov-context" aria-label="File context">
               <FindingsCard a={a} onPick={pickSection} onDetails={() => setSel("file")} />
-              <LayoutCard image={image} onPick={pickSection} onSections={() => setSel("hex")} />
+              <LayoutCard image={image} onPick={pickSection} onSections={showSections} />
             </aside>)}
         </div>
       </div>
@@ -835,7 +844,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   /** Tapping the strip: place the cursor, and show it in the listing unless the Data lists are open. */
   const navigate = (va: number) => {
     setCursor(va); setHexSel(null);
-    if (mode === "data") return; // the bytes beside the list already follow the cursor
+    // Data mode has no code pane for the cursor to land in: show the bytes, as a click on a section does.
+    if (mode === "data") { showHex(va); return; }
     const t = listingTarget(va);
     if (t !== undefined) { const panes = panesOf(layout); if (!panes.includes("listing")) setLayout([...panes.slice(0, -1), "listing"].join("+")); setListingReq((n) => n + 1); setSel(t, true); } else setSel(lastData.current);
   };
@@ -879,6 +889,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     const byteEl = target.closest<HTMLElement>("[data-o]");
     const strEl = target.closest<HTMLElement>("[data-ctx-str]");
     const fnEl = target.closest<HTMLElement>("[data-ctx-fn],[data-fn]");
+    const varEl = target.closest<HTMLElement>("[data-id]");
     const insnEl = target.closest<HTMLElement>("[data-addr]");
     const rowEl = target.closest<HTMLElement>("[data-ctx-va]");
     if (byteEl && image) {
@@ -902,6 +913,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       items.push({ label: "Copy string", onClick: copy(text) }, { label: "Copy address", onClick: copy(hex(va)) });
       sep();
       items.push({ label: "Show bytes in Hex", onClick: () => showHex(va, len) }, { label: "Show references", onClick: () => showRefs(va) });
+    } else if (varEl && typeof sel === "number" && !fnEl && isLocalName(varEl.dataset.id ?? "", codeVocabulary(a.functions.get(sel)?.frame, () => false, a.functions.get(sel)?.text))) {
+      items.push({ label: "Rename variable…", hint: "N", onClick: () => setTimeout(askRename, 0) }, { label: "Show references", hint: "X", onClick: () => setTimeout(askXrefs, 0) }, { label: "Copy name", onClick: copy(varEl.dataset.id ?? "") });
     } else if (fnEl) {
       fnItems(Number(fnEl.dataset.ctxFn ?? fnEl.dataset.fn));
     } else if (insnEl) {
