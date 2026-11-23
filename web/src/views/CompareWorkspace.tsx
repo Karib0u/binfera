@@ -11,6 +11,11 @@ import { Splitter, useStored } from "../workspace/panels";
 import { useMobile } from "../workspace/useMobile";
 import Workspace, { type Embedding } from "../workspace/Workspace";
 import BuildVersion from "../BuildVersion";
+import ReportMenu from "../ReportMenu";
+import ThemeToggle from "../ThemeToggle";
+import { download } from "../report";
+import { compareFileStem, compareHtml, compareJson, compareMarkdown } from "../compareReport";
+import { loadPairs, savePairs } from "../comparePairs";
 import CompareDetails from "./CompareDetails";
 import FunctionDiff, { hex, stepHunk, StackedDiffs, Tag, type DiffActions } from "./FunctionDiff";
 
@@ -47,7 +52,13 @@ export default function CompareWorkspace({ c, onReset }: { c: Comparison; onRese
   const d = c.document;
   const mobile = useMobile();
   const [a, b] = d.inputs;
-  const [manual, setManual] = useState<FunctionMatch[]>([]);
+  const refs = useMemo<[Map<number, FunctionRef>, Map<number, FunctionRef>]>(() => [new Map(functionsOf(d, "a").map((f) => [f.address, f])), new Map(functionsOf(d, "b").map((f) => [f.address, f]))], [d]);
+  // Pairs made by hand last across reloads, for these two files; a pair whose function is gone is dropped.
+  const [manual, setManual] = useState<FunctionMatch[]>(() => loadPairs(a.sha256, b.sha256).flatMap(([x, y]) => {
+    const [fa, fb] = [refs[0].get(x), refs[1].get(y)];
+    return fa && fb ? [manualPair(fa, fb)] : [];
+  }));
+  useEffect(() => { savePairs(a.sha256, b.sha256, manual.map((m) => [m.a_addr, m.b_addr])); }, [manual, a.sha256, b.sha256]);
   const all = useMemo(() => withManual(d, manual), [d, manual]);
   const changes = useMemo(() => changesOf(d, manual), [d, manual]);
   const changeBy = useMemo(() => new Map(changes.map((x) => [x.key, x])), [changes]);
@@ -58,7 +69,6 @@ export default function CompareWorkspace({ c, onReset }: { c: Comparison; onRese
     return pair;
   }, [a.sha256, b.sha256]);
   const [namesTick, setNamesTick] = useState(0);
-  const refs = useMemo<[Map<number, FunctionRef>, Map<number, FunctionRef>]>(() => [new Map(functionsOf(d, "a").map((f) => [f.address, f])), new Map(functionsOf(d, "b").map((f) => [f.address, f]))], [d]);
 
   const first = changes[0]?.target ?? null;
   const [view, setViewState] = useState<View>("changes");
@@ -462,6 +472,12 @@ export default function CompareWorkspace({ c, onReset }: { c: Comparison; onRese
           </div>
         )}
         {view === "changes" && <button type="button" className="cmp-btn" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>}
+        <ReportMenu groups={[{ title: "Comparison", items: [
+          { label: "Report (Markdown)", onClick: () => download(compareFileStem(d) + ".md", compareMarkdown(d, manual), "text/markdown") },
+          { label: "Report (web page)", onClick: () => download(compareFileStem(d) + ".html", compareHtml(d, manual), "text/html") },
+          { label: "All data (JSON)", note: "the engine's document", onClick: () => download(compareFileStem(d) + ".json", compareJson(d, manual), "application/json") },
+        ] }]} />
+        <ThemeToggle />
       </header>
 
       <div className={"cmp-changes" + (picked ? " is-picked" : "")} hidden={view !== "changes"} ref={stage} style={{ gridTemplateColumns: `${railWidth}px minmax(0, 1fr)` }}>

@@ -28,7 +28,7 @@ use crate::capabilities::{find_dynamic_capabilities, find_static_capabilities, M
 use crate::extract::{
     self,
     dotnet::{features::extract_dotnet_from_pe, looks_like_dotnet_pe},
-    elf::extract_elf,
+    elf::{extract_elf, without_corrupt_section_headers},
     flirt::{enrich_static_features, identify_library_functions, FlirtError, Signatures},
     image::{Architecture, ImageError},
     macho::extract_macho,
@@ -236,12 +236,7 @@ pub fn load_input(
             .map(|f| (f, "pe"));
         }
         Format::Elf => {
-            return if options.file_only {
-                extract_elf_file_only(bytes)
-            } else {
-                extract_elf_input(bytes, options, timings)
-            }
-            .map(|f| (f, "elf"));
+            return extract_elf_input(bytes, options, timings).map(|f| (f, "elf"));
         }
         Format::Sc32 | Format::Sc64 => {
             let architecture = if options.format == Format::Sc32 {
@@ -308,12 +303,7 @@ pub fn load_input(
         .map(|f| (f, "pe"));
     }
     if extract::looks_like_elf(bytes) {
-        return if options.file_only {
-            extract_elf_file_only(bytes)
-        } else {
-            extract_elf_input(bytes, options, timings)
-        }
-        .map(|f| (f, "elf"));
+        return extract_elf_input(bytes, options, timings).map(|f| (f, "elf"));
     }
     if extract::looks_like_macho(bytes) {
         return if options.file_only {
@@ -444,31 +434,32 @@ fn file_only_input(mut features: freeze::StaticFeatures) -> LoadedInput {
 }
 
 fn extract_elf_input(
-    bytes: &[u8],
+    original: &[u8],
     options: &AnalysisOptions,
     timings: &mut PhaseTimings,
 ) -> Result<LoadedInput, AnalysisError> {
-    let (mut features, analysis) = timed(&mut timings.load_and_recover, || {
-        let features = extract_elf(bytes).map_err(AnalysisError::ElfExtract)?;
-        let analysis = match recovery::analyze(bytes) {
-            Ok(analysis) => analysis,
-            // A CPU or ISA/ABI profile recovery cannot decode: keep the file-level
-            // features (header, sections, symbols, strings, architecture) rather than refusing
-            // the file, so rules on those still match. There is no code to enrich.
-            Err(RecoveryError::Image(
-                ImageError::UnsupportedArchitecture { .. } | ImageError::UnsupportedVariant { .. },
-            )) => {
-                return Ok((features, None));
-            }
-            Err(error) => return Err(AnalysisError::ElfRecover(error)),
-        };
-        Ok::<_, AnalysisError>((features, Some(analysis)))
-    })?;
-    let Some(analysis) = analysis else {
-        return Ok(LoadedInput {
-            freeze: Freeze::Static(features),
-            library_functions: Vec::new(),
-        });
+    let repaired = without_corrupt_section_headers(original);
+    let bytes = repaired.as_deref().unwrap_or(original);
+    let mut features = timed(&mut timings.load_and_recover, || extract_elf(bytes))
+        .map_err(AnalysisError::ElfExtract)?;
+    if repaired.is_some() {
+        features.sample_hashes = extract::sample_hashes(original);
+    }
+    if options.file_only {
+        return Ok(file_only_input(features));
+    }
+    let analysis = match timed(&mut timings.load_and_recover, || recovery::analyze(bytes)) {
+        Ok(analysis) => analysis,
+        // Keep file-level features when recovery cannot decode the CPU or ISA/ABI profile.
+        Err(RecoveryError::Image(
+            ImageError::UnsupportedArchitecture { .. } | ImageError::UnsupportedVariant { .. },
+        )) => {
+            return Ok(LoadedInput {
+                freeze: Freeze::Static(features),
+                library_functions: Vec::new(),
+            });
+        }
+        Err(error) => return Err(AnalysisError::ElfRecover(error)),
     };
     let libraries = explicit_libraries(&analysis, options)?;
     timed(&mut timings.extraction, || {
@@ -484,12 +475,6 @@ fn extract_elf_input(
             })
             .collect(),
     })
-}
-
-fn extract_elf_file_only(bytes: &[u8]) -> Result<LoadedInput, AnalysisError> {
-    extract_elf(bytes)
-        .map(file_only_input)
-        .map_err(AnalysisError::ElfExtract)
 }
 
 /// Native Mach-O extraction, with deterministic fat-header-order selection unless

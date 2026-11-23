@@ -1,7 +1,7 @@
 import CommentEditor from "../views/CommentEditor";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Analysis } from "../types";
-import HexView, { type HexSelection } from "../HexView";
+import HexView, { asText, cArray, hexOf, type HexSelection } from "../HexView";
 import ImportsView from "../ImportsView";
 import Listing from "../Listing";
 import CallGraph from "../CallGraph";
@@ -26,6 +26,8 @@ import ThemeToggle from "../ThemeToggle";
 import ReportMenu from "../ReportMenu";
 import VirtualList, { type VirtualListHandle } from "./VirtualList";
 import ContextMenu, { copyText, type MenuEntry } from "../ContextMenu";
+import { toast, ToastHost } from "../Toast";
+import type { Reverted } from "../names";
 import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../report";
 import { chooseTheme, storedTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
@@ -45,6 +47,7 @@ import { NATIVE } from "../engine/assets";
 import { importThunk } from "../annotations";
 import { resolvedSlots } from "../resolved";
 import { callDepths, importance, progress as triageProgress, triageFunctions, type FnSort } from "../triage";
+import { codeVocabulary, isLocalName } from "../highlight";
 import type { RawCodeOptions } from "../engine/engine.worker";
 
 /** The page's own title, from index.html, to restore on leaving a file. */
@@ -88,6 +91,8 @@ interface WorkspaceProps {
   a: Analysis; onNew: () => void; onFile: (f: File) => void;
   onAnalyzeAgain?: () => void;
   onShellcodeChange?: (raw: RawCodeOptions) => void;
+  /** Start a comparison with this file as one side; the other is chosen next. */
+  onCompare?: () => void;
   /** Identifies this analysis in browser history entries. */
   run: number;
   /** False while the landing page is over this analysis: it keeps its place but takes no keys and leaves the URL alone. */
@@ -98,7 +103,7 @@ interface WorkspaceProps {
   embedded?: Embedding;
 }
 
-function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, active, initial, embedded, notes }: WorkspaceProps & { notes: Notes }) {
+function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain, run, active, initial, embedded, notes }: WorkspaceProps & { notes: Notes }) {
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const isStarred = (ad: number) => notes.isStarred(ad);
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -284,11 +289,25 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     const row = target ?? root.current?.querySelector(`[data-addr="${address}"], [data-ctx-va="${address}"]`);
     setCommentEdit({ address, rect: row?.getBoundingClientRect() });
   };
-  const undo = () => {
-    const op = notes.undo();
-    if (op?.kind === "rename_function") embedded?.onRenamed(parseInt(op.target, 16), op.value ?? "");
+  /** What an undone or redone edit did, in words. */
+  const describeEdit = (verb: "Undid" | "Redid", op: Reverted) => {
+    const [at, id] = op.target.split(":"), ad = parseInt(at, 16);
+    const [from, to] = verb === "Undid" ? [op.after, op.value] : [op.value, op.after];
+    const shown = (v?: string) => (v ? `“${v}”` : "the original");
+    if (op.kind === "rename_function") return `${verb} rename: ${shown(from)} → ${shown(to)}`;
+    if (op.kind === "rename_variable") return `${verb} rename of ${id}: ${shown(from)} → ${shown(to)}`;
+    if (op.kind === "star") return `${verb} ${op.after ? "starring" : "unstarring"} ${fnLabel(ad)}`;
+    return `${verb} comment at ${hex(ad)}`;
+  };
+  const revert = (verb: "Undid" | "Redid") => {
+    const op = verb === "Undid" ? notes.undo() : notes.redo();
+    if (!op) { toast(verb === "Undid" ? "Nothing to undo" : "Nothing to redo"); return; }
+    if (op.kind === "rename_function") embedded?.onRenamed(parseInt(op.target, 16), (verb === "Undid" ? op.value : op.after) ?? "");
+    toast(describeEdit(verb, op));
     bump();
   };
+  const undo = () => revert("Undid"), redo = () => revert("Redid");
+  const toggleStar = (ad: number) => { notes.toggleStar(ad); toast(`${notes.isStarred(ad) ? "Starred" : "Removed star from"} ${fnLabel(ad)}`); bump(); };
   const [renameReq, askRename] = useReducer((n: number) => n + 1, 0);
   const [xrefReq, askXrefs] = useReducer((n: number) => n + 1, 0);
   // Panels: their sizes and whether they show are remembered. Until chosen, the side panel leaves a narrower window to the code.
@@ -359,7 +378,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l" && agent && project && agentSha && !mobile) { e.preventDefault(); setAgentOpen(true); setTimeout(() => window.dispatchEvent(new Event("binfera-agent-focus")), 0); return; }
       const target = e.target as HTMLElement;
       if (target.closest?.("input, select, textarea, [contenteditable=true], .palette")) return;
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
       if (e.key === ";" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const ad = cursorRef.current ?? (typeof sel === "number" ? sel : null);
         if (ad !== null) { e.preventDefault(); editComment(ad); }
@@ -371,7 +391,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       if (e.key === "?") { e.preventDefault(); setHelp(true); return; }
       if (typeof sel === "number" && e.key === "n") { e.preventDefault(); askRename(); return; }
       if (typeof sel === "number" && e.key === "x") { e.preventDefault(); askXrefs(); return; }
-      if (typeof sel === "number" && e.key === "s") { e.preventDefault(); notes.toggleStar(sel); bump(); return; }
+      if (typeof sel === "number" && e.key === "s") { e.preventDefault(); toggleStar(sel); return; }
       if (e.key === "[" && !mobile) { setListPref(!listPref); return; }
       if (e.key === "]" && !mobile) { toggleRail(); return; }
       if (e.key === "f" && !mobile && !embedded) { setFocus((v) => !v); return; }
@@ -726,28 +746,25 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       </button>
     </div>
   );
+  /** Phone: the same list, windowed. A function with capability matches gets a second line; both heights are fixed so the window can be computed. */
   const fnList = (
-  <div className="list">
-    {list.map((ad) => {
-      const f = a.functions.get(ad);
-      const rules = byFn.get(ad);
-      const name = fnLabel(ad, f?.name);
-      const mark = embedded?.marks.get(ad);
-      return (
-        <button key={ad} aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }} ref={(el) => { if (el && sel === ad) el.scrollIntoView({ block: "nearest" }); }}>
-          <span className="fn">
-            <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
-            {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small>{hex(ad)}</small>}
-            {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
-          </span>
-          {rules && <em className="pill">{rules.length}</em>}
-          {!f && <span className="dot" title="pending" />}
-          {f?.error && <span className="dot err" title="failed" />}
-        </button>
-      );
-    })}
-    {!list.length && <p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
-  </div>
+    <VirtualList className="m-fnlist" items={list} rowHeight={(ad) => (byFn.has(ad) ? 82 : 60)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
+      empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
+      render={(ad) => {
+        const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
+        return (
+          <button aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
+            <span className="fn">
+              <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
+              {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small>{hex(ad)}</small>}
+              {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
+            </span>
+            {rules && <em className="pill">{rules.length}</em>}
+            {!f && <span className="dot" title="pending" />}
+            {f?.error && <span className="dot err" title="failed" />}
+          </button>
+        );
+      }} />
   );
 
   const label = (ad: number) => fnLabel(ad, a.functions.get(ad)?.name);
@@ -763,7 +780,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const openCode = () => { const t = typeof sel === "number" ? sel : lastFn.current ?? a.order[0]; if (t !== undefined) setSel(t); };
 
   // Strings, imports and sections are one explorer; the bytes of whatever is selected sit beside it.
-  const hexFull = image ? <HexView image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
+  const hexFull = image ? <HexView image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
     onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : <p className="empty">The file is not loaded.</p>;
   const dataBody = (
     <div className={"data" + (mobile ? " m" : "")}>
@@ -778,9 +795,9 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           <div className="data-list">
             {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} />}
             {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
-            {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} />}
+            {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} onAnalyze={embedded ? undefined : onFile} />}
           </div>
-          {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
+          {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
             onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : null}</div>}
         </div>
       )}
@@ -805,10 +822,18 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       fnInfo={(ad) => { const r = byFn.get(ad); return `; called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}${r ? " · " + r.map((x) => x.name).join(", ") : ""}`; }} />
   );
   const pickSection = (va: number) => showHex(va);
+  // The overview's Sections cards open the File page at its section table, not at the top of the page.
+  const [scrollTo, setScrollTo] = useState<"sections" | null>(null);
+  const showSections = () => { setSel("hex"); if (!mobile) setScrollTo("sections"); };
+  useEffect(() => {
+    if (!scrollTo || sel !== "hex") return;
+    root.current?.querySelector(`[data-part="${scrollTo}"]`)?.scrollIntoView({ block: "start" });
+    setScrollTo(null);
+  }, [scrollTo, sel]);
   const overview = (
     <div className="ov-container">
       <div className="ov">
-        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => setSel(k)} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
+        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
         {image && <div className="ov-wide">
           <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />
@@ -819,7 +844,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           {image && !mobile && (
             <aside className="ov-context" aria-label="File context">
               <FindingsCard a={a} onPick={pickSection} onDetails={() => setSel("file")} />
-              <LayoutCard image={image} onPick={pickSection} onSections={() => setSel("hex")} />
+              <LayoutCard image={image} onPick={pickSection} onSections={showSections} />
             </aside>)}
         </div>
       </div>
@@ -835,7 +860,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   /** Tapping the strip: place the cursor, and show it in the listing unless the Data lists are open. */
   const navigate = (va: number) => {
     setCursor(va); setHexSel(null);
-    if (mode === "data") return; // the bytes beside the list already follow the cursor
+    // Data mode has no code pane for the cursor to land in: show the bytes, as a click on a section does.
+    if (mode === "data") { showHex(va); return; }
     const t = listingTarget(va);
     if (t !== undefined) { const panes = panesOf(layout); if (!panes.includes("listing")) setLayout([...panes.slice(0, -1), "listing"].join("+")); setListingReq((n) => n + 1); setSel(t, true); } else setSel(lastData.current);
   };
@@ -848,7 +874,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   };
   /** The right-click menu for whatever is under the pointer: a function, an instruction, a string, bytes. Null leaves the browser's own menu. */
   const contextItems = (target: Element): MenuEntry[] | null => {
-    const copy = (text: string) => () => { void copyText(text); };
+    const copy = (text: string) => () => { void copyText(text).then(() => toast("Copied")); };
     const selected = (getSelection()?.toString() ?? "").trim();
     const items: MenuEntry[] = [];
     const sep = () => { if (items.length && items[items.length - 1] !== "separator") items.push("separator"); };
@@ -858,7 +884,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
         { label: "Open function", onClick: () => { setCursor(ad); setSel(ad, true); } },
         commentItem(ad),
         { label: "Rename…", hint: "N", onClick: () => { setSel(ad); setTimeout(askRename, 0); } },
-        { label: isStarred(ad) ? "Remove star" : "Star", hint: typeof sel === "number" && sel === ad ? "S" : undefined, onClick: () => { notes.toggleStar(ad); bump(); } },
+        { label: isStarred(ad) ? "Remove star" : "Star", hint: typeof sel === "number" && sel === ad ? "S" : undefined, onClick: () => toggleStar(ad) },
       );
       sep();
       items.push({ label: "Copy name", onClick: copy(label(ad)) }, { label: "Copy address", onClick: copy(hex(ad)) });
@@ -879,19 +905,19 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     const byteEl = target.closest<HTMLElement>("[data-o]");
     const strEl = target.closest<HTMLElement>("[data-ctx-str]");
     const fnEl = target.closest<HTMLElement>("[data-ctx-fn],[data-fn]");
+    const varEl = target.closest<HTMLElement>("[data-id]");
     const insnEl = target.closest<HTMLElement>("[data-addr]");
     const rowEl = target.closest<HTMLElement>("[data-ctx-va]");
     if (byteEl && image) {
       const off = Number(byteEl.dataset.o), va = image.offToVa(off);
       const rowStart = off - (off % 16), row = image.bytes.subarray(rowStart, Math.min(image.bytes.length, rowStart + 16));
-      const hexOf = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(" ");
       const selOff = hexSel ? image.vaToOff(hexSel.va) : null;
       if (hexSel && selOff !== null && off >= selOff && off < selOff + hexSel.len) {
         const sb = image.bytes.subarray(selOff, selOff + hexSel.len);
         items.push(
           { label: "Copy selection as hex", onClick: copy(hexOf(sb)) },
-          { label: "Copy selection as C array", onClick: copy("{ " + Array.from(sb, (x) => "0x" + x.toString(16).padStart(2, "0")).join(", ") + " }") },
-          { label: "Copy selection as text", onClick: copy(Array.from(sb, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : ".")).join("")) },
+          { label: "Copy selection as C array", onClick: copy(cArray(sb)) },
+          { label: "Copy selection as text", onClick: copy(asText(sb)) },
         );
         sep();
       }
@@ -902,6 +928,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       items.push({ label: "Copy string", onClick: copy(text) }, { label: "Copy address", onClick: copy(hex(va)) });
       sep();
       items.push({ label: "Show bytes in Hex", onClick: () => showHex(va, len) }, { label: "Show references", onClick: () => showRefs(va) });
+    } else if (varEl && typeof sel === "number" && !fnEl && isLocalName(varEl.dataset.id ?? "", codeVocabulary(a.functions.get(sel)?.frame, () => false, a.functions.get(sel)?.text))) {
+      items.push({ label: "Rename variable…", hint: "N", onClick: () => setTimeout(askRename, 0) }, { label: "Show references", hint: "X", onClick: () => setTimeout(askXrefs, 0) }, { label: "Copy name", onClick: copy(varEl.dataset.id ?? "") });
     } else if (fnEl) {
       fnItems(Number(fnEl.dataset.ctxFn ?? fnEl.dataset.fn));
     } else if (insnEl) {
@@ -939,7 +967,9 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const againMenu: MenuItem[] = onAnalyzeAgain ? [{ label: "Analyze again", onClick: onAnalyzeAgain }] : [];
   const goMenu: MenuItem[] = [
     { label: "Undo", onClick: undo, disabled: !notes.canUndo() },
+    { label: "Redo", onClick: redo, disabled: !notes.canRedo() },
     ...againMenu,
+    ...(onCompare && !embedded ? [{ label: "Compare with…", onClick: onCompare }] : []),
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
     { label: "Locate in file…", onClick: () => setLocateOpen(true), disabled: !image },
@@ -987,15 +1017,15 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, strip, menuItems: goMenu, onSearch: () => setPalette(""),
     callGraph: (onOpen) => <CallGraph order={a.order} callees={callees} callers={callers} center={at} setCenter={nav ?? setSel} label={label} caps={(ad) => (byFn.get(ad) ?? []).map((r) => r.name)} onOpen={onOpen} ready={a.settled} />,
     onCode: nav ?? navigate, capsOf: (ad) => (byFn.get(ad) ?? []).map((r) => r.name),
-    onComment: () => editComment(here ?? at), onNotesChange: bump,
-    starred: isStarred(at), onStar: () => { notes.toggleStar(at); bump(); },
+    onHex: (va) => { setCursor(va); setSel("hex"); }, onComment: () => editComment(here ?? at), onNotesChange: bump,
+    starred: isStarred(at), onStar: () => toggleStar(at),
     onRename: (n) => { const name = n === (a.functions.get(at)?.name ?? "") ? "" : n; notes.rename(at, name); embedded?.onRenamed(at, name); bump(); },
     renameReq, xrefReq, onXrefs: showRefs,
     onRenameAt: (ad, n) => { const name = n === (a.functions.get(ad)?.name ?? "") ? "" : n; notes.rename(ad, name); embedded?.onRenamed(ad, name); bump(); },
     listOpen: listPref, onToggleList: () => setListPref(!listPref), railOpen, onToggleRail: toggleRail, onToggleSplit: toggleSplit,
   });
   const renderPane: PaneRenderer = (view, here, nav, focused, asm) => {
-    if (view === "hex") return image ? <HexView compact image={image} cursor={here.cursor} tick={here.cursor ?? 0} selection={hexSel} onCursor={nav} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs} onOpenCode={nav} /> : <p className="empty">The file is not loaded.</p>;
+    if (view === "hex") return image ? <HexView compact image={image} cursor={here.cursor} tick={here.cursor ?? 0} selection={hexSel} onCursor={nav} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs} onOpenCode={nav} /> : <p className="empty">The file is not loaded.</p>;
     if (view === "strings" || view === "imports") return <PaneData view={view} a={a} cursor={here.cursor} strRefs={strRefs} importRefs={importRefs} label={label} indicators={indicators} navigate={nav} onBytes={(va, len) => showHex(va, len)} siteOf={siteOf} />;
     return <FunctionView {...functionProps(here.address, here.cursor, nav)} {...asm} mobile={false} paneView={view} shortcutsEnabled={focused} />;
   };
@@ -1027,7 +1057,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   }, [mobile, detail, sel]);
   const progressBar = !a.done && <div className="bar"><i style={{ width: `${Math.max(4, (a.loading ? a.loading.fraction ?? 0.04 : progress) * 100)}%` }} /></div>;
 
-  const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} text={notes.commentAt(commentEdit.address) ?? ""}
+  const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} mobile={mobile} text={notes.commentAt(commentEdit.address) ?? ""}
     onSave={(text) => { notes.setComment(commentEdit.address, text); bump(); setCommentEdit(null); }} onClose={() => setCommentEdit(null)} />;
 
   if (mobile) {
@@ -1112,6 +1142,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
             </div>
           </Sheet>
         )}
+        {!embedded && <ToastHost />}
         {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
         {commentBox}
         {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
@@ -1150,6 +1181,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           { title: "Everything", items: [{ label: "All analysis data", note: "JSON", onClick: exportJson }] },
         ]} />}
         {!compact && <ThemeToggle />}
+        {!embedded && onCompare && <button className="ghost" onClick={onCompare} title="Compare this file with another: choose the second file next">Compare…</button>}
         {!embedded && <button className="ghost" onClick={onNew} title="Open another file; this one stays available">New</button>}
         {agent && project && agentSha && (
           <button className={"ghost agent-toggle" + (agentOpen ? " on" : "")} aria-pressed={agentOpen} onClick={() => setAgentOpen(!agentOpen)} title={`Work with your agent on this file (${isMac ? "⌘" : "Ctrl "}J)`}>
@@ -1243,6 +1275,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       </footer>
       <div className="sr-only" role="status">{phase}</div>
       {dragging && <div className="overlay">Drop to analyze a new binary</div>}
+      {!embedded && <ToastHost />}
       {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
       {commentBox}
       {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}

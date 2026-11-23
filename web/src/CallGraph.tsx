@@ -45,13 +45,37 @@ export default function CallGraph({ order, callees, callers, center, setCenter, 
     return () => el.removeEventListener("wheel", onWheel);
   });
 
-  // Drag anywhere on the canvas to pan; a drag that moved never counts as a node click.
+  // Drag anywhere on the canvas to pan; a drag that moved never counts as a node click. Two fingers pinch to zoom.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; zoom: number } | null>(null);
+  const zoomNow = useRef(1);
+  zoomNow.current = zoom;
+  const spread = () => { const [p, q] = [...pointers.current.values()]; return { dist: Math.hypot(p.x - q.x, p.y - q.y) || 1, x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }; };
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
+    if (e.pointerType !== "touch" && e.button !== 0) return;
     const el = e.currentTarget;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      pinch.current = { dist: spread().dist, zoom: zoomNow.current };
+      if (drag.current) drag.current.moved = true; // the first finger's tap does not count
+      setPanning(true);
+      return;
+    }
     drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false };
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const el = e.currentTarget;
+    if (pinch.current && pointers.current.size >= 2) {
+      const { dist, x: mx, y: my } = spread(), r = el.getBoundingClientRect();
+      const nz = clamp(pinch.current.zoom * dist / pinch.current.dist), k = nz / zoomNow.current;
+      const px = mx - r.left, py = my - r.top;
+      el.scrollLeft = (el.scrollLeft + px) * k - px;
+      el.scrollTop = (el.scrollTop + py) * k - py;
+      zoomNow.current = nz;
+      setZoom(nz);
+      return;
+    }
     const d = drag.current;
     if (!d) return;
     const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -59,15 +83,25 @@ export default function CallGraph({ order, callees, callers, center, setCenter, 
       if (Math.abs(dx) + Math.abs(dy) < 4) return;
       d.moved = true;
       setPanning(true);
-      e.currentTarget.setPointerCapture(e.pointerId);
+      el.setPointerCapture(e.pointerId);
     }
-    e.currentTarget.scrollLeft = d.left - dx;
-    e.currentTarget.scrollTop = d.top - dy;
+    el.scrollLeft = d.left - dx;
+    el.scrollTop = d.top - dy;
   };
-  const endDrag = () => { setPanning(false); };
+  const endDrag = (e?: React.PointerEvent) => {
+    if (e) pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    if (!pointers.current.size) setPanning(false);
+    // One finger left after a pinch must not start a pan from the old origin.
+    if (pointers.current.size === 1 && drag.current) drag.current.moved = true;
+  };
   const onClickCapture = (e: React.MouseEvent) => {
     if (drag.current?.moved) { e.stopPropagation(); e.preventDefault(); }
-    drag.current = null;
+    if (!pointers.current.size) drag.current = null;
+  };
+  /** A tap re-centers; tapping the centered function opens it, since a touch screen has no double-click. */
+  const tap = (e: React.MouseEvent, ad: number) => {
+    if (ad === start && (e.nativeEvent as PointerEvent).pointerType === "touch") onOpen(ad); else setCenter(ad);
   };
 
   const layout = useMemo(() => {
@@ -121,10 +155,10 @@ export default function CallGraph({ order, callees, callers, center, setCenter, 
           <button onClick={() => setZoom(1)} aria-label="Reset zoom">{Math.round(zoom * 100)}%</button>
           <button onClick={() => setZoom((z) => clamp(z * 1.25))} aria-label="Zoom in">+</button>
         </div>
-        <span className="fine">{total} functions · {compact ? "click to open" : "drag to move, click to re-center, double-click to open"}</span>
+        <span className="fine">{total} functions · {compact ? "click to open" : "drag to move, pinch to zoom, tap to re-center, tap the selected one to open"}</span>
       </div>
       <div className={"cg-scroll" + (panning ? " panning" : "")} ref={scroller}
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={() => { drag.current = null; endDrag(); }}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={(e) => { drag.current = null; endDrag(e); }}
         onClickCapture={onClickCapture}>
         <svg width={width * zoom} height={height * zoom} viewBox={`0 0 ${width} ${height}`} role="group" aria-label="Call graph">
           <defs><marker id="cg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" className="cg-head" /></marker></defs>
@@ -145,7 +179,7 @@ export default function CallGraph({ order, callees, callers, center, setCenter, 
             return (
               <g key={nd.id} className={"cg-node" + (nd.id === start ? " center" : "") + (c.length ? " caps" : "")} transform={`translate(${x(nd.level)},${y(nd.row)})`}
                 role="button" tabIndex={0} aria-label={label(nd.id)}
-                onClick={() => setCenter(nd.id)} onDoubleClick={() => onOpen(nd.id)}
+                onClick={(e) => tap(e, nd.id)} onDoubleClick={() => onOpen(nd.id)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCenter(nd.id); } }}>
                 <title>{label(nd.id)} {hex(nd.id)}{c.length ? "\n" + c.join("\n") : ""}</title>
                 <rect width={NODE_W} height={NODE_H} rx={7} />

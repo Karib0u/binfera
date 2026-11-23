@@ -5,18 +5,28 @@ import { EntropyStrip } from "./views/EntropyStrip";
 import { DataInspector } from "./views/DataInspector";
 import { buildSpans, spanAt } from "./engine/structs";
 import { useMobile } from "./workspace/useMobile";
+import { copyText } from "./ContextMenu";
+import { toast } from "./Toast";
 
 const hex = (n: number, pad = 0) => n.toString(16).padStart(pad, "0");
 
 export interface HexSelection { va: number; len: number }
 
+/** The ways a run of bytes is copied. */
+export const hexOf = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(" ");
+export const cArray = (b: Uint8Array) => "{ " + Array.from(b, (x) => "0x" + x.toString(16).padStart(2, "0")).join(", ") + " }";
+export const asText = (b: Uint8Array) => Array.from(b, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : ".")).join("");
+
 /** The raw file, sixteen bytes a row, with the section map beside it. The cursor is a virtual address shared with the code views. */
-export default function HexView({ image, cursor, tick, selection, onCursor, strAt, owner, onOpenCode, xrefCount, onXrefs, compact }: {
+export default function HexView({ image, cursor, tick, selection, onCursor, onSelect, strAt, owner, onOpenCode, xrefCount, onXrefs, compact }: {
   /** Without the section list: the Data explorer lists sections itself. */
   compact?: boolean;
   xrefCount: (va: number) => number; onXrefs: (va: number) => void;
   image: ImageInfo; cursor: number | null; tick: number; selection: HexSelection | null;
-  onCursor: (va: number) => void; strAt: (va: number) => string | undefined;
+  onCursor: (va: number) => void;
+  /** Drag, Shift+click or Shift+arrows select a run of bytes; Escape clears it. */
+  onSelect: (selection: HexSelection | null) => void;
+  strAt: (va: number) => string | undefined;
   /** The function containing an address, with its display name. */
   owner: (va: number) => { address: number; label: string } | undefined;
   onOpenCode: (va: number) => void;
@@ -62,17 +72,59 @@ export default function HexView({ image, cursor, tick, selection, onCursor, strA
     const va = image.offToVa(off);
     if (va !== null) onCursor(va);
   };
+  // A selection is a run of file offsets between where the gesture began (anchor) and where it is now (focus).
+  const anchor = useRef<number | null>(null), focus = useRef<number | null>(null), dragging = useRef(false), swallow = useRef(false);
+  const select = (a: number, b: number) => {
+    anchor.current = a; focus.current = b;
+    const lo = Math.min(a, b), va = image.offToVa(lo);
+    if (va !== null) onSelect({ va, len: Math.abs(a - b) + 1 });
+  };
+  const byteAt = (e: React.MouseEvent) => { const o = (e.target as HTMLElement).dataset.o; return o === undefined ? null : Number(o); };
+  const onMouseDown = (e: React.MouseEvent) => {
+    const o = byteAt(e);
+    if (o === null || e.button !== 0) return;
+    if (e.shiftKey) {
+      // Extend from the cursor, or from where the last selection began.
+      e.preventDefault();
+      swallow.current = true;
+      const from = anchor.current ?? cursorOff ?? o;
+      select(from, o);
+      return;
+    }
+    dragging.current = true;
+    anchor.current = o; focus.current = o;
+    const stop = () => { dragging.current = false; document.removeEventListener("mouseup", stop); };
+    document.addEventListener("mouseup", stop);
+  };
+  const onMouseOver = (e: React.MouseEvent) => {
+    if (!dragging.current || !(e.buttons & 1)) return;
+    const o = byteAt(e);
+    if (o === null || anchor.current === null || o === focus.current) return;
+    if (focus.current === anchor.current) swallow.current = true; // the pointer left the first byte: this is a drag, not a click
+    select(anchor.current, o);
+  };
   const onClick = (e: React.MouseEvent) => {
-    const o = (e.target as HTMLElement).dataset.o;
-    if (o === undefined) return;
-    const va = image.offToVa(Number(o));
+    if (swallow.current) { swallow.current = false; return; }
+    const o = byteAt(e);
+    if (o === null) return;
+    const va = image.offToVa(o);
+    anchor.current = o; focus.current = o;
     if (va !== null) onCursor(va);
   };
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && selection) { e.preventDefault(); onSelect(null); anchor.current = focus.current = null; return; }
     const step = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -WIDTH, ArrowDown: WIDTH } as Record<string, number>)[e.key];
     if (!step) return;
     e.preventDefault();
-    const va = image.offToVa(Math.min(image.bytes.length - 1, Math.max(0, (cursorOff ?? 0) + step)));
+    const last = image.bytes.length - 1;
+    if (e.shiftKey) {
+      const from = anchor.current ?? cursorOff ?? 0;
+      select(from, Math.min(last, Math.max(0, (focus.current ?? from) + step)));
+      return;
+    }
+    const to = Math.min(last, Math.max(0, (cursorOff ?? 0) + step));
+    anchor.current = focus.current = to;
+    const va = image.offToVa(to);
     if (va !== null) onCursor(va);
   };
   const inSel = (o: number) => selOff !== null && selection !== null && o >= selOff && o < selOff + selection.len;
@@ -123,7 +175,7 @@ export default function HexView({ image, cursor, tick, selection, onCursor, strA
       </div>}
       <div className="hex-main">
         <EntropyStrip image={image} cursorOff={selOff ?? cursorOff} viewOff={Math.min(image.bytes.length, Math.floor(top / ROW) * WIDTH)} onPick={jumpOff} />
-        <div className="hex-scroll" ref={box} tabIndex={0} aria-label="File bytes" onKeyDown={onKey} onScroll={(e) => setTop(e.currentTarget.scrollTop)} onClick={onClick}>
+        <div className="hex-scroll" ref={box} tabIndex={0} aria-label="File bytes" onKeyDown={onKey} onScroll={(e) => setTop(e.currentTarget.scrollTop)} onMouseDown={onMouseDown} onMouseOver={onMouseOver} onClick={onClick}>
           <div style={{ height: rows * ROW, position: "relative" }}>{out}</div>
         </div>
         {inspecting && cursorOff !== null && <DataInspector bytes={image.bytes} off={cursorOff} />}
@@ -139,6 +191,12 @@ export default function HexView({ image, cursor, tick, selection, onCursor, strA
                 {str && <span className="hs">“{str.length > 50 ? str.slice(0, 50) + "…" : str}”</span>}
               </div>
               <div className="hf-actions">
+                {selection && selOff !== null && <>
+                  <span className="hf-sel">{selection.len} byte{selection.len === 1 ? "" : "s"} selected</span>
+                  {([["Copy hex", hexOf], ["C array", cArray], ["Text", asText]] as const).map(([label, fmt]) => (
+                    <button key={label} className="ghost" onClick={() => { void copyText(fmt(image.bytes.subarray(selOff, selOff + selection.len))).then(() => toast(`Copied ${selection.len} byte${selection.len === 1 ? "" : "s"} as ${label === "Copy hex" ? "hex" : label === "C array" ? "a C array" : "text"}`)); }}>{label}</button>
+                  ))}
+                </>}
                 {xrefCount(cursor) > 0 && <button className="ghost" onClick={() => onXrefs(cursor)}>{xrefCount(cursor)} reference{xrefCount(cursor) === 1 ? "" : "s"}</button>}
                 {fn && <button className="ghost" onClick={() => onOpenCode(cursor)}>In {fn.label} · open code</button>}
                 {spans.length > 0 && <button className="ghost" aria-pressed={structs} onClick={toggleStructs} title="Colour the bytes of file headers by field">{structs ? "Hide structures" : "Structures"}</button>}

@@ -7,7 +7,7 @@ export const searchKey = isMac ? "⌘K" : "Ctrl K";
 const KEYS: [string, [string, string][]][] = [
   ["Find", [[searchKey + "  or  /", "Search everything"], ["g", "Go to an address"]]],
   ["Move", [["j  k", "Next or previous function"], ["↑  ↓", "Move through the focused list, code or bytes"], [(isMac ? "⌥" : "Alt") + " ←  →", "Back and forward"]]],
-  ["Work", [["n", "Rename the word you clicked (a local or a called function), else the open function"], ["x", "Show the cross-references to the word you clicked, else to this function"], ["s", "Star the open function"], [";", "Add or edit a comment at the cursor"], [isMac ? "⌘Z" : "Ctrl Z", "Undo your last edit"], ["[  ]", "Show or hide the function list, the function inspector"], ["\\", "Show one pane or restore the layout"], ["f", "Focus: only the code, hiding the list, inspector and agent"], ["?", "This list"]]],
+  ["Work", [["n", "Rename the word you clicked (a local or a called function), else the open function"], ["x", "Show the cross-references to the word you clicked, else to this function"], ["s", "Star the open function"], [";", "Add or edit a comment at the cursor"], [isMac ? "⌘Z" : "Ctrl Z", "Undo your last edit"], [isMac ? "⌘⇧Z" : "Ctrl Shift Z", "Redo it"], ["[  ]", "Show or hide the function list, the function inspector"], ["\\", "Show one pane or restore the layout"], ["f", "Focus: only the code, hiding the list, inspector and agent"], ["?", "This list"]]],
 ];
 
 /** The keyboard shortcuts, opened with ?. */

@@ -560,9 +560,8 @@ fn parse_pair(raw: &str) -> Result<(u64, u64), String> {
 }
 
 fn read_input(path: &std::path::Path) -> Result<Vec<u8>, CliError> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| CliError::new(E_MISSING_FILE, format!("reading {}: {e}", path.display())))?;
-    Ok(binfera::extract::elf::without_corrupt_section_headers(&bytes).unwrap_or(bytes))
+    std::fs::read(path)
+        .map_err(|e| CliError::new(E_MISSING_FILE, format!("reading {}: {e}", path.display())))
 }
 
 fn diff_error(error: DiffError) -> CliError {
@@ -823,13 +822,7 @@ fn run_analysis(cli: &Cli, timings: &mut Timings) -> Result<(), CliError> {
         ));
     }
 
-    let bytes = std::fs::read(input_file).map_err(|e| {
-        CliError::new(
-            E_MISSING_FILE,
-            format!("reading {}: {e}", input_file.display()),
-        )
-    })?;
-    let bytes = binfera::extract::elf::without_corrupt_section_headers(&bytes).unwrap_or(bytes);
+    let bytes = read_input(input_file)?;
 
     if cli.image_info {
         let info = match cli.format {
@@ -851,21 +844,19 @@ fn run_analysis(cli: &Cli, timings: &mut Timings) -> Result<(), CliError> {
         return Ok(());
     }
 
-    if let Some(address) = cli.emulate {
-        return run_emulation(cli, &bytes, address);
+    if cli.emulate.is_some() || !cli.decompile_function.is_empty() || cli.dump_code_layout {
+        let repaired = binfera::extract::elf::without_corrupt_section_headers(&bytes);
+        let bytes = repaired.as_deref().unwrap_or(&bytes);
+        if let Some(address) = cli.emulate {
+            return run_emulation(cli, bytes, address);
+        }
+        if !cli.decompile_function.is_empty() {
+            return run_decompilation(cli, bytes, &cli.decompile_function);
+        }
+        return print_code_layout(bytes);
     }
-
-    if !cli.decompile_function.is_empty() {
-        return run_decompilation(cli, &bytes, &cli.decompile_function);
-    }
-
     if cli.decompile_all {
         return run_decompile_all(&bytes, cli);
-    }
-
-    if cli.dump_code_layout {
-        print_code_layout(&bytes)?;
-        return Ok(());
     }
 
     let input = api::Input {
