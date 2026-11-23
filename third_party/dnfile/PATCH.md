@@ -206,6 +206,11 @@ No other behavior changed in any of these fixes.
     matching `binfera/src/extract/loader/pe.rs`'s own `rva_to_offset` helper,
     which already carries an identical carve-out with the same rationale.
 
+13. `src/stream/meta_data_tables/mdtables/mod.rs`, `Module::parse`: treat
+    out-of-range `EncId` and `EncBaseId` GUID references as empty. ECMA-335
+    II.22.30 reserves these fields and permits readers to ignore them.
+    Valid GUID references and `Mvid` validation retain their existing behavior.
+
 ## Verification
 
 A mutation-fuzz harness (byte-flip mutants, deterministic seed, not committed

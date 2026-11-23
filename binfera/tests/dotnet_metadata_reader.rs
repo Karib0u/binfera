@@ -77,3 +77,29 @@ fn looks_like_dotnet_pe_is_false_for_a_plain_pe() {
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     assert!(!dotnet::looks_like_dotnet_pe(&bytes));
 }
+
+#[test]
+fn out_of_range_reserved_module_guids_do_not_block_method_analysis() {
+    let path = root().join("tests/testfiles/dotnet/dd9098ff91717f4906afe9dafdfa2f52.exe_");
+    let mut bytes = std::fs::read(path).expect("fixture present");
+    let pe = dotnet::load(&bytes).expect("fixture parses");
+    let tables = dotnet::table_row_counts(&pe).expect("fixture table counts");
+    let methods = dotnet::function::managed_method_bodies(&pe)
+        .expect("fixture method bodies")
+        .len();
+    assert!(methods > 0);
+
+    // This fixture stores the two reserved GUID indices at 0x386 and 0x388.
+    assert_eq!(&bytes[0x386..0x38a], &[0; 4]);
+    bytes[0x386..0x38a].fill(0xff);
+    let pe = dotnet::load(&bytes).expect("reserved indices can be ignored");
+    assert_eq!(dotnet::table_row_counts(&pe).unwrap(), tables);
+    assert_eq!(
+        dotnet::function::managed_method_bodies(&pe).unwrap().len(),
+        methods
+    );
+
+    // The adjacent Mvid index still requires a valid GUID heap reference.
+    bytes[0x384..0x386].fill(0xff);
+    assert!(dotnet::load(&bytes).is_err());
+}
