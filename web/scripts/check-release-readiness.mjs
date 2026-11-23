@@ -1,4 +1,4 @@
-// Full production UI and native Hive acceptance checks. Requires prepared engine and demo assets.
+// Full production UI and native Hive acceptance checks. Requires prepared engine assets and MALPEDIA_DIR.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -11,17 +11,16 @@ import { preview } from "vite";
 
 const web = fileURLToPath(new URL("../", import.meta.url));
 const output = resolve(process.argv[2] ?? `evidence/${new Date().toISOString().slice(0, 10)}/release-readiness.json`);
+const malpedia = process.env.MALPEDIA_DIR;
+if (!malpedia) throw new Error("Set MALPEDIA_DIR to a local Malpedia checkout to run the Hive benchmark");
+const sample = resolve(malpedia, "win.hive/v1/88f7544a29a2ceb175a135d9fa221cbfd3e8c71f32dd6b09399717f85ea9afd1_unpacked");
+const bytes = await readFile(sample);
 const temp = await mkdtemp(join(tmpdir(), "binfera-release-"));
 const evidence = { date: new Date().toISOString(), machine: { cpu: cpus()[0].model, cores: cpus().length, memory: totalmem() } };
 evidence.sourceHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: web, encoding: "utf8" }).trim();
 const wasm = await readFile(join(web, "src/wasm/binfera.wasm"));
 evidence.wasm = { bytes: wasm.length, sha256: createHash("sha256").update(wasm).digest("hex") };
-const bytes = await readFile(join(web, "public/demos/hive.bin"));
-const key = Buffer.from("binfera-demo-sample");
-for (let i = 0; i < bytes.length; i++) bytes[i] ^= key[i % key.length];
 evidence.sample = { id: "hive", sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
-const sample = join(temp, "sample.bin");
-await writeFile(sample, bytes, { mode: 0o600 });
 let server, browser;
 try {
   console.log("Measuring native Hive (jobs=8), with no competing local build.");
@@ -97,15 +96,19 @@ try {
   page.on("pageerror", error => errors.push(error.message));
   const snapshot = () => page.evaluate(() => ({ ...window.audit, readyMs: Math.round(performance.now()), status: document.querySelector(".sb-status")?.textContent, cores: navigator.hardwareConcurrency }));
   const ready = () => page.waitForFunction(() => document.querySelector(".sb-status")?.textContent.includes("capabilities in"), undefined, { timeout: 300_000 });
+  const openSample = async () => {
+    await page.locator('#lp-analyze input[type="file"]').setInputFiles(sample);
+    await ready();
+  };
   page.setDefaultTimeout(300_000);
   console.log("Measuring full production UI from an empty browser profile.");
-  await page.goto("http://127.0.0.1:4179/#demo=hive");
-  await ready();
+  await page.goto("http://127.0.0.1:4179/");
+  await openSample();
   evidence.browserCold = await snapshot();
   assert.equal(evidence.browserCold.workers.filter(w => w.error).length, 0);
   console.log(JSON.stringify(evidence.browserCold));
   await page.reload();
-  await ready();
+  await openSample();
   evidence.browserCached = await snapshot();
   assert.equal(evidence.browserCached.workers.length, 0, "Cached reload must launch no analysis workers");
   assert.deepEqual(errors, []);
@@ -115,7 +118,7 @@ try {
   await page.getByRole("textbox", { name: "Filter functions", exact: true }).fill("syscall.init");
   await page.locator("button[data-ctx-fn]").first().waitFor();
   await page.locator("button[data-ctx-fn]").first().click();
-  assert.ok(await page.locator(".fn-title,.cp-crumb,.fn-head").count() || await page.locator(".c-code,.insn").count());
+  await page.getByRole("heading", { name: /syscall\.init/ }).waitFor({ timeout: 10_000 });
   evidence.acceptance = { hive15Seconds: evidence.browserCold.reportReadyMs < 15_000,
     cached3Seconds: evidence.browserCached.readyMs < 3000, cacheStartsNoWorkers: true, namedFunctionNavigation: true };
   // Keep a real large-function record only in the temporary directory for the existing harness.

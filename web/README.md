@@ -46,7 +46,7 @@ npm run build
 npx wrangler deploy
 ```
 
-Publishing a `v*` release deploys the site automatically: `.github/workflows/site.yml` builds the wasm engine from the release tag, builds the site and runs `wrangler deploy`, then checks that binfera.io serves the new bundle, the demos and the install scripts. Run it from the Actions tab to deploy another branch or tag. It needs the `binfera.io` environment's `CLOUDFLARE_API_TOKEN` (a token with the Workers Scripts: Edit permission) and `CLOUDFLARE_ACCOUNT_ID` secrets. CI has no malpedia checkout, so `npm run fetch-demos` downloads the packed demos binfera.io already serves, checks each one's SHA-256, and rebuilds the index from `demo/samples.json`. It fails when a sample is added, removed or replaced: pack that change locally (`npm run pack-demos`) and deploy by hand once.
+Publishing a `v*` release deploys the site automatically: `.github/workflows/site.yml` builds the wasm engine from the release tag, builds the site and runs `wrangler deploy`, then checks that binfera.io serves the new bundle, the demos and the install scripts. Run it from the Actions tab to deploy another branch or tag. It needs the `binfera.io` environment's `CLOUDFLARE_API_TOKEN` (a token with the Workers Scripts: Edit permission) and `CLOUDFLARE_ACCOUNT_ID` secrets. CI has no malpedia checkout, so `npm run fetch-demos` downloads the entries in `demo/samples.json` from binfera.io, checks their SHA-256 values, and rebuilds the index. Pack added or replaced samples locally with `npm run pack-demos` and deploy by hand once.
 
 Run `npm run test:delivery` for cache-header behavior and `npm run test:assets` for compressed pack selection, decompression, and worker buffer ownership. With Wrangler running locally, a real hashed `/assets/` URL should return `immutable`, while a missing URL returns status 404 and `no-store`.
 
@@ -96,7 +96,7 @@ The preview under **Compare two files** on the landing page opens `public/demo-v
 
 ## Malware demos
 
-`demo/samples.json` selects 12 local samples across Windows, Linux and macOS, x86, x64 and AArch64, and native C/C++, Go, Rust, Delphi, Nim, Objective-C and Swift. The landing page leads with WannaCry, a Stuxnet driver, Mirai and 3CX, and lists the rest under **All 12 malware samples**. Each entry describes the specific component or variant and suggests what to explore. BlackCat uses the smaller Windows x86 Rust build after the Linux x64 candidate proved too slow for a featured demo.
+`demo/samples.json` selects nine samples across Windows, Linux and macOS, x86, x64 and AArch64, and native C/C++, Nim, Objective-C and Swift. The landing page defaults to WannaCry and offers the rest alongside the harmless Puffin. Each entry describes the specific component or variant and suggests what to explore.
 
 ```sh
 npm run pack-demos       # requires MALPEDIA_DIR pointing at a local malpedia checkout
@@ -154,7 +154,7 @@ The desktop and MCP share a disk cache with a 2 GiB budget, overridable with `BI
 
 Run `npm run test:cache` for browser cache persistence, replay and failure-path checks without the wasm engine.
 
-Run `npm run test:release` after preparing assets, packing the local demos, and building the native CLI and production web app. It measures native Hive and the full production browser UI, verifies worker-free cached reopening, and checks the real large-function Asm/Graph views. It writes its measurements under `web/evidence/` (git-ignored), or to the path given as its first argument. `npm run test:deployment` verifies successful and missing hashed-asset headers on the production host.
+Set `MALPEDIA_DIR` and run `npm run test:release` after preparing assets and building the native CLI and production web app. It opens Hive from the local Malpedia checkout, measures native and browser analysis, verifies worker-free cached reopening, and checks the real large-function Asm/Graph views. It writes its measurements under `web/evidence/` (git-ignored), or to the path given as its first argument. `npm run test:deployment` verifies successful and missing hashed-asset headers on the production host.
 
 ## Archive resource limits
 

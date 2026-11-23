@@ -1,7 +1,7 @@
 // Fills public/demos/ from the live site instead of a malpedia checkout, for the deploy workflow:
 // the samples are never committed, so a CI deploy reuses the packed files binfera.io already serves.
 // Each file is decoded and checked against its SHA-256, and the index is rebuilt from
-// demo/samples.json, so edited names and notes still ship. A sample that is new, removed or points
+// demo/samples.json, so edited names, notes and removals still ship. A sample that is new or points
 // at a different file fails here: pack it locally with `npm run pack-demos` and deploy by hand once.
 import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
