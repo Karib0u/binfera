@@ -191,7 +191,7 @@ Binfera runs the unmodified capa rules. Results are compared file by file with p
 | Mach-O (x86_64, arm64) | hand-built fixtures | 30 / 30 tests pass |
 | AArch64 PE | hand-built fixtures | 15 / 15 tests pass |
 
-Evidence trees and duplicate-match counts are not compared. The reference rejects one further malformed ELF. Measured on 2026-10-21; the capability backend has not changed since. Known differences are in [Compatibility](compatibility.md).
+This benchmark compares rule names and unique match addresses. The reference rejects one further malformed ELF. The results are a snapshot from 2026-10-21. Later recovery changes are tracked in [Compatibility](compatibility.md#function-recovery-differences).
 
 ## Reproduce
 

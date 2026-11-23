@@ -341,24 +341,9 @@ pub(super) fn collect_pe_seeds(
                     ),
                 });
             }
-            // Port of vivisect/parsers/pe.py's `.pdata` walk (pe.py:513-548): seed
-            // a function per AMD64 RUNTIME_FUNCTION *entry*, but skip function
-            // *blocks* -- chained fragments (`UNW_FLAG_CHAININFO`) whose
-            // BeginAddress is interior to the parent function. Vivisect only calls
-            // `addEntryPoint()` on non-chained entries; seeding the chained ones
-            // (as this code previously did) manufactures a spurious function start
-            // inside every real function that has multiple unwind fragments, which
-            // then truncates the real function at that address. Vivisect also
-            // *bails on the whole directory* (`break`) the moment an entry's
-            // UNWIND_INFO pointer is unmapped or its version is not 1, so replicate
-            // that rather than skipping the single entry.
-            // UNW_FLAG_CHAININFO = 0x4 (PE/__init__.py:162); the VerFlags version
-            // (`& 0x7`) / flags (`>> 3`) split and break semantics are pe.py:529-548.
+            // Chained RUNTIME_FUNCTION rows describe fragments of a parent
+            // function. Starting a function at those rows can truncate the parent.
             const UNW_FLAG_CHAININFO: u8 = 0x4;
-            // Vivisect gives up on the whole directory at the first entry it
-            // cannot read. Native recovery keeps going: every non-chained
-            // `BeginAddress` is a function start whatever its neighbours hold.
-            let bail = backend == RecoveryBackend::VivisectCompat;
             for entry in raw.as_chunks::<12>().0 {
                 let (Some(begin), Some(unwind_info_rva)) = (
                     entry
@@ -375,24 +360,21 @@ pub(super) fn collect_pe_seeds(
                 let ver_flags = image
                     .image_base
                     .checked_add(u64::from(unwind_info_rva))
-                    .and_then(|unwind_info_va| image.bytes_at(unwind_info_va, 1))
+                    .and_then(|unwind_info_va| match backend {
+                        RecoveryBackend::VivisectCompat => image
+                            .file_backed_at(unwind_info_va, 4)
+                            .filter(|header| header.len() == 4),
+                        RecoveryBackend::Native => image.bytes_at(unwind_info_va, 1),
+                    })
                     .and_then(|bytes| bytes.first().copied());
-                // vivisect: `if not vw.isValidPointer(baseaddr + UnwindInfoAddress): break`
-                let Some(ver_flags) = ver_flags else {
-                    if bail {
-                        break;
-                    }
-                    if let Some(address) = image.image_base.checked_add(u64::from(begin)) {
-                        add_seed(image, seeds, address, SeedKind::Unwind);
-                    }
+                // Versions 1 and 2 use the same version and flags byte.
+                // Continue past unusable records so later starts remain available.
+                if backend == RecoveryBackend::VivisectCompat
+                    && !ver_flags.is_some_and(|value| matches!(value & 7, 1 | 2))
+                {
                     continue;
-                };
-                if bail && ver_flags & 0x7 != 1 {
-                    // Unwind Info Version != 1 -> vivisect bails on the whole `.pdata`.
-                    break;
                 }
-                if ver_flags >> 3 & UNW_FLAG_CHAININFO != 0 {
-                    // A function *block*, not a function *entry* -> not a start.
+                if ver_flags.is_some_and(|value| value >> 3 & UNW_FLAG_CHAININFO != 0) {
                     continue;
                 }
                 if let Some(address) = image.image_base.checked_add(u64::from(begin)) {

@@ -1,6 +1,6 @@
 # Compatibility
 
-Python capa 10.0.0 is the behavioral reference (see [`PINNED.md`](https://github.com/Karib0u/binfera/blob/main/PINNED.md)). binfera is a native backend, not a replacement for every capa input format. Each input below carries a different kind of claim; do not read one row's evidence into another.
+Binfera runs the pinned capa rules. Python capa 10.0.0 is the behavioral reference for the inputs listed below. The [pins](https://github.com/Karib0u/binfera/blob/main/PINNED.md) identify the rule and reference versions. Published parity results measure agreement on rule names and match addresses for a specific corpus and build. Function coverage can differ even when those matches agree.
 
 ## Inputs
 
@@ -23,10 +23,18 @@ Unsupported inputs are rejected with context, never silently accepted or partial
 
 | Class | Members | Evidence |
 |---|---|---|
-| Upstream parity | PE, ELF, shellcode, .NET | Direct comparison with Python capa ([benchmarks](benchmarks.md)) |
+| Upstream comparison | PE, ELF, shellcode, .NET | Direct comparison with Python capa ([benchmarks](benchmarks.md)) |
 | Cross-backend parity | AArch64 ELF | Feature- and rule-level comparison with Ghidra BinExport2 ([benchmarks](benchmarks.md)) |
 | binfera extension | Mach-O, AArch64 PE, ARM32/Thumb, MIPS32 | Hand-built or source-built fixtures; never claimed as upstream parity |
 | Not covered | Evidence-tree identity, ISAs not listed above, dynamic extractors | n/a |
+
+## Function recovery differences
+
+Binfera uses validated compiler and linker metadata to improve function recovery. An additional function scope can produce a new capability match or a new match address using the same rules. The upstream comparison tracks regressions, and the binary's own metadata provides independent evidence of function starts.
+
+- **Available on main.** Capability analysis and decompilation of native PE files use validated Control Flow Guard function table entries. This can recover indirect call targets absent from the default capa scan. [Guard CF recovery](https://github.com/Karib0u/binfera/pull/86)
+- **Go.** PE and ELF capability analysis uses Go's linker function table to recover application functions such as `main.main`. [Go function recovery](https://github.com/Karib0u/binfera/pull/87)
+- **Windows x64 unwind recovery.** Capability analysis uses non-chained `.pdata` entries with version 1 or 2 unwind headers. It skips unsupported or unreadable rows and keeps processing the table. In capa 10.0.0, the pinned Vivisect parser stops on those rows, so Binfera can report capabilities at additional function addresses. [Vivisect source](https://github.com/vivisect/vivisect/blob/v1.3.2/vivisect/parsers/pe.py#L525-L542)
 
 ### Format notes
 
