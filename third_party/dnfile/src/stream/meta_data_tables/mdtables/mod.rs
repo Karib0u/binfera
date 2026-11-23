@@ -395,8 +395,13 @@ impl MDTableRowTrait for Module {
         self.generation = crate::utils::read_usize(&data[0..s1])? as u16;
         self.name = strings_heap.get_string(&data[s1..s1 + s2])?;
         self.mvid = guids_heap.get_guid(&data[s1 + s2..s1 + s2 + s3])?;
-        self.enc_id = guids_heap.get_guid(&data[s1 + s2 + s3..s1 + s2 + s3 + s4])?;
-        self.enc_base_id = guids_heap.get_guid(&data[s1 + s2 + s3 + s4..s1 + s2 + s3 + s4 + s5])?;
+        // ECMA-335 II.22.30 permits readers to ignore these reserved columns.
+        let edit_guid = |index| match guids_heap.get_guid(index) {
+            Err(Error::GuidHeapReadOutOfBound(..)) => Ok(uuid::Uuid::nil()),
+            result => result,
+        };
+        self.enc_id = edit_guid(&data[s1 + s2 + s3..s1 + s2 + s3 + s4])?;
+        self.enc_base_id = edit_guid(&data[s1 + s2 + s3 + s4..s1 + s2 + s3 + s4 + s5])?;
         Ok(())
     }
 }
