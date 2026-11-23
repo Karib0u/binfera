@@ -13,6 +13,12 @@ use binfera::result_document::RdAddress;
 use binfera::rules::{collect_rule_file_paths, Rule};
 use flate2::read::GzDecoder;
 
+#[derive(serde::Deserialize)]
+struct MatchDelta {
+    added: BTreeMap<String, Vec<u64>>,
+    removed: BTreeMap<String, Vec<u64>>,
+}
+
 #[test]
 fn recovered_functions_match_all_reference_rule_addresses() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -29,6 +35,26 @@ fn recovered_functions_match_all_reference_rule_addresses() {
         .entry("generate random numbers via RtlGenRandom".to_string())
         .or_default()
         .insert(RdAddress::from(&Address::Absolute(0x5fda_ca40)));
+    // Python capa 10.0.0 stops seeding at the first unusable x64 unwind row.
+    // These four fixtures contain version 2 unwind headers or leading zero rows.
+    // Check the observed match-location changes while keeping the upstream index pinned.
+    let unwind_deltas: BTreeMap<String, MatchDelta> =
+        serde_json::from_str(include_str!("fixtures/x64-unwind-match-deltas.json")).unwrap();
+    for (sample, delta) in unwind_deltas {
+        let rules = expected.get_mut(&sample).unwrap();
+        for (rule, addresses) in delta.added {
+            let locations = rules.entry(rule).or_default();
+            for address in addresses {
+                assert!(locations.insert(RdAddress::from(&Address::Absolute(address))));
+            }
+        }
+        for (rule, addresses) in delta.removed {
+            let locations = rules.get_mut(&rule).unwrap();
+            for address in addresses {
+                assert!(locations.remove(&RdAddress::from(&Address::Absolute(address))));
+            }
+        }
+    }
     let mut paths = Vec::new();
     collect_rule_file_paths(&root.join("rules"), &mut paths);
     paths.sort();

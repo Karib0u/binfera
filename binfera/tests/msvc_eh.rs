@@ -303,6 +303,41 @@ fn chained_unwind_links_to_parent_and_cycles_are_bounded() {
 }
 
 #[test]
+fn capability_recovery_continues_through_mixed_x64_unwind_rows() {
+    let pe = goblin::pe::PE::parse(X64).unwrap();
+    let table = pe.header.optional_header.unwrap().data_directories;
+    let row = offset(
+        X64,
+        pe.image_base + u64::from(table.get_exception_table().unwrap().virtual_address),
+    );
+    let entries = pe.exception_data.as_ref().unwrap();
+    let mut bytes = X64.to_vec();
+    let header_offset = |index| {
+        let unwind = entries.get_function(index).unwrap().unwind_info_address;
+        offset(X64, pe.image_base + u64::from(unwind))
+    };
+    let v2 = header_offset(0);
+    bytes[v2] = (bytes[v2] & !7) | 2;
+    bytes[row + 20..row + 24].copy_from_slice(&u32::MAX.to_le_bytes());
+    let unsupported = header_offset(2);
+    bytes[unsupported] = (bytes[unsupported] & !7) | 7;
+    bytes[header_offset(3)] = (4 << 3) | 2;
+
+    let analysis = analyze_with_backend(&bytes, RecoveryBackend::VivisectCompat).unwrap();
+    for (index, expected) in [true, false, false, false, true].into_iter().enumerate() {
+        let start = pe.image_base + u64::from(entries.get_function(index).unwrap().begin_address);
+        let seeded = analysis
+            .seeds
+            .get(&start)
+            .is_some_and(|kinds| kinds.contains(&SeedKind::Unwind));
+        assert_eq!(seeded, expected, "{start:#x}");
+        if expected {
+            assert!(analysis.functions.contains_key(&start));
+        }
+    }
+}
+
+#[test]
 fn compatibility_recovery_does_not_use_new_exception_seeds() {
     for bytes in [X86, X64] {
         let analysis = analyze_with_backend(bytes, RecoveryBackend::VivisectCompat).unwrap();

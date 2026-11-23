@@ -40,6 +40,8 @@ Costs are for a 10-core M1 Max after a code change; treat them as orders of magn
 
 Both corpora have a per-sample baseline (`<corpus>.expected.json`), so the exit status reports regressions against known diffs. Re-record with `--write-expected` only for a deliberate change, in the same commit, with the reason stated.
 
+When a recovery improvement changes capa agreement, record the affected formats, the reference backend and version, and the observed change in [Compatibility](compatibility.md#function-recovery-differences). A targeted fixture or sample check can verify the new function starts independently of the differential suite.
+
 ## Checks
 
 Before pushing:
