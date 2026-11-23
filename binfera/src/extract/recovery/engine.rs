@@ -113,7 +113,7 @@ pub enum SeedKind {
     /// address. See the Mach-O loader's function-start handling.
     /// task 3.
     MachoFunctionStarts,
-    /// The Go linker's function table (`pclntab`, native backend only): every Go function's
+    /// The Go linker's function table (`pclntab`): every Go function's
     /// entry and extent, stripped or not. See [`crate::golang`].
     GoFunctionTable,
     /// Embedded DWARF subprogram entries, native decompiler builds only.
@@ -496,15 +496,10 @@ fn analyze_seeded_image_with_signatures(
     }
     // A Go binary lists its functions exactly, as `.pdata` does for x64 PE: every entry is a
     // start, and nothing strictly inside one is.
-    let go = if backend == RecoveryBackend::Native {
-        crate::golang::parse(&image)
-    } else {
-        None
-    };
+    let go = crate::golang::pclntab::find(&image);
     if let Some(go) = &go {
         // `go:buildid` holds the build ID string, not code.
         for function in go
-            .functions
             .functions
             .iter()
             .filter(|function| !matches!(function.name.as_str(), "go:buildid" | "go.buildid"))
@@ -516,13 +511,13 @@ fn analyze_seeded_image_with_signatures(
                 SeedKind::GoFunctionTable,
             );
         }
-        seeds.retain(|address, _| !go.functions.inside(*address));
+        seeds.retain(|address, _| !go.inside(*address));
     }
     let mut fallback = BTreeMap::new();
     add_backend_fallback_seeds(&image, backend, &mut fallback);
     fallback.retain(|address, _| !image.is_code_excluded(*address));
     if let Some(go) = &go {
-        fallback.retain(|address, _| !go.functions.inside(*address));
+        fallback.retain(|address, _| !go.inside(*address));
     }
     for (&address, kinds) in &fallback {
         seeds
@@ -613,7 +608,6 @@ fn analyze_seeded_image_with_signatures(
         // `go:buildid` is the build ID string, which other seeds may still have decoded.
         let build_id: BTreeSet<u64> = go
             .functions
-            .functions
             .iter()
             .filter(|f| matches!(f.name.as_str(), "go:buildid" | "go.buildid"))
             .map(|f| f.entry)
@@ -622,7 +616,7 @@ fn analyze_seeded_image_with_signatures(
             .functions
             .keys()
             .copied()
-            .filter(|address| go.functions.inside(*address) || build_id.contains(address))
+            .filter(|address| go.inside(*address) || build_id.contains(address))
             .collect();
         for address in inside {
             analysis.functions.remove(&address);

@@ -98,12 +98,6 @@ impl GoBinary {
 /// Reads the Go metadata of an x86, x86-64 or AArch64 image. `None` when the image is not Go, or its
 /// function table cannot be found or read.
 pub fn parse(image: &LoadedImage) -> Option<GoBinary> {
-    if !matches!(
-        image.architecture,
-        Architecture::X86 | Architecture::X64 | Architecture::AArch64
-    ) {
-        return None;
-    }
     let functions = pclntab::find(image)?;
     let build_version = build_version(image);
     let version_string = if build_version.is_none() {
