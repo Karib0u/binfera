@@ -33,9 +33,7 @@ pub(super) fn collect_seeds(
         )?,
         ImageFormat::Elf => {
             collect_elf_seeds(bytes, image, backend, &mut seeds, &mut elf_function_symbols)?;
-            if backend == RecoveryBackend::Native {
-                super::super::eh_frame::collect(bytes, image, &mut seeds, &mut diagnostics);
-            }
+            super::super::eh_frame::collect(bytes, image, &mut seeds, &mut diagnostics);
         }
         // no exports/TLS/relocations/symbol tables to seed from -- see
         // `analyze_shellcode`'s doc comment.

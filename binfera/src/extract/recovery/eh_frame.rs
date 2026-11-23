@@ -1,4 +1,4 @@
-//! Native ELF function entries from exception-frame descriptions. Addresses are decoded in
+//! ELF function entries from exception-frame descriptions. Addresses are decoded in
 //! link-time coordinates, then rebased once, including absolute encodings in PIEs.
 
 use std::collections::{BTreeMap, BTreeSet};

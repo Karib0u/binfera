@@ -13,6 +13,18 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+fn hide_elf_unwind_entries(bytes: &mut [u8]) {
+    let elf = goblin::elf::Elf::parse(bytes).unwrap();
+    let frame = elf
+        .section_headers
+        .iter()
+        .find(|section| elf.shdr_strtab.get_at(section.sh_name) == Some(".eh_frame"))
+        .unwrap()
+        .sh_offset as usize;
+    // A zero-length entry terminates the table. Leave relocations and code intact.
+    bytes[frame..frame + 4].fill(0);
+}
+
 #[test]
 fn layout_corpus_recovers_every_deterministic_seed_without_empty_blocks() {
     for name in common::read_corpus_list(&root().join("scripts/corpus-layout.txt")) {
@@ -206,12 +218,13 @@ fn callback_and_lea_discovery_recover_reference_function_roots() {
 fn compatibility_uses_the_stored_relative_relocation_pointer() {
     use binfera::extract::recovery::{analyze_with_backend, RecoveryBackend};
 
-    let bytes = std::fs::read(
+    let mut bytes = std::fs::read(
         root()
             .join("tests/testfiles")
             .join("e5e8c139772efe47f738f4788ae9b3dc97960b1c006bc6a406715cab69f27cfc.elf_"),
     )
     .unwrap();
+    hide_elf_unwind_entries(&mut bytes);
     let compat = analyze(&bytes).unwrap();
     // R_X86_64_RELATIVE at 0x6c08 has addend 0x4b30, but the stored slot
     // is zero. Vivisect reads that slot instead of applying the addend.
@@ -222,12 +235,13 @@ fn compatibility_uses_the_stored_relative_relocation_pointer() {
 
 #[test]
 fn pointer_discovery_recovers_entries_without_signatures_and_preserves_shared_functions() {
-    let bytes = std::fs::read(
+    let mut bytes = std::fs::read(
         root()
             .join("tests/testfiles")
             .join("b5f0524e69b3a3cf636c7ac366ca57bf5e3a8fdc8a9f01caf196c611a7918a87.elf_"),
     )
     .unwrap();
+    hide_elf_unwind_entries(&mut bytes);
     let analysis = analyze(&bytes).unwrap();
     // Pinned generic.pointers.analyze creates these prologue-less roots.
     // They expose the previously missing file and socket capabilities.
