@@ -113,6 +113,8 @@ export interface FnViewProps {
   locate?: (va: number, current: PanePlace) => PanePlace;
   onPaneNavigate?: (va: number, fn?: number) => void;
   onShowAsm?: (va: number) => void;
+  /** Phone: opens the bytes at an address in the Hex view. */
+  onHex?: (va: number) => void;
   asmJump?: { va: number };
   /** The Listing, with the instructions of the selected C line marked. */
   listing: (marked: Set<number>) => React.ReactNode; callGraph: (onOpen: (ad: number) => void) => React.ReactNode;
@@ -123,7 +125,7 @@ export interface FnViewProps {
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, asmJump, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -187,25 +189,40 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     },
     onMouseLeave: hidePeek, onScrollCapture: hidePeek,
   };
+  const [tokenBar, setTokenBar] = useState<{ text: string; id: string | null; at: number | null } | null>(null);
   const pickWord = (e: React.MouseEvent) => {
     hidePeek();
     const el = (e.target as Element).closest?.("[data-tok]") as HTMLElement | null;
     setWord(el?.dataset.tok ?? null);
     picked_id.current = el?.dataset.id ?? null;
+    // A phone has no n, x or right-click: a tapped word offers its actions in a bar. A link follows itself.
+    const row = (e.target as Element).closest?.("[data-addr]") as HTMLElement | null;
+    setTokenBar(mobile && el && !el.closest("a") ? { text: el.textContent ?? "", id: el.dataset.id ?? null, at: row ? Number(row.dataset.addr) : null } : null);
   };
   // A right-click picks the word too, so the menu's Rename acts on it as n does.
   const codeEvents = { ...peekEvents, onClickCapture: pickWord, onContextMenuCapture: pickWord };
   const peekCard = peek && <FnPeek a={a} address={peek.address} rect={peek.rect} caps={capsOf(peek.address)} display={fnDisplay} />;
+  /** Rename what was last picked: a called function, a local, else this function. Shared by n and the phone's action bar. */
+  const renameWord = () => {
+    const id = picked_id.current;
+    const r = id ? resolve(id) : undefined;
+    if (id && r !== undefined && r !== address) setVarEdit({ id, fn: r, rect: wordRect() });                       // a called function
+    else if (id && r === undefined && isLocalName(id, vocabulary)) setVarEdit({ id, rect: wordRect() });           // a local variable
+    else setEditing(true);
+  };
+  /** The references to what was last picked, else to this function. */
+  const xrefWord = () => {
+    const id = picked_id.current, r = id ? resolve(id) : undefined;
+    const tail = id && (id.startsWith("0x") ? id : /_([0-9a-fA-F]{5,16})$/.exec(id)?.[1]);
+    const lit = tail ? parseInt(tail, 16) : NaN;
+    onXrefs(r !== undefined ? r : !Number.isNaN(lit) ? lit : id && /^[A-Za-z_][\w$@?]*$/.test(id) && !isLocalName(id, vocabulary) ? id : address);
+  };
   useEffect(() => {
     if (!shortcutsEnabled) { handledRename.current = renameReq; return; }
     if (renderPane && !mobile) return;
     if (renameReq === handledRename.current) return;
     handledRename.current = renameReq;
-    const id = picked_id.current;
-    const r = id ? resolve(id) : undefined;
-    if (id && r !== undefined && r !== address) setVarEdit({ id, fn: r, rect: wordRect() });                       // n on a called function renames it
-    else if (id && r === undefined && isLocalName(id, vocabulary)) setVarEdit({ id, rect: wordRect() }); // n on a local renames the variable
-    else setEditing(true);
+    renameWord();
   }, [renameReq]);
   // x: the references to the word last clicked, else to this function.
   const handledXref = useRef(xrefReq);
@@ -214,12 +231,9 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     if (renderPane && !mobile) return;
     if (xrefReq === handledXref.current) return;
     handledXref.current = xrefReq;
-    const id = picked_id.current, r = id ? resolve(id) : undefined;
-    const tail = id && (id.startsWith("0x") ? id : /_([0-9a-fA-F]{5,16})$/.exec(id)?.[1]);
-    const lit = tail ? parseInt(tail, 16) : NaN;
-    onXrefs(r !== undefined ? r : !Number.isNaN(lit) ? lit : id && /^[A-Za-z_][\w$@?]*$/.test(id) && !isLocalName(id, vocabulary) ? id : address);
+    xrefWord();
   }, [xrefReq]);
-  useEffect(() => { picked_id.current = null; setVarEdit(null); }, [address]);
+  useEffect(() => { picked_id.current = null; setVarEdit(null); setTokenBar(null); }, [address]);
   const finishVar = (name?: string) => {
     const e = varEdit; setVarEdit(null);
     if (!e || name === undefined) return;
@@ -440,6 +454,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
             {editing ? nameField : <h1>{starred && <span className="star">★ </span>}{notes.aiName(address) && <span className={"ai-mark " + notes.aiName(address)} title={`Named by AI (${notes.aiName(address)})`}>✦ </span>}{fnLabel(address, f?.name)}</h1>}
             <code>{copied ? "Copied" : hex(address)}</code>
           </div>
+          <button className={"m-icon m-star" + (starred ? " on" : "")} aria-label={starred ? "Remove star" : "Star this function"} aria-pressed={starred} onClick={onStar}>{starred ? "★" : "☆"}</button>
           <button className="m-icon" aria-label="Search" onClick={onSearch}>
             <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
           </button>
@@ -469,6 +484,21 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
           {mTab === "listing" && <div className="cp-pane graph-pane">{listing(hlAddrs)}</div>}
           {mTab === "refs" && <div className="cp-pane rail m-refs"><div className="inspector-head">{inspectorTabs}</div>{inspector === "refs" ? refsContent : frameContent}</div>}
         </div>
+        {tokenBar && (
+          <div className="m-tokbar" role="toolbar" aria-label={"Actions for " + tokenBar.text}>
+            <code>{tokenBar.text.length > 18 ? tokenBar.text.slice(0, 17) + "…" : tokenBar.text}</code>
+            <button onClick={() => { setTokenBar(null); renameWord(); }}>Rename</button>
+            <button onClick={() => { setTokenBar(null); xrefWord(); }}>Xrefs</button>
+            <button onClick={() => { setTokenBar(null); onComment(); }}>Comment</button>
+            <button onClick={() => { void navigator.clipboard?.writeText(tokenBar.id ? display(tokenBar.id) ?? tokenBar.id : tokenBar.text); setTokenBar(null); }}>Copy</button>
+            <button onClick={() => {
+              const literal = /^0x[0-9a-f]+$/i.test(tokenBar.text) ? parseInt(tokenBar.text, 16) : null;
+              setTokenBar(null);
+              onHex?.(literal ?? tokenBar.at ?? cursor ?? address);
+            }}>Hex</button>
+            <button className="m-tok-x" aria-label="Dismiss" onClick={() => setTokenBar(null)}>×</button>
+          </div>
+        )}
         {peekCard}{varBox}
       </div>
     );

@@ -88,3 +88,12 @@
 .m-fnlist .item { height: 100%; box-sizing: border-box; overflow: hidden; }
 .m-fnlist .fn { min-width: 0; }
 .m-fnlist .fn-caps { white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; }
+/* Tapped word: its actions, in reach of the thumb and above the tab bar. */
+.m-tokbar { flex: none; display: flex; align-items: center; gap: 2px; padding: 4px 6px; background: var(--panel); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.m-tokbar code { flex: none; max-width: 30%; margin-right: 4px; padding: 2px 8px; border-radius: 6px; background: var(--soft); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-tokbar button { flex: none; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 10px; font-size: 14px; font-weight: 600; }
+.m-tokbar button:active { background: var(--hover); }
+.m-tokbar .m-tok-x { margin-left: auto; color: var(--muted); font-size: 18px; }
+.m-star { font-size: 20px; }
+.m-star.on { color: var(--c-num, #d9a400); }
+.app.mobile .rename-float { font-size: 16px; }

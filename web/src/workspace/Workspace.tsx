@@ -1014,7 +1014,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, strip, menuItems: goMenu, onSearch: () => setPalette(""),
     callGraph: (onOpen) => <CallGraph order={a.order} callees={callees} callers={callers} center={at} setCenter={nav ?? setSel} label={label} caps={(ad) => (byFn.get(ad) ?? []).map((r) => r.name)} onOpen={onOpen} ready={a.settled} />,
     onCode: nav ?? navigate, capsOf: (ad) => (byFn.get(ad) ?? []).map((r) => r.name),
-    onComment: () => editComment(here ?? at), onNotesChange: bump,
+    onHex: (va) => { setCursor(va); setSel("hex"); }, onComment: () => editComment(here ?? at), onNotesChange: bump,
     starred: isStarred(at), onStar: () => toggleStar(at),
     onRename: (n) => { const name = n === (a.functions.get(at)?.name ?? "") ? "" : n; notes.rename(at, name); embedded?.onRenamed(at, name); bump(); },
     renameReq, xrefReq, onXrefs: showRefs,
