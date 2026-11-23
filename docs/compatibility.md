@@ -34,6 +34,7 @@ Unsupported inputs are rejected with context, never silently accepted or partial
 - **AArch64** decoding, recovery, and extraction (`disarm64`, no external disassembler) are shared by ELF, Mach-O, and PE. Only ELF has an oracle.
 - **ARM32/Thumb and MIPS32** use Capstone for decoding. Rules accept `arch: arm` and `arch: mips` (both byte orders). See [Decompiler](decompiler.md#arm32-thumb-and-mips32) for the supported profiles.
 - **.NET**: a CLR PE is auto-detected and routed to the .NET backend. `-f pe` forces the native x86 path, `-f dotnet` forces .NET. Mixed-mode assemblies are analyzed for managed methods only, as in upstream, and carry the "mixed mode" characteristic feature.
+- **ELF unwind recovery.** Capability analysis uses validated `.eh_frame` records, including via `PT_GNU_EH_FRAME` in binaries with stripped section headers. These entries can add function scopes and match locations beyond the default Python capa 10.0.0 scan.
 
 Measurements (accuracy, performance, reproduction) are in [benchmarks.md](benchmarks.md).
 

@@ -77,7 +77,7 @@ pub enum SeedKind {
     TlsCallback,
     SafeSeh,
     Unwind,
-    /// ELF exception-frame FDE entry, native recovery only.
+    /// ELF exception-frame FDE entry.
     EhFrame,
     /// ARM EHABI exception-index function boundary.
     ArmExidx,

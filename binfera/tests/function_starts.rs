@@ -176,19 +176,19 @@ fn stripped_frameless_functions_recover_with_sections_or_runtime_header() {
             for encoding in [0, 0x1b, 0x1c] {
                 for sections in [false, true] {
                     let (bytes, target) = elf(is64, pie, encoding, sections);
-                    let a = analyze_with_backend(&bytes, RecoveryBackend::Native).unwrap();
-                    assert!(
-                        a.seeds[&target].contains(&SeedKind::EhFrame),
-                        "{is64} {pie} {encoding} {sections}"
-                    );
-                    assert!(a.functions.contains_key(&target));
-                    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
-                    let compat =
-                        analyze_with_backend(&bytes, RecoveryBackend::VivisectCompat).unwrap();
-                    assert!(!compat
-                        .seeds
-                        .values()
-                        .any(|k| k.contains(&SeedKind::EhFrame)));
+                    for backend in [RecoveryBackend::Native, RecoveryBackend::VivisectCompat] {
+                        let analysis = analyze_with_backend(&bytes, backend).unwrap();
+                        assert!(
+                            analysis.seeds[&target].contains(&SeedKind::EhFrame),
+                            "{backend:?} {is64} {pie} {encoding} {sections}"
+                        );
+                        assert!(analysis.functions.contains_key(&target));
+                        assert!(
+                            analysis.diagnostics.is_empty(),
+                            "{:?}",
+                            analysis.diagnostics
+                        );
+                    }
                 }
             }
         }
