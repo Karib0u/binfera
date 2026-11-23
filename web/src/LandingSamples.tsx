@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DemoSample } from "./demos";
 
 /** A sample as the roster shows it: one of the packed malware samples, or the bundled harmless program. */
@@ -16,7 +16,7 @@ interface Fighter {
 
 /** Names that fit under a tile. */
 const SHORT: Record<string, string> = {
-  stuxnet: "Stuxnet", "3cx": "3CX", blackcat: "BlackCat", hive: "Hive", rustbucket: "RustBucket", cloudsnooper: "Snooper",
+  stuxnet: "Stuxnet", "3cx": "3CX", rustbucket: "RustBucket", cloudsnooper: "Snooper",
 };
 
 const PUFFIN: Fighter = {
@@ -46,6 +46,25 @@ function Sprite({ who }: { who: Fighter }) {
   return <svg viewBox="0 0 9 9" shapeRendering="crispEdges" aria-hidden>{cells}</svg>;
 }
 
+// A mystery creature with a question mark cut out of its face.
+const MYSTERY_PIXELS = [
+  ".##...##.",
+  ".#######.",
+  ".##...##.",
+  "#####.###",
+  "####..###",
+  ".###.###.",
+  ".#######.",
+  ".###.###.",
+  "..##.##..",
+];
+
+function MysterySprite() {
+  return <span className="lp-mystery" aria-hidden>{MYSTERY_PIXELS.flatMap((row, y) => Array.from(row, (pixel, x) => (
+    <span key={`${x},${y}`} data-filled={pixel === "#" || undefined} style={{ "--pixel-x": x, "--pixel-y": y } as React.CSSProperties} />
+  )))}</span>;
+}
+
 /** The character select: pick a sample on the roster, read what it is, open it. */
 export default function LandingSamples({ samples, loading, onSample, onHarmless }: {
   samples: DemoSample[];
@@ -54,7 +73,10 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
   onHarmless: () => void;
 }) {
   const [current, setCurrent] = useState(0);
+  const [rolling, setRolling] = useState<number | null>(null);
   const roster = useRef<HTMLDivElement>(null);
+  const spinTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(spinTimer.current), []);
 
   // The site can be built without the malware samples; the harmless program is always there.
   if (!samples.length) return (
@@ -69,7 +91,9 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
 
   const fighters = [...samples.map(fighter), PUFFIN];
   const who = fighters[Math.min(current, fighters.length - 1)];
-  const start = (f: Fighter) => { if (loading !== null) return; if (f.sample) onSample(f.sample); else onHarmless(); };
+  const spinning = rolling !== null;
+  const busy = spinning || loading !== null;
+  const start = (f: Fighter) => { if (busy) return; if (f.sample) onSample(f.sample); else onHarmless(); };
   const [platform, format, arch, ...rest] = who.tags;
 
   const move = (to: number) => {
@@ -77,6 +101,7 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
     (roster.current?.children[to] as HTMLElement | undefined)?.focus();
   };
   const onKey = (e: React.KeyboardEvent) => {
+    if (spinning) return;
     const tiles = [...(roster.current?.children ?? [])] as HTMLElement[];
     const at = tiles.indexOf(document.activeElement as HTMLElement);
     if (at < 0 || at >= fighters.length) return;
@@ -91,9 +116,30 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
     }
   };
   const random = () => {
-    let next = current;
-    while (next === current && samples.length > 1) next = Math.floor(Math.random() * samples.length);
-    setCurrent(next);
+    if (busy) return;
+    const choices = samples.map((_, i) => i).filter(i => i !== current);
+    if (!choices.length) return;
+    const winner = choices[Math.floor(Math.random() * choices.length)];
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setCurrent(winner);
+      return;
+    }
+
+    const count = samples.length;
+    const from = Math.min(current, count - 1);
+    const steps = count + (winner - from + count) % count;
+    let step = 0;
+    const advance = () => {
+      step += 1;
+      if (step === steps) {
+        setCurrent(winner);
+        setRolling(null);
+        return;
+      }
+      setRolling((from + step) % count);
+      spinTimer.current = window.setTimeout(advance, 45 + 240 * (step / steps) ** 3);
+    };
+    advance();
   };
 
   return (
@@ -103,15 +149,18 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
         <p>Real samples, stored encoded and only read, never run. The puffin is harmless.</p>
       </div>
       <div className="lp-cabinet lp-select">
-        <div className="lp-roster" ref={roster} role="radiogroup" aria-labelledby="lp-pick-title" onKeyDown={onKey}>
-          {fighters.map((f, i) => (
-            <button key={f.id} type="button" role="radio" className="lp-tile" aria-checked={f === who} tabIndex={f === who ? 0 : -1} title={f.name} onClick={() => setCurrent(i)}>
-              <span className="lp-sp"><Sprite who={f} /></span>
-              <span className="lp-nm">{f.short}</span>
-            </button>
-          ))}
-          <button type="button" className="lp-tile lp-rnd" tabIndex={-1} onClick={random}>
-            <span className="lp-sp">?</span>
+        <div className="lp-roster-panel">
+          <div className="lp-roster" ref={roster} role="radiogroup" aria-labelledby="lp-pick-title" data-spinning={spinning || undefined} onKeyDown={onKey}>
+            {fighters.map((f, i) => (
+              <button key={f.id} type="button" role="radio" className="lp-tile" aria-checked={f === who} aria-disabled={spinning || undefined}
+                data-rolling={rolling === i || undefined} tabIndex={f === who ? 0 : -1} title={f.name} onClick={() => { if (!spinning) setCurrent(i); }}>
+                <span className="lp-sp"><Sprite who={f} /></span>
+                <span className="lp-nm">{f.short}</span>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="lp-tile lp-random" onClick={random} aria-disabled={busy}>
+            <span className="lp-sp"><MysterySprite /></span>
             <span className="lp-nm">Random</span>
           </button>
         </div>
@@ -119,7 +168,7 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
         <div className="lp-spot">
           <div className="lp-stage"><div className="lp-sprite"><Sprite who={who} /></div></div>
           <div className="lp-bio">
-            <h3>{who.name}</h3>
+            <h3 aria-live="polite">{who.name}</h3>
             <p className="lp-kind">{who.kind}</p>
             <dl className="lp-stats">
               <div><dt>Platform</dt><dd>{platform}</dd></div>
@@ -128,7 +177,7 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
               <div><dt>{rest[0] === "Driver" ? "Type" : "Language"}</dt><dd>{rest.join(", ")}</dd></div>
             </dl>
             <p className="lp-look"><b>What to look for</b>{who.note}</p>
-            <button type="button" className="lp-start" onClick={() => start(who)} disabled={loading !== null}>{loading === who.id ? "Loading…" : `Analyze ${who.short} →`}</button>
+            <button type="button" className="lp-start" onClick={() => start(who)} disabled={busy}>{loading === who.id ? "Loading…" : `Analyze ${who.short} →`}</button>
           </div>
         </div>
       </div>
