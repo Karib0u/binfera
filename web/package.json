@@ -13,6 +13,7 @@
     "test:layout": "node scripts/check-workspace-layout.mjs",
     "test:textdiff": "node scripts/check-textdiff.mjs",
     "test:entropy": "node scripts/check-entropy.mjs",
+    "test:triage": "node scripts/check-triage.mjs",
     "test:report": "node scripts/check-report.mjs",
     "test:compare": "node scripts/check-compare.mjs",
     "test:project": "node scripts/check-project.mjs && node scripts/check-recent.mjs",

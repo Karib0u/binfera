@@ -24,7 +24,7 @@ import { Glance } from "../views/Glance";
 import { LayoutCard, FindingsCard } from "../views/Dashboard";
 import ThemeToggle from "../ThemeToggle";
 import ReportMenu from "../ReportMenu";
-import VirtualList from "./VirtualList";
+import VirtualList, { type VirtualListHandle } from "./VirtualList";
 import ContextMenu, { copyText, type MenuEntry } from "../ContextMenu";
 import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../report";
 import { chooseTheme, storedTheme } from "../theme";
@@ -44,10 +44,13 @@ import { ShellcodeNotice } from "../views/ShellcodeNotice";
 import { NATIVE } from "../engine/assets";
 import { importThunk } from "../annotations";
 import { resolvedSlots } from "../resolved";
+import { callDepths, importance, progress as triageProgress, triageFunctions, type FnSort } from "../triage";
 import type { RawCodeOptions } from "../engine/engine.worker";
 
 /** The page's own title, from index.html, to restore on leaving a file. */
 const HOME_TITLE = document.title;
+
+const SORT_LABELS: Record<FnSort, string> = { address: "Address", importance: "Importance", bottom_up: "Bottom-up", caps: "Capabilities", name: "Name" };
 
 const MARK_TITLE = { changed: "Differs in the other file", added: "Only in this file", removed: "Only in this file", same: "The same in the other file" } as const;
 
@@ -165,7 +168,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   // The dock reads artifacts and the input path on mount, so register the project first.
   const agentSha = noteKey && notes.isAttached(noteKey) ? noteKey : null;
   const [onlyStars, setOnlyStars] = useState(false);
-  const [fnSort, setFnSort] = useState<"address" | "caps" | "name">("address");
+  const [fnSort, setFnSort] = useState<FnSort>("address");
+  const [hideLibrary, setHideLibrary] = useStored("hide-library", false);
   const [listingReq, setListingReq] = useState(0);
   const [wideLayout, setWideLayout] = useState<Layout>(() => { if (initial.layout) return initial.layout; try { const v = localStorage.getItem("layout2"); return v ? panesOf(v).join("+") : "c+listing"; } catch { return "c+listing"; } });
   const [compactLayout, setCompactLayout] = useState<Layout>("c");
@@ -307,22 +311,43 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const [onlyChanged, setOnlyChanged] = useState(false);
   const listShownWidth = compact ? Math.min(listWidth, 190) : tight ? Math.min(listWidth, 230) : listWidth;
 
+  // Cross-references are derived from the decompiled text: any identifier or hex literal that names a function.
+  const { resolve, callers, callees, strRefs, fnStrings, strByAddr, importRefs, xrefs, codeIndex } = useReferences(a);
+  const library = useMemo(() => new Set(a.capa?.library ?? []), [a.capa]);
+  const libraryCount = useMemo(() => a.order.filter((ad) => library.has(ad)).length, [a.order, library]);
+  // Triage signals: computed once the functions have settled, since they read the call graph and references.
+  const importanceOf = useMemo(() => {
+    if (fnSort !== "importance") return null;
+    const strings = new Map([...fnStrings].map(([ad, l]) => [ad, l.length]));
+    const imports = new Map<number, number>();
+    for (const fns of importRefs.values()) for (const ad of fns) imports.set(ad, (imports.get(ad) ?? 0) + 1);
+    const capabilities = new Map([...byFn].map(([ad, l]) => [ad, l.length]));
+    return importance({ functions: triageFunctions(a, callees), capabilities, strings, imports, callers });
+  }, [fnSort, a.functions, a.order, byFn, fnStrings, importRefs, callers, callees, tick]);
+  const depthOf = useMemo(() => (fnSort === "bottom_up" ? callDepths(triageFunctions(a, callees)) : null), [fnSort, a.functions, a.order, callees]);
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const shown = a.order.filter((ad) => {
       if (onlyCaps && !byFn.has(ad)) return false;
       if (onlyChanged && (embedded?.marks.get(ad) ?? "same") === "same") return false;
       if (onlyStars && !isStarred(ad)) return false;
+      if (hideLibrary && library.has(ad)) return false;
       if (!needle) return true;
       const f = a.functions.get(ad);
       return hex(ad).includes(needle) || fnLabel(ad, f?.name).toLowerCase().includes(needle) ||
         (byFn.get(ad) ?? []).some((r) => r.name.toLowerCase().includes(needle));
     });
     // Most capability matches first; functions with the same count keep address order.
-    if (fnSort === "caps") shown.sort((x, y) => (byFn.get(y)?.length ?? 0) - (byFn.get(x)?.length ?? 0) || x - y);
+    if (fnSort === "importance" && importanceOf) shown.sort((x, y) => (importanceOf.get(y)?.score ?? 0) - (importanceOf.get(x)?.score ?? 0) || x - y);
+    else if (fnSort === "bottom_up" && depthOf) shown.sort((x, y) => (depthOf.get(x) ?? 0) - (depthOf.get(y) ?? 0) || x - y);
+    else if (fnSort === "caps") shown.sort((x, y) => (byFn.get(y)?.length ?? 0) - (byFn.get(x)?.length ?? 0) || x - y);
     else if (fnSort === "name") shown.sort((x, y) => fnLabel(x, a.functions.get(x)?.name).localeCompare(fnLabel(y, a.functions.get(y)?.name)) || x - y);
     return shown;
-  }, [a.order, a.functions, q, onlyCaps, onlyStars, onlyChanged, embedded?.marks, embedded?.tick, fnSort, byFn, tick]);
+  }, [a.order, a.functions, q, onlyCaps, onlyStars, onlyChanged, embedded?.marks, embedded?.tick, fnSort, byFn, tick, hideLibrary, library, importanceOf, depthOf]);
+
+  // A new order or filter starts at the top: the top is what the sort is for.
+  const fnListRef = useRef<VirtualListHandle>(null);
+  useEffect(() => { fnListRef.current?.scrollToIndex(0); }, [fnSort, hideLibrary, onlyCaps, onlyStars, onlyChanged]);
 
   // Keyboard: j/k step through the visible list from anywhere; the arrows only while the list has focus, so they still scroll and move inside other views.
   useEffect(() => {
@@ -375,6 +400,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     else { setCursor(req.at); setSel(req.at); }
   }, [embedded?.request]);
   const placed = typeof sel === "number" ? sel : null;
+  // Opening a function counts as examining it; the list's progress follows.
+  useEffect(() => { if (placed !== null && notes.markExamined(placed)) bump(); }, [placed, noteKey]);
   useEffect(() => { embedded?.onPlace(placed); }, [placed]);
   useEffect(() => { if (embedded) bump(); }, [embedded?.tick]);
 
@@ -442,7 +469,6 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
 
 
   // Cross-references are derived from the decompiled text: any identifier or hex literal that names a function.
-  const { resolve, callers, callees, strRefs, fnStrings, strByAddr, importRefs, xrefs, codeIndex } = useReferences(a);
   const showString = (text: string) => { setStrQuery(text); setStrOnlyRef(false); setStrIndicators(false); setSel("strings"); };
   const strAtVa = (va: number) => strByAddr.get(va)?.s;
   const textAtVa = (va: number) => (image && dataAt(va) ? textAt(image, va) : undefined);
@@ -644,12 +670,15 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     stars: a.order.filter((ad) => isStarred(ad)).length,
     changed: a.order.filter((ad) => (embedded?.marks.get(ad) ?? "same") !== "same").length,
   }), [a.order, byFn, embedded?.marks, embedded?.tick, tick]);
+  const triage = useMemo(() => triageProgress(a.order, library, (ad) => notes.isExamined(ad), (ad) => notes.isDocumented(ad)), [a.order, library, tick]);
   const fnTools = (
   <div className="tools fn-tools">
     <div className="tool-row">
       <input placeholder="Filter functions" aria-label="Filter functions" value={q} onChange={(e) => setQ(e.target.value)} />
       <select className="sortsel" value={fnSort} onChange={(e) => setFnSort(e.target.value as typeof fnSort)} title="Sort functions" aria-label="Sort functions">
         <option value="address">Address</option>
+        <option value="importance">Importance</option>
+        <option value="bottom_up">Bottom-up</option>
         <option value="caps">Capabilities</option>
         <option value="name">Name</option>
       </select>
@@ -658,17 +687,25 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); }}>All <em>{total}</em></button>
       <button aria-pressed={onlyCaps} disabled={!counts.caps && !onlyCaps} title={`${counts.caps} functions have capability matches`} onClick={() => { setOnlyCaps(true); setOnlyStars(false); setOnlyChanged(false); }}>Matched <em>{counts.caps}</em></button>
       <button aria-pressed={onlyStars} disabled={!counts.stars && !onlyStars} title="Functions you starred" onClick={() => { setOnlyStars(true); setOnlyCaps(false); setOnlyChanged(false); }}>★ Starred <em>{counts.stars}</em></button>
+      {libraryCount > 0 && <button aria-pressed={hideLibrary} title="Hide functions the signature matcher identified as library code" onClick={() => setHideLibrary(!hideLibrary)}>Hide library <em>{libraryCount}</em></button>}
       {embedded && <button aria-pressed={onlyChanged} title="Functions that differ from the other file" onClick={() => { setOnlyChanged(true); setOnlyCaps(false); setOnlyStars(false); }}>Changed <em>{counts.changed}</em></button>}
     </div>
+    {triage.total > 0 && (
+      <div className="fn-progress" title={`${triage.examined} of ${triage.total} functions opened, ${triage.documented} named or commented${libraryCount ? " (library functions not counted)" : ""}`}>
+        <span>Examined <b>{triage.examined}</b>/{triage.total}</span>
+        <span>Documented <b>{triage.documented}</b>/{triage.total}</span>
+      </div>
+    )}
   </div>
   );
   /** Desktop: one line per function, windowed so thousands of functions stay quick. Details are in the tooltip. */
   const fnListCompact = (
-    <VirtualList items={list} rowHeight={(ad) => (byFn.has(ad) ? 44 : 28)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
+    <VirtualList listRef={fnListRef} items={list} rowHeight={(ad) => (byFn.has(ad) ? 44 : 28)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
       empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
       render={(ad) => {
         const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
-        const detail = [hex(ad), `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].join("\n");
+        const why = importanceOf?.get(ad);
+        const detail = [hex(ad), ...(why ? [`importance ${why.score}: ${why.capabilities} capabilities · ${why.imports} imports · ${why.strings} strings · ${why.callers} callers`] : []), library.has(ad) ? "library function" : "", `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n");
         return (
           <button aria-current={sel === ad ? "true" : undefined} title={detail} className={"item compact" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
             <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
@@ -679,7 +716,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
         );
       }} />
   );
-  const activeFilters = (onlyCaps ? 1 : 0) + (onlyStars ? 1 : 0) + (embedded && onlyChanged ? 1 : 0) + (fnSort !== "address" ? 1 : 0);
+  const activeFilters = (onlyCaps ? 1 : 0) + (onlyStars ? 1 : 0) + (embedded && onlyChanged ? 1 : 0) + (hideLibrary && libraryCount ? 1 : 0) + (fnSort !== "address" ? 1 : 0);
   const fnToolsMobile = (
     <div className="m-search">
       <input type="search" enterKeyHint="search" placeholder={`Search ${total || ""} functions`} aria-label="Filter functions" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -1064,10 +1101,11 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
             <div className="sheet-form">
               <label><input type="checkbox" checked={onlyCaps} onChange={(e) => setOnlyCaps(e.target.checked)} /> Only functions with capabilities</label>
               <label><input type="checkbox" checked={onlyStars} onChange={(e) => setOnlyStars(e.target.checked)} /> Only starred functions</label>
+              {libraryCount > 0 && <label><input type="checkbox" checked={hideLibrary} onChange={(e) => setHideLibrary(e.target.checked)} /> Hide library functions ({libraryCount})</label>}
               {embedded && <label><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only changed functions</label>}
               <div className="sheet-seg" role="group" aria-label="Sort functions">
-                {(["address", "caps", "name"] as const).map((k) => (
-                  <button key={k} aria-pressed={fnSort === k} className={fnSort === k ? "on" : ""} onClick={() => setFnSort(k)}>{k === "caps" ? "Capabilities" : k === "name" ? "Name" : "Address"}</button>
+                {(["address", "importance", "bottom_up", "caps", "name"] as const).map((k) => (
+                  <button key={k} aria-pressed={fnSort === k} className={fnSort === k ? "on" : ""} onClick={() => setFnSort(k)}>{SORT_LABELS[k]}</button>
                 ))}
               </div>
               <button className="sheet-done" onClick={() => setFiltersOpen(false)}>Show {list.length} {list.length === 1 ? "function" : "functions"}</button>

@@ -11,6 +11,8 @@ type Write = { set?: Edit; clear?: { kind: Edit["kind"]; target: string } };
 export class Notes {
   private renames = new Map<number, string>();
   private stars = new Set<number>();
+  /** Functions the analyst opened. Kept in this browser only; it is reading progress, not an edit. */
+  private seen = new Set<number>();
   /** Local variable names, per function: "address:original" -> name. */
   private vars = new Map<string, string>();
   private key = "";
@@ -31,6 +33,7 @@ export class Notes {
     this.key = sample;
     this.renames.clear();
     this.stars.clear();
+    this.seen.clear();
     this.vars.clear();
     this.notes.clear();
     this.aiNames.clear();
@@ -38,9 +41,10 @@ export class Notes {
     try {
       const old = legacy ? localStorage.getItem("binfera:" + legacy) : null;
       const stored = localStorage.getItem(this.storeKey());
-      const raw = JSON.parse(stored ?? old ?? "{}") as { names?: Record<string, string>; stars?: number[]; vars?: Record<string, string>; comments?: Record<string, string> };
+      const raw = JSON.parse(stored ?? old ?? "{}") as { names?: Record<string, string>; stars?: number[]; seen?: number[]; vars?: Record<string, string>; comments?: Record<string, string> };
       for (const [ad, n] of Object.entries(raw.names ?? {})) this.renames.set(Number(ad), n);
       for (const ad of raw.stars ?? []) this.stars.add(ad);
+      for (const ad of raw.seen ?? []) this.seen.add(ad);
       for (const [k, n] of Object.entries(raw.vars ?? {})) this.vars.set(k, n);
       for (const [ad, text] of Object.entries(raw.comments ?? {})) this.notes.set(Number(ad), [{ text, source: "human" }]);
       if (old !== null && stored === null) { localStorage.setItem(this.storeKey(), old); localStorage.removeItem("binfera:" + legacy); }
@@ -157,7 +161,7 @@ export class Notes {
   private save() {
     if (!this.key) return;
     try {
-      localStorage.setItem(this.storeKey(), JSON.stringify({ names: Object.fromEntries(this.renames), stars: [...this.stars], vars: Object.fromEntries(this.vars), comments: Object.fromEntries(this.allComments().filter((c) => c.source === "human").map((c) => [c.address, c.text])) }));
+      localStorage.setItem(this.storeKey(), JSON.stringify({ names: Object.fromEntries(this.renames), stars: [...this.stars], seen: [...this.seen], vars: Object.fromEntries(this.vars), comments: Object.fromEntries(this.allComments().filter((c) => c.source === "human").map((c) => [c.address, c.text])) }));
     } catch { /* storage unavailable: the notes last for this tab only */ }
   }
 
@@ -204,6 +208,21 @@ export class Notes {
   setComment(ad: number, text: string) { this.edit({ kind: "add_comment", target: "0x" + ad.toString(16), value: text }); }
   renameVar(fn: number, id: string, name: string) { this.edit({ kind: "rename_variable", target: "0x" + fn.toString(16) + ":" + id, value: name }); }
   isStarred(ad: number) { return this.stars.has(ad); }
+  isExamined(ad: number) { return this.seen.has(ad); }
+  /** Records that a function was opened; true when it is new. */
+  markExamined(ad: number) {
+    if (this.seen.has(ad) || !this.key) return false;
+    this.seen.add(ad);
+    this.save();
+    return true;
+  }
+  /** Whether the analyst has named, commented or renamed a variable in a function. */
+  isDocumented(ad: number) {
+    if (this.renames.has(ad) || this.notes.has(ad)) return true;
+    const prefix = ad + ":";
+    for (const k of this.vars.keys()) if (k.startsWith(prefix)) return true;
+    return false;
+  }
   rename(ad: number, name: string) { this.edit({ kind: "rename_function", target: "0x" + ad.toString(16), value: name }); }
   toggleStar(ad: number) { this.edit({ kind: "star", target: "0x" + ad.toString(16), value: this.stars.has(ad) ? undefined : "true" }); }
   setExportNames(m: Map<number, string>) { this.exported = m; }

@@ -57,5 +57,6 @@ export function summarizeCapa(doc: any, imageBase?: number): CapaResult {
     sample: { md5: doc.meta.sample.md5, sha256: doc.meta.sample.sha256 },
     format: a.format, arch: a.arch, os: a.os, baseAddress: base === null ? null : base - delta,
     rules,
+    library: (a.library_functions ?? []).map((f: any) => addr(f.address)).filter((x: number | null): x is number => x !== null).map((x: number) => x - delta),
   };
 }

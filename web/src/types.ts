@@ -104,6 +104,8 @@ export interface CapaResult {
   os: string;
   baseAddress: number | null;
   rules: CapaRule[];
+  /** Entry points the signature matcher (FLIRT, Function ID) identified as library code. */
+  library: number[];
 }
 
 export interface StringEntry {
