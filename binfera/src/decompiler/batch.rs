@@ -151,8 +151,8 @@ fn decompile_all_impl(
     let bytes = repaired.as_deref().unwrap_or(bytes);
     let shard = options.shard;
     options.validate()?;
-    if matches!(options.format, Format::Auto | Format::Dotnet)
-        && crate::extract::dotnet::looks_like_dotnet_pe(bytes)
+    if options.format == Format::Dotnet
+        || (options.format == Format::Auto && crate::extract::dotnet::looks_like_dotnet_pe(bytes))
     {
         return emit_managed_methods(bytes, options, &mut emit);
     }

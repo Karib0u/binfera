@@ -86,24 +86,9 @@ pub const TABLE_NAMES: &[&str] = &[
     "GenericParamConstraint",
 ];
 
-/// capa/loader.py's managed-PE probe, ahead of a full parse: a CLR PE
-/// carries a non-empty COM-descriptor (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`,
-/// index 14) data directory. `dnfile::DnPe::parse` already performs the
-/// equivalent check internally and fails with `UnsupportedBinaryFormat` when
-/// it's absent; this standalone probe exists so a future auto-detection
-/// path (task 5) can tell "not a managed PE" apart from "malformed managed
-/// PE" without paying for a full metadata parse on every non-.NET PE.
+/// Identify a CLR directory before parsing PE resources or managed metadata.
 pub fn looks_like_dotnet_pe(buf: &[u8]) -> bool {
-    let Ok(pe) = goblin::pe::PE::parse(buf) else {
-        return false;
-    };
-    let Some(opt_header) = pe.header.optional_header else {
-        return false;
-    };
-    let Some(clr_dir) = opt_header.data_directories.get_clr_runtime_header() else {
-        return false;
-    };
-    clr_dir.virtual_address != 0 && clr_dir.size != 0
+    dnfile::DnPe::has_clr_directory(buf)
 }
 
 /// Parses a managed PE's CLR metadata, mapping every `dnfile::error::Error`

@@ -122,14 +122,14 @@ impl<'a> crate::DnPe<'a> {
                     stream_name,
                     stream_data,
                 )?,
-                "_" => self.new_generic_stream(
+                // Unknown streams still have a valid header and can precede known heaps.
+                _ => self.new_generic_stream(
                     metadata_rva,
                     stream_offset,
                     stream_size,
                     stream_name,
                     stream_data,
                 )?,
-                _ => return Err(Error::UndefinedStream),
             },
         })
     }

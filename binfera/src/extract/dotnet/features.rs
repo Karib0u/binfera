@@ -486,7 +486,7 @@ fn extract_function_features(
 /// `DnfileFeatureExtractor.__init__`'s precomputed `self.global_features`:
 /// `extract_file_format` + `extract_file_os` + `extract_file_arch`, in that
 /// order.
-fn global_features(pe: &DnPe<'_>, net: &ClrData<'_>) -> Result<Vec<Feature>, ExtractError> {
+fn global_features(pe: &DnPe<'_>, net: &ClrData<'_>) -> Vec<Feature> {
     let mut out = vec![
         Feature::Format("dotnet".to_string()),
         Feature::Format("pe".to_string()),
@@ -497,7 +497,7 @@ fn global_features(pe: &DnPe<'_>, net: &ClrData<'_>) -> Result<Vec<Feature>, Ext
     // CLR header's 32-bit-required flag combined with the PE optional
     // header's own bitness; anything else (e.g. "any CPU" with neither/both
     // signals set) falls back to `ARCH_ANY`.
-    let is_64 = pe.pe().map_err(parse_err)?.is_64;
+    let is_64 = pe.is_64();
     let bit32_required = net.flags.contains(&dnfile::ClrHeaderFlags::BitRequired32);
     let arch = if bit32_required && !is_64 {
         "i386"
@@ -508,7 +508,7 @@ fn global_features(pe: &DnPe<'_>, net: &ClrData<'_>) -> Result<Vec<Feature>, Ext
     };
     out.push(Feature::Arch(arch.to_string()));
 
-    Ok(out)
+    out
 }
 
 /// `dnfile/file.py FILE_HANDLERS`, in order: import names, function names,
@@ -626,7 +626,7 @@ pub fn extract_dotnet_from_pe(
 ) -> Result<StaticFeatures, ExtractError> {
     let net = pe.net().map_err(parse_err)?;
 
-    let global = global_features(pe, net)?;
+    let global = global_features(pe, net);
     let file = extract_file_features(net, buf)?;
 
     let cache = TokenCache::build(net)?;

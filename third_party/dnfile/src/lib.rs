@@ -6,6 +6,15 @@
 // expansion) rather than `Self` — this is part of the public API.
 #![allow(clippy::new_ret_no_self)]
 
+use goblin::pe::{
+    data_directories::{DataDirectory, SIZEOF_DATA_DIRECTORY},
+    header::{CoffHeader, DosHeader, SIZEOF_PE_MAGIC},
+    optional_header::{
+        MAGIC_64, OptionalHeader, SIZEOF_STANDARD_FIELDS_32, SIZEOF_STANDARD_FIELDS_64,
+        SIZEOF_WINDOWS_FIELDS_32, SIZEOF_WINDOWS_FIELDS_64,
+    },
+};
+use scroll::Pread;
 use serde::{Deserialize, Serialize};
 
 pub mod error;
@@ -27,6 +36,62 @@ use crate::{
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+const CLR_DIRECTORY_INDEX: usize = 14;
+const CLR_HEADER_SIZE: u32 = 0x48;
+
+struct PeHeaders<'a> {
+    coff: CoffHeader,
+    optional: OptionalHeader,
+    optional_bytes: &'a [u8],
+    sections_offset: usize,
+}
+
+impl<'a> PeHeaders<'a> {
+    fn parse(data: &'a [u8]) -> Result<Self> {
+        let dos = DosHeader::parse(data)?;
+        let invalid = || Error::UnsupportedBinaryFormat("truncated PE optional header");
+        let mut offset = (dos.pe_pointer as usize)
+            .checked_add(SIZEOF_PE_MAGIC)
+            .ok_or_else(invalid)?;
+        let coff = CoffHeader::parse(data, &mut offset)?;
+        let sections_offset = offset
+            .checked_add(usize::from(coff.size_of_optional_header))
+            .ok_or_else(invalid)?;
+        let optional_bytes = data.get(offset..sections_offset).ok_or_else(invalid)?;
+        let optional = optional_bytes.pread_with(0, scroll::LE)?;
+        Ok(Self {
+            coff,
+            optional,
+            optional_bytes,
+            sections_offset,
+        })
+    }
+
+    fn is_64(&self) -> bool {
+        self.optional.standard_fields.magic == MAGIC_64
+    }
+
+    fn declared_clr(&self) -> Option<DataDirectory> {
+        self.optional
+            .data_directories
+            .get_clr_runtime_header()
+            .copied()
+    }
+
+    fn undercounted_clr(&self) -> Option<DataDirectory> {
+        if self.optional.windows_fields.number_of_rva_and_sizes as usize != CLR_DIRECTORY_INDEX {
+            return None;
+        }
+        let directories_start = if self.is_64() {
+            SIZEOF_STANDARD_FIELDS_64 + SIZEOF_WINDOWS_FIELDS_64
+        } else {
+            SIZEOF_STANDARD_FIELDS_32 + SIZEOF_WINDOWS_FIELDS_32
+        };
+        let mut offset = directories_start + CLR_DIRECTORY_INDEX * SIZEOF_DATA_DIRECTORY;
+        DataDirectory::parse(self.optional_bytes, &mut offset).ok()
+    }
+}
 
 /// A parsed .NET PE file.
 ///
@@ -59,6 +124,8 @@ pub struct DnPe<'a> {
     /// `offset()`'s header-region carve-out, `PATCH.md` fix 12.
     #[serde(skip_serializing)]
     size_of_headers: u32,
+    #[serde(skip_serializing)]
+    is_64: bool,
     /// CLR resources directory RVA (from `ClrStruct.resources_rva`). Used by
     /// `resources()` to locate the bytes of each `ManifestResource` entry.
     #[serde(skip_serializing)]
@@ -85,52 +152,76 @@ impl<'a> DnPe<'a> {
         Ok(goblin::pe::PE::parse(self.data)?)
     }
 
+    #[must_use]
+    pub fn is_64(&self) -> bool {
+        self.is_64
+    }
+
+    /// Detect managed inputs without parsing unrelated PE directories.
+    #[must_use]
+    pub fn has_clr_directory(data: &'a [u8]) -> bool {
+        let Ok(headers) = PeHeaders::parse(data) else {
+            return false;
+        };
+        if headers.declared_clr().is_some() {
+            return true;
+        }
+        Self::read_clr(data, &headers).is_ok()
+    }
+
     /// Parse a .NET PE from a borrowed byte buffer.
     ///
     /// Zero-copy: heaps, streams and method-body readers all hold slices
     /// into `data` rather than copies.
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        // Parse the PE exactly once and extract the bits we'll need on the
-        // hot path. Previously every `offset()` / `get_data()` call re-parsed
-        // the entire binary via `self.pe()`.
-        let (sections, file_alignment, size_of_headers, clr_directory) = {
-            let pe = goblin::pe::PE::parse(data)?;
-            let opt_header = pe
-                .header
-                .optional_header
-                .ok_or(Error::UnsupportedBinaryFormat("optional header absence"))?;
-            let file_alignment = opt_header.windows_fields.file_alignment;
-            let size_of_headers = opt_header.windows_fields.size_of_headers;
-            let clr_directory = opt_header
-                .data_directories
-                .get_clr_runtime_header()
-                .copied()
-                .ok_or(Error::UnsupportedBinaryFormat("ClR runtime header absence"))?;
-            (
-                pe.sections.clone(),
-                file_alignment,
-                size_of_headers,
-                clr_directory,
-            )
-        };
-
-        let mut res = DnPe {
-            data,
-            sections,
-            file_alignment,
-            size_of_headers,
-            resources_rva: 0,
-            resources_size: 0,
-            net: None,
-        };
-        let clr_struct: ClrStruct = res.get_data(
-            &clr_directory.virtual_address,
-            &(clr_directory.size as usize),
-        )?;
+        let headers = PeHeaders::parse(data)?;
+        let (mut res, clr_struct) = Self::read_clr(data, &headers)?;
         res.resources_rva = clr_struct.resources_rva;
         res.resources_size = clr_struct.resources_size;
         res.net = Some(res.new_clrdata(clr_struct)?);
         Ok(res)
+    }
+
+    fn read_clr(data: &'a [u8], headers: &PeHeaders<'_>) -> Result<(Self, ClrStruct)> {
+        let declared = headers.declared_clr();
+        let missing = Error::UnsupportedBinaryFormat("CLR runtime header absent");
+        let directory = declared
+            .or_else(|| headers.undercounted_clr())
+            .ok_or(missing)?;
+        if directory.virtual_address == 0 || directory.size < CLR_HEADER_SIZE {
+            return Err(Error::FormatError("invalid CLR runtime directory".into()));
+        }
+        let mut offset = headers.sections_offset;
+        let res = Self {
+            data,
+            sections: headers.coff.sections(data, &mut offset)?,
+            file_alignment: headers.optional.windows_fields.file_alignment,
+            size_of_headers: headers.optional.windows_fields.size_of_headers,
+            is_64: headers.is_64(),
+            resources_rva: 0,
+            resources_size: 0,
+            net: None,
+        };
+        let clr_struct: ClrStruct =
+            res.get_data(&directory.virtual_address, &(directory.size as usize))?;
+        if declared.is_none() {
+            // A trailing entry outside the count needs evidence of a CLR image.
+            if !(CLR_HEADER_SIZE..=directory.size).contains(&clr_struct.cb)
+                || clr_struct.meta_data_rva == 0
+                || clr_struct.meta_data_size < 16
+                || !res
+                    .get_slice(
+                        &clr_struct.meta_data_rva,
+                        clr_struct.meta_data_size as usize,
+                    )?
+                    .starts_with(b"BSJB")
+            {
+                return Err(Error::FormatError(
+                    "invalid CLR metadata after directory count".into(),
+                ));
+            }
+        }
+        Ok((res, clr_struct))
     }
 
     fn offset(&self, rva: u32) -> Result<usize> {

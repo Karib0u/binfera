@@ -10,7 +10,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use binfera::api::{load_input, PhaseTimings};
 use binfera::extract::dotnet;
+use binfera::freeze::Freeze;
+use binfera::parallel::AnalysisOptions;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -76,6 +79,78 @@ fn looks_like_dotnet_pe_is_false_for_a_plain_pe() {
     let path = root().join("tests/testfiles/Practical Malware Analysis Lab 01-01.exe_");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     assert!(!dotnet::looks_like_dotnet_pe(&bytes));
+}
+
+fn managed_fixture() -> Vec<u8> {
+    let path = root().join("tests/testfiles/dotnet/dd9098ff91717f4906afe9dafdfa2f52.exe_");
+    std::fs::read(path).expect("managed fixture present")
+}
+
+fn auto_method_count(bytes: &[u8]) -> usize {
+    let (input, format) = load_input(
+        bytes,
+        &AnalysisOptions::SERIAL,
+        &mut PhaseTimings::default(),
+    )
+    .expect("managed capability input loads");
+    assert_eq!(format, "dotnet");
+    let Freeze::Static(features) = input.freeze else {
+        panic!("expected static features");
+    };
+    features.functions.len()
+}
+
+#[test]
+fn managed_analysis_survives_an_unreadable_native_resource_directory() {
+    let mut bytes = managed_fixture();
+    let expected = auto_method_count(&bytes);
+    assert!(expected > 0);
+
+    // Shorten the fixture's PE resource directory to less than its root record.
+    bytes[0x10c..0x110].copy_from_slice(&4u32.to_le_bytes());
+    assert!(goblin::pe::PE::parse(&bytes)
+        .unwrap_err()
+        .to_string()
+        .contains("Resource"));
+    assert!(dotnet::looks_like_dotnet_pe(&bytes));
+    assert_eq!(auto_method_count(&bytes), expected);
+}
+
+#[test]
+fn accepts_an_undercounted_clr_directory_only_with_readable_metadata() {
+    let mut bytes = managed_fixture();
+    let expected = auto_method_count(&bytes);
+    // NumberOfRvaAndSizes ends one entry before the fixture's CLR directory.
+    bytes[0xf4..0xf8].copy_from_slice(&14u32.to_le_bytes());
+    assert!(dotnet::looks_like_dotnet_pe(&bytes));
+    assert_eq!(auto_method_count(&bytes), expected);
+
+    let mut shortened = bytes.clone();
+    // The declared optional header now ends before the CLR directory.
+    shortened[0x94..0x96].copy_from_slice(&208u16.to_le_bytes());
+    assert!(!dotnet::looks_like_dotnet_pe(&shortened));
+    assert!(dotnet::load(&shortened).is_err());
+
+    let mut bad_signature = bytes.clone();
+    assert_eq!(&bad_signature[0x2d0..0x2d4], b"BSJB");
+    bad_signature[0x2d0..0x2d4].fill(0);
+    assert!(!dotnet::looks_like_dotnet_pe(&bad_signature));
+    assert!(dotnet::load(&bad_signature).is_err());
+
+    // The reserved slot does not identify managed code if the RVA is unmapped.
+    bytes[0x168..0x16c].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(!dotnet::looks_like_dotnet_pe(&bytes));
+    assert!(dotnet::load(&bytes).is_err());
+}
+
+#[test]
+fn unknown_streams_do_not_hide_later_metadata_heaps() {
+    let mut bytes = managed_fixture();
+    let expected = auto_method_count(&bytes);
+    // An unrecognized stream name can precede the GUID and blob heaps.
+    assert_eq!(&bytes[0x318..0x31c], b"#US\0");
+    bytes[0x318..0x31c].copy_from_slice(b"#XX\0");
+    assert_eq!(auto_method_count(&bytes), expected);
 }
 
 #[test]
