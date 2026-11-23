@@ -32,7 +32,10 @@ pub fn prepare_with_signature_jobs(
     signature_jobs: Jobs,
 ) -> Result<bool, DecompileError> {
     options.validate()?;
-    if crate::extract::dotnet::looks_like_dotnet_pe(bytes) || unsupported_elf_cpu(bytes).is_some() {
+    if options.format == Format::Dotnet
+        || (options.format == Format::Auto && crate::extract::dotnet::looks_like_dotnet_pe(bytes))
+        || unsupported_elf_cpu(bytes).is_some()
+    {
         return Ok(false);
     }
     let repaired = crate::extract::elf::without_corrupt_section_headers(bytes);
