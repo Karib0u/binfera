@@ -1859,3 +1859,6 @@ button.fv-finding:hover { background: var(--hover); }
 .comment-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 13px/1.5 var(--mono); }
 .comment-editor small { display: block; margin: 6px 0; color: var(--muted); }
 .comment-editor > div { display: flex; gap: 8px; }
+
+.fn-progress { display: flex; flex: 1 0 100%; gap: 12px; font-size: 12px; color: var(--muted); }
+.fn-progress b { color: var(--text); font-weight: 600; }

@@ -63,6 +63,7 @@ jobs:
           npm run test:textdiff
           npm run test:entropy
           npm run test:report
+          npm run test:triage
           npm run test:delivery
           npm run test:project
           npm run test:cache
