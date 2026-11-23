@@ -135,6 +135,7 @@ pub(super) fn select_analysis(
                     kinds.contains(&SeedKind::EhFrame)
                         || kinds.contains(&SeedKind::Vtable)
                         || kinds.contains(&SeedKind::Unwind)
+                        || kinds.contains(&SeedKind::GuardCf)
                         || (kinds.contains(&SeedKind::Relocation) && straight_line_leaf(function))
                         || kinds.contains(&SeedKind::IncrementalTarget)
                         || kinds.contains(&SeedKind::DelayLoadThunk)
@@ -161,10 +162,10 @@ pub(super) fn select_analysis(
         // it includes validated compiler continuations and corrected block boundaries.
         for (address, function) in std::mem::take(&mut native.functions) {
             let kinds = seeds.get(&address);
-            // Compatibility can stop before this unwind row, even when it found the function,
-            // and it does not read incremental-linking thunks.
+            // Preserve entry evidence found by native recovery.
             for kind in [
                 SeedKind::Unwind,
+                SeedKind::GuardCf,
                 SeedKind::IncrementalTarget,
                 SeedKind::Unclaimed,
             ] {

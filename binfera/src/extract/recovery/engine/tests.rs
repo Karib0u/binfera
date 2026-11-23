@@ -1748,6 +1748,75 @@ fn safe_seh_table_entries_become_authoritative_seeds() {
 }
 
 #[test]
+fn guard_cf_tables_seed_only_valid_callable_entries() {
+    let present = goblin::pe::load_config::IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT;
+    let text = MappedSection {
+        name: ".text".to_string(),
+        address: 0x1000,
+        virtual_size: 8,
+        file_offset: 0,
+        file_size: 4,
+        permissions: Permissions {
+            read: true,
+            write: false,
+            execute: true,
+        },
+    };
+    let compact = 1u32.to_le_bytes();
+    let flagged: Vec<_> = [(1u32, 0), (2, 1), (3, 2), (4, 0), (0x1000, 0)]
+        .into_iter()
+        .flat_map(|(rva, flag)| rva.to_le_bytes().into_iter().chain([flag]))
+        .collect();
+    let unsorted: Vec<_> = [1u32, 3, 2]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    for (entries, count, flags, malformed, expected) in [
+        (compact.as_slice(), 1, present, false, true),
+        (flagged.as_slice(), 5, present | (1 << 28), false, true),
+        (flagged.as_slice(), 6, present | (1 << 28), true, false),
+        (compact.as_slice(), u64::MAX, present, true, false),
+        (compact.as_slice(), 1, 0, false, false),
+        (unsorted.as_slice(), 3, present, true, false),
+    ] {
+        let bytes = [0xc3; 4]
+            .into_iter()
+            .chain(entries.iter().copied())
+            .collect();
+        let data = MappedSection {
+            name: ".rdata".to_string(),
+            address: 0x2000,
+            virtual_size: 64,
+            file_offset: 4,
+            file_size: entries.len() as u64,
+            permissions: Permissions {
+                read: true,
+                write: false,
+                execute: false,
+            },
+        };
+        let image = LoadedImage::for_test(
+            ImageFormat::Pe,
+            Architecture::X64,
+            0x1000,
+            vec![text.clone(), data],
+            BTreeMap::new(),
+            bytes,
+        );
+        let mut seeds = SeedMap::new();
+        let mut diagnostics = Vec::new();
+        collect_guard_cf_seeds(&image, 0x2000, count, flags, &mut seeds, &mut diagnostics);
+        let expected = if expected {
+            SeedMap::from([(0x1001, BTreeSet::from([SeedKind::GuardCf]))])
+        } else {
+            SeedMap::new()
+        };
+        assert_eq!(seeds, expected);
+        assert_eq!(!diagnostics.is_empty(), malformed);
+    }
+}
+
+#[test]
 fn compat_uses_only_pinned_x86_function_signatures() {
     let x86 = [0xc3, 0x55, 0x8b, 0xec, 0xc3];
     let x86_image = LoadedImage::from_shellcode(&x86, Architecture::X86);

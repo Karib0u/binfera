@@ -132,6 +132,8 @@ pub enum SeedKind {
     /// x64 unwind language handler, or a destructor or copy constructor a C++ `ThrowInfo`
     /// names: called only by the runtime.
     MsvcThrowMetadata,
+    /// Callable entry recorded in the PE Guard CF function table.
+    GuardCf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -680,8 +682,8 @@ fn recover_functions(
             .map(|kinds| seed_priority(kinds, evaluate_candidates))
             .unwrap_or(usize::MAX);
         // pe.py registers the image entry point before exports, SafeSEH,
-        // and unwind entries. Its call tree must finish before those later
-        // roots: function-analyzer order affects FLIRT reference matching.
+        // and unwind entries. Keep those roots ahead of Guard CF-only entries:
+        // function-analyzer order affects FLIRT reference matching.
         let pe_root_order = if evaluate_candidates && analysis.image.format == ImageFormat::Pe {
             let kinds = analysis.seeds.get(address);
             if analysis.image.entry_point == Some(*address) {
@@ -690,6 +692,13 @@ fn recover_functions(
                 1
             } else if kinds.is_some_and(|kinds| kinds.contains(&SeedKind::SafeSeh)) {
                 2
+            } else if kinds.is_some_and(|kinds| {
+                kinds.contains(&SeedKind::GuardCf)
+                    && !kinds
+                        .iter()
+                        .any(|&kind| kind != SeedKind::GuardCf && is_authoritative_seed(kind))
+            }) {
+                4
             } else {
                 3
             }
@@ -2589,6 +2598,7 @@ fn is_authoritative_seed(kind: SeedKind) -> bool {
             | SeedKind::Export
             | SeedKind::TlsCallback
             | SeedKind::SafeSeh
+            | SeedKind::GuardCf
             | SeedKind::Unwind
             | SeedKind::EhFrame
             | SeedKind::ArmExidx
