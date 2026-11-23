@@ -91,6 +91,8 @@ interface WorkspaceProps {
   a: Analysis; onNew: () => void; onFile: (f: File) => void;
   onAnalyzeAgain?: () => void;
   onShellcodeChange?: (raw: RawCodeOptions) => void;
+  /** Start a comparison with this file as one side; the other is chosen next. */
+  onCompare?: () => void;
   /** Identifies this analysis in browser history entries. */
   run: number;
   /** False while the landing page is over this analysis: it keeps its place but takes no keys and leaves the URL alone. */
@@ -101,7 +103,7 @@ interface WorkspaceProps {
   embedded?: Embedding;
 }
 
-function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, active, initial, embedded, notes }: WorkspaceProps & { notes: Notes }) {
+function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain, run, active, initial, embedded, notes }: WorkspaceProps & { notes: Notes }) {
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const isStarred = (ad: number) => notes.isStarred(ad);
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -793,7 +795,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           <div className="data-list">
             {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} />}
             {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
-            {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} />}
+            {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} onAnalyze={embedded ? undefined : onFile} />}
           </div>
           {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
             onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : null}</div>}
@@ -967,6 +969,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     { label: "Undo", onClick: undo, disabled: !notes.canUndo() },
     { label: "Redo", onClick: redo, disabled: !notes.canRedo() },
     ...againMenu,
+    ...(onCompare && !embedded ? [{ label: "Compare with…", onClick: onCompare }] : []),
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
     { label: "Locate in file…", onClick: () => setLocateOpen(true), disabled: !image },
@@ -1178,6 +1181,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
           { title: "Everything", items: [{ label: "All analysis data", note: "JSON", onClick: exportJson }] },
         ]} />}
         {!compact && <ThemeToggle />}
+        {!embedded && onCompare && <button className="ghost" onClick={onCompare} title="Compare this file with another: choose the second file next">Compare…</button>}
         {!embedded && <button className="ghost" onClick={onNew} title="Open another file; this one stays available">New</button>}
         {agent && project && agentSha && (
           <button className={"ghost agent-toggle" + (agentOpen ? " on" : "")} aria-pressed={agentOpen} onClick={() => setAgentOpen(!agentOpen)} title={`Work with your agent on this file (${isMac ? "⌘" : "Ctrl "}J)`}>

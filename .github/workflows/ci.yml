@@ -64,6 +64,7 @@ jobs:
           npm run test:entropy
           npm run test:report
           npm run test:triage
+          npm run test:compare-report
           npm run test:delivery
           npm run test:project
           npm run test:cache
@@ -175,6 +176,7 @@ jobs:
           npm run test:hex
           npm run test:mobile
           npm run test:touch
+          npm run test:stages
           npm run test:compare
           npm run test:shellcode
           npm run test:archive
