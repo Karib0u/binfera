@@ -3,6 +3,8 @@ import { project } from "./project/client";
 import type { Annotation, Edit } from "./project/types";
 
 type NoteEdit = { kind: Edit["kind"]; target: string; value?: string };
+/** An edit as undo remembers it: `value` is what it replaced, `after` what it wrote. */
+export type Reverted = NoteEdit & { after?: string };
 type Write = { set?: Edit; clear?: { kind: Edit["kind"]; target: string } };
 
 /** Analyst names, comments and stars for one sample, kept in this browser under its SHA-256. The names are looked up by every
@@ -16,7 +18,8 @@ export class Notes {
   /** Local variable names, per function: "address:original" -> name. */
   private vars = new Map<string, string>();
   private key = "";
-  private history: (NoteEdit & { after?: string })[] = [];
+  private history: Reverted[] = [];
+  private undone: Reverted[] = [];
   private writes: Promise<void> = Promise.resolve();
   private waitingEdits: Write[] | null = null;
   /** Comments from the project database, per function address. */
@@ -38,6 +41,7 @@ export class Notes {
     this.notes.clear();
     this.aiNames.clear();
     this.history = [];
+    this.undone = [];
     try {
       const old = legacy ? localStorage.getItem("binfera:" + legacy) : null;
       const stored = localStorage.getItem(this.storeKey());
@@ -180,7 +184,7 @@ export class Notes {
     const value = op.value?.trim() || undefined;
     const previous = this.value(op.kind, op.target);
     if (value === previous) return;
-    if (remember) this.history.push({ kind: op.kind, target: op.target, value: previous, after: value });
+    if (remember) { this.history.push({ kind: op.kind, target: op.target, value: previous, after: value }); this.undone = []; }
     const [addr, id] = op.target.split(":");
     const ad = parseInt(addr, 16);
     if (op.kind === "rename_function") {
@@ -198,10 +202,18 @@ export class Notes {
   }
 
   canUndo() { return this.history.some((op) => this.value(op.kind, op.target) === op.after); }
-  undo(): NoteEdit | undefined {
+  undo(): Reverted | undefined {
     let op = this.history.pop();
     while (op && this.value(op.kind, op.target) !== op.after) op = this.history.pop();
-    if (op) this.edit(op, false);
+    if (op) { this.edit(op, false); this.undone.push(op); }
+    return op;
+  }
+  canRedo() { return this.undone.some((op) => this.value(op.kind, op.target) === op.value); }
+  /** Applies the edit last undone again, unless something has since changed what it touched. */
+  redo(): Reverted | undefined {
+    let op = this.undone.pop();
+    while (op && this.value(op.kind, op.target) !== op.value) op = this.undone.pop();
+    if (op) { this.edit({ kind: op.kind, target: op.target, value: op.after }, false); this.history.push(op); }
     return op;
   }
   allComments() { return [...this.notes].sort(([a], [b]) => a - b).flatMap(([address, comments]) => comments.map((c) => ({ address, ...c }))); }

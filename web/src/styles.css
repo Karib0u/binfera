@@ -1862,3 +1862,11 @@ button.fv-finding:hover { background: var(--hover); }
 
 .fn-progress { display: flex; flex: 1 0 100%; gap: 12px; font-size: 12px; color: var(--muted); }
 .fn-progress b { color: var(--text); font-weight: 600; }
+.toast-host { position: fixed; left: 0; right: 0; bottom: 18px; display: flex; justify-content: center; pointer-events: none; z-index: 60; }
+.toast { max-width: min(560px, calc(100vw - 32px)); padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: toast-in .14s ease-out; }
+.app.mobile .toast-host { bottom: calc(76px + env(safe-area-inset-bottom)); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+.hex-scroll .hb, .hex-scroll .hc { user-select: none; }
+.hf-sel { color: var(--muted); font-size: 12px; align-self: center; }
