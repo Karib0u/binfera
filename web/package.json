@@ -13,6 +13,7 @@
     "test:workbench": "node scripts/check-workbench.mjs",
     "test:hex": "node scripts/check-hex.mjs",
     "test:mobile": "node scripts/check-mobile.mjs",
+    "test:touch": "node scripts/check-touch.mjs",
     "test:layout": "node scripts/check-workspace-layout.mjs",
     "test:textdiff": "node scripts/check-textdiff.mjs",
     "test:entropy": "node scripts/check-entropy.mjs",
