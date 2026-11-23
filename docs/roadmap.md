@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-23. Ranked by **analyst value for effort**. Every item has an effort estimate (`S`: ~1 day, `M`: a few days, `L`: weeks) and a concrete **Done when** check.
+Updated: 2026-11-23 (workbench and mobile polish shipped). Ranked by **analyst value for effort**. Every item has an effort estimate (`S`: ~1 day, `M`: a few days, `L`: weeks) and a concrete **Done when** check.
 
 **Goal:** Build the next-generation IDA/Ghidra — fast, responsive on desktop and mobile, and effortless to work in:
 - **Immediate:** 60fps navigation and search at scale, zero-friction triage, and native-feeling mobile + desktop UI.
@@ -12,22 +12,7 @@ Updated: 2026-11-23. Ranked by **analyst value for effort**. Every item has an e
 
 ---
 
-## Now — Workbench & Mobile Polish
-
-High-impact `S` PRs that improve every binary on desktop and mobile right away.
-
-| # | Item | Effort | Done when |
-|---|---|---|---|
-| 1 | **Triage sidebar parity with MCP** — Port MCP's `importance` sort (capabilities, strings, imports, callers, size), `bottom_up` sort, **Hide library (FLIRT/FID)** toggle, and **Examined / Documented** progress to the UI function list. | S | Sorting WannaCry/DarkGate by Importance puts payload core functions in the top 10 with library functions hidden. |
-| 2 | **Desktop UX fixes** — Fix Data-mode File map (`Navigator`) clicks, Overview "Sections" jump, and the `n` variable-rename check (so `unaff_`/`in_`/`auStack_`/DWARF locals rename the variable, not the function). Add right-click "Rename variable…". | S | Web tests cover Data-mode Navigator clicks, Overview Sections jump, and renaming any local token with `n`. |
-| 3 | **Hex selection, Undo toast & Redo** — Add drag and `Shift+Click` byte selection in `HexView` (unlocking Copy as hex / C array / text), `⌘⇧Z` redo, and a non-blocking toast for Copy, Undo, and Star. | S | Drag-selecting bytes enables the copy-selection menu; `⌘Z` announces what was reverted and `⌘⇧Z` restores it. |
-| 4 | **Mobile performance & input polish** — Virtualize mobile `fnList` (`VirtualList`), fix `Palette` (`16px` input to stop iOS auto-zoom, `dvh` sheet, `44px` targets), move mobile `CommentEditor` into `Sheet`, and widen `Sheet` drag-to-dismiss to its header. | S | Mobile Playwright check on a 3,000+ function binary scrolls smoothly; search and comment stay above the software keyboard. |
-| 5 | **Touch parity: Token Action Bar & `CallGraph`** — Tapping a token/line on mobile opens a slim contextual bar (`Rename · Xrefs · Comment · Copy · Hex`). Add tap-to-open and pinch-zoom to `CallGraph`, plus a 1-tap Star button in `.m-bar`. | S | Touch users can rename variables, view xrefs, and navigate `CallGraph` without double-click or right-click. |
-| 6 | **Multi-stage & Compare completions** — Add **Analyze** next to Save on embedded PE/ZIP resources and overlays in `FileView`; add **Compare with…** from an open `Workspace`; add Compare report export (MD/HTML/JSON), `ThemeToggle`, and persisted manual pairs. | S | Opening WannaCry's embedded resource takes 1 click; Compare exports MD/HTML/JSON and keeps manual pairs across reloads. |
-
----
-
-## Next — Workflows IDA & Ghidra Don't Have
+## Now — Workflows IDA & Ghidra Don't Have
 
 Differentiating features that work on every binary, building on engine code that mostly already exists.
 
@@ -79,6 +64,7 @@ Pulled opportunistically when real samples or analyst pain justify the effort; r
 - **Recovery & types:** Go `pclntab`, DWARF, Delphi VMTs/RTTI, Nim, demangling, FLIRT & Function ID, Win32 metadata + phnt native API + CRT prototype packs (#57), `GetProcAddress` global resolution (#59, #64), single-function global calls (#64), symbolic Win32 enum/flag constants (#62), import-register call resolution (#61).
 - **Decompiler & engines:** Embedded Ghidra C++ core + SLEIGH (x86, x64, AArch64, ARM32/Thumb, MIPS32), native Rust capa, binary diffing (`binfera diff` + Compare workspace), isolated p-code function emulation (CLI & MCP), MCP server + shared SQLite project DB + desktop Agent dock.
 - **Viewers:** Tiling code panes, C (one line per statement, viewer-wrapped, `NULL`/`INVALID_HANDLE_VALUE` #65), Assembly, CFG, Call graph, virtualized IDA-style Listing (#51, #58), colored header Hex view, Entropy strip, Strings/Indicators, Imports/Exports, jumpable uncertain call-site warnings (#69), file-handle provenance (#70).
+- **Workbench & mobile polish (#72–#77):** triage sidebar with Importance / Bottom-up sorts, Hide library and Examined / Documented progress (#72); File map, Overview Sections jump and `n` on any local, with right-click Rename variable (#73); hex byte selection, Redo and action toasts (#74); windowed phone function list, 16px / 44px palette, comment sheet and keyboard-aware sheets (#75); tapped-word action bar, header Star and call-graph pinch / tap-to-open (#76); Analyze on embedded resources and overlays, Compare… from an open file, compare report export, theme toggle and persisted manual pairs (#77).
 - **Benchmarks:** `scripts/bench/recovery.py` (#52), `scripts/decompiler_types/coverage.py` (#57), `scripts/bench/quality.py` (#64).
 
 ---
