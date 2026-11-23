@@ -261,6 +261,12 @@ pub fn fingerprint(bytes: &[u8], options: &FingerprintOptions) -> Result<Fingerp
     if managed {
         return from_features(bytes, options);
     }
+    let repaired = if matches!(options.format, Format::Sc32 | Format::Sc64) {
+        None
+    } else {
+        crate::extract::elf::without_corrupt_section_headers(bytes)
+    };
+    let image_bytes = repaired.as_deref().unwrap_or(bytes);
     let analysis = match options.format {
         Format::Sc32 => recovery::analyze_shellcode_native(bytes, Architecture::X86),
         Format::Sc64 => recovery::analyze_shellcode_native(bytes, Architecture::X64),
@@ -268,9 +274,9 @@ pub fn fingerprint(bytes: &[u8], options: &FingerprintOptions) -> Result<Fingerp
         _ if crate::extract::looks_like_macho(bytes) => {
             recovery::analyze_macho(bytes, options.arch.as_deref())
         }
-        _ => recovery::analyze_with_backend(bytes, RecoveryBackend::Native),
+        _ => recovery::analyze_with_backend(image_bytes, RecoveryBackend::Native),
     }?;
-    Ok(from_analysis(bytes, &analysis, options))
+    Ok(from_analysis(image_bytes, bytes, &analysis, options))
 }
 
 pub(super) struct Fnv(u64);
@@ -666,7 +672,12 @@ fn names_of(
     names
 }
 
-fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions) -> Fingerprint {
+fn from_analysis(
+    bytes: &[u8],
+    original: &[u8],
+    analysis: &Analysis,
+    options: &FingerprintOptions,
+) -> Fingerprint {
     let image = &analysis.image;
     let info = crate::image_info::inspect(bytes, options.arch.as_deref()).ok();
     let names = names_of(analysis, info.as_ref());
@@ -904,8 +915,8 @@ fn from_analysis(bytes: &[u8], analysis: &Analysis, options: &FingerprintOptions
         header: Header {
             version: FINGERPRINT_VERSION,
             name: options.name.clone(),
-            size: bytes.len() as u64,
-            sha256: sha256_hex(bytes),
+            size: original.len() as u64,
+            sha256: sha256_hex(original),
             format: format!("{:?}", image.format).to_lowercase(),
             arch: image.architecture.name().to_string(),
             image_base: image.image_base,
