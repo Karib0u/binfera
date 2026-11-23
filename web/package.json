@@ -11,6 +11,7 @@
     "test:image": "node scripts/check-image.mjs",
     "test:virtualization": "node scripts/check-virtualization.mjs",
     "test:workbench": "node scripts/check-workbench.mjs",
+    "test:hex": "node scripts/check-hex.mjs",
     "test:layout": "node scripts/check-workspace-layout.mjs",
     "test:textdiff": "node scripts/check-textdiff.mjs",
     "test:entropy": "node scripts/check-entropy.mjs",

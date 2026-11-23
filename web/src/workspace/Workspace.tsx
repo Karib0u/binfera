@@ -1,7 +1,7 @@
 import CommentEditor from "../views/CommentEditor";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Analysis } from "../types";
-import HexView, { type HexSelection } from "../HexView";
+import HexView, { asText, cArray, hexOf, type HexSelection } from "../HexView";
 import ImportsView from "../ImportsView";
 import Listing from "../Listing";
 import CallGraph from "../CallGraph";
@@ -26,6 +26,8 @@ import ThemeToggle from "../ThemeToggle";
 import ReportMenu from "../ReportMenu";
 import VirtualList, { type VirtualListHandle } from "./VirtualList";
 import ContextMenu, { copyText, type MenuEntry } from "../ContextMenu";
+import { toast, ToastHost } from "../Toast";
+import type { Reverted } from "../names";
 import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../report";
 import { chooseTheme, storedTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
@@ -285,11 +287,25 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     const row = target ?? root.current?.querySelector(`[data-addr="${address}"], [data-ctx-va="${address}"]`);
     setCommentEdit({ address, rect: row?.getBoundingClientRect() });
   };
-  const undo = () => {
-    const op = notes.undo();
-    if (op?.kind === "rename_function") embedded?.onRenamed(parseInt(op.target, 16), op.value ?? "");
+  /** What an undone or redone edit did, in words. */
+  const describeEdit = (verb: "Undid" | "Redid", op: Reverted) => {
+    const [at, id] = op.target.split(":"), ad = parseInt(at, 16);
+    const [from, to] = verb === "Undid" ? [op.after, op.value] : [op.value, op.after];
+    const shown = (v?: string) => (v ? `“${v}”` : "the original");
+    if (op.kind === "rename_function") return `${verb} rename: ${shown(from)} → ${shown(to)}`;
+    if (op.kind === "rename_variable") return `${verb} rename of ${id}: ${shown(from)} → ${shown(to)}`;
+    if (op.kind === "star") return `${verb} ${op.after ? "starring" : "unstarring"} ${fnLabel(ad)}`;
+    return `${verb} comment at ${hex(ad)}`;
+  };
+  const revert = (verb: "Undid" | "Redid") => {
+    const op = verb === "Undid" ? notes.undo() : notes.redo();
+    if (!op) { toast(verb === "Undid" ? "Nothing to undo" : "Nothing to redo"); return; }
+    if (op.kind === "rename_function") embedded?.onRenamed(parseInt(op.target, 16), (verb === "Undid" ? op.value : op.after) ?? "");
+    toast(describeEdit(verb, op));
     bump();
   };
+  const undo = () => revert("Undid"), redo = () => revert("Redid");
+  const toggleStar = (ad: number) => { notes.toggleStar(ad); toast(`${notes.isStarred(ad) ? "Starred" : "Removed star from"} ${fnLabel(ad)}`); bump(); };
   const [renameReq, askRename] = useReducer((n: number) => n + 1, 0);
   const [xrefReq, askXrefs] = useReducer((n: number) => n + 1, 0);
   // Panels: their sizes and whether they show are remembered. Until chosen, the side panel leaves a narrower window to the code.
@@ -360,7 +376,8 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l" && agent && project && agentSha && !mobile) { e.preventDefault(); setAgentOpen(true); setTimeout(() => window.dispatchEvent(new Event("binfera-agent-focus")), 0); return; }
       const target = e.target as HTMLElement;
       if (target.closest?.("input, select, textarea, [contenteditable=true], .palette")) return;
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
       if (e.key === ";" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const ad = cursorRef.current ?? (typeof sel === "number" ? sel : null);
         if (ad !== null) { e.preventDefault(); editComment(ad); }
@@ -372,7 +389,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       if (e.key === "?") { e.preventDefault(); setHelp(true); return; }
       if (typeof sel === "number" && e.key === "n") { e.preventDefault(); askRename(); return; }
       if (typeof sel === "number" && e.key === "x") { e.preventDefault(); askXrefs(); return; }
-      if (typeof sel === "number" && e.key === "s") { e.preventDefault(); notes.toggleStar(sel); bump(); return; }
+      if (typeof sel === "number" && e.key === "s") { e.preventDefault(); toggleStar(sel); return; }
       if (e.key === "[" && !mobile) { setListPref(!listPref); return; }
       if (e.key === "]" && !mobile) { toggleRail(); return; }
       if (e.key === "f" && !mobile && !embedded) { setFocus((v) => !v); return; }
@@ -764,7 +781,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const openCode = () => { const t = typeof sel === "number" ? sel : lastFn.current ?? a.order[0]; if (t !== undefined) setSel(t); };
 
   // Strings, imports and sections are one explorer; the bytes of whatever is selected sit beside it.
-  const hexFull = image ? <HexView image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
+  const hexFull = image ? <HexView image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
     onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : <p className="empty">The file is not loaded.</p>;
   const dataBody = (
     <div className={"data" + (mobile ? " m" : "")}>
@@ -781,7 +798,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
             {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
             {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} />}
           </div>
-          {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
+          {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
             onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : null}</div>}
         </div>
       )}
@@ -858,7 +875,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   };
   /** The right-click menu for whatever is under the pointer: a function, an instruction, a string, bytes. Null leaves the browser's own menu. */
   const contextItems = (target: Element): MenuEntry[] | null => {
-    const copy = (text: string) => () => { void copyText(text); };
+    const copy = (text: string) => () => { void copyText(text).then(() => toast("Copied")); };
     const selected = (getSelection()?.toString() ?? "").trim();
     const items: MenuEntry[] = [];
     const sep = () => { if (items.length && items[items.length - 1] !== "separator") items.push("separator"); };
@@ -868,7 +885,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
         { label: "Open function", onClick: () => { setCursor(ad); setSel(ad, true); } },
         commentItem(ad),
         { label: "Rename…", hint: "N", onClick: () => { setSel(ad); setTimeout(askRename, 0); } },
-        { label: isStarred(ad) ? "Remove star" : "Star", hint: typeof sel === "number" && sel === ad ? "S" : undefined, onClick: () => { notes.toggleStar(ad); bump(); } },
+        { label: isStarred(ad) ? "Remove star" : "Star", hint: typeof sel === "number" && sel === ad ? "S" : undefined, onClick: () => toggleStar(ad) },
       );
       sep();
       items.push({ label: "Copy name", onClick: copy(label(ad)) }, { label: "Copy address", onClick: copy(hex(ad)) });
@@ -895,14 +912,13 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     if (byteEl && image) {
       const off = Number(byteEl.dataset.o), va = image.offToVa(off);
       const rowStart = off - (off % 16), row = image.bytes.subarray(rowStart, Math.min(image.bytes.length, rowStart + 16));
-      const hexOf = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(" ");
       const selOff = hexSel ? image.vaToOff(hexSel.va) : null;
       if (hexSel && selOff !== null && off >= selOff && off < selOff + hexSel.len) {
         const sb = image.bytes.subarray(selOff, selOff + hexSel.len);
         items.push(
           { label: "Copy selection as hex", onClick: copy(hexOf(sb)) },
-          { label: "Copy selection as C array", onClick: copy("{ " + Array.from(sb, (x) => "0x" + x.toString(16).padStart(2, "0")).join(", ") + " }") },
-          { label: "Copy selection as text", onClick: copy(Array.from(sb, (x) => (x >= 0x20 && x < 0x7f ? String.fromCharCode(x) : ".")).join("")) },
+          { label: "Copy selection as C array", onClick: copy(cArray(sb)) },
+          { label: "Copy selection as text", onClick: copy(asText(sb)) },
         );
         sep();
       }
@@ -952,6 +968,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
   const againMenu: MenuItem[] = onAnalyzeAgain ? [{ label: "Analyze again", onClick: onAnalyzeAgain }] : [];
   const goMenu: MenuItem[] = [
     { label: "Undo", onClick: undo, disabled: !notes.canUndo() },
+    { label: "Redo", onClick: redo, disabled: !notes.canRedo() },
     ...againMenu,
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
@@ -1001,14 +1018,14 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
     callGraph: (onOpen) => <CallGraph order={a.order} callees={callees} callers={callers} center={at} setCenter={nav ?? setSel} label={label} caps={(ad) => (byFn.get(ad) ?? []).map((r) => r.name)} onOpen={onOpen} ready={a.settled} />,
     onCode: nav ?? navigate, capsOf: (ad) => (byFn.get(ad) ?? []).map((r) => r.name),
     onComment: () => editComment(here ?? at), onNotesChange: bump,
-    starred: isStarred(at), onStar: () => { notes.toggleStar(at); bump(); },
+    starred: isStarred(at), onStar: () => toggleStar(at),
     onRename: (n) => { const name = n === (a.functions.get(at)?.name ?? "") ? "" : n; notes.rename(at, name); embedded?.onRenamed(at, name); bump(); },
     renameReq, xrefReq, onXrefs: showRefs,
     onRenameAt: (ad, n) => { const name = n === (a.functions.get(ad)?.name ?? "") ? "" : n; notes.rename(ad, name); embedded?.onRenamed(ad, name); bump(); },
     listOpen: listPref, onToggleList: () => setListPref(!listPref), railOpen, onToggleRail: toggleRail, onToggleSplit: toggleSplit,
   });
   const renderPane: PaneRenderer = (view, here, nav, focused, asm) => {
-    if (view === "hex") return image ? <HexView compact image={image} cursor={here.cursor} tick={here.cursor ?? 0} selection={hexSel} onCursor={nav} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs} onOpenCode={nav} /> : <p className="empty">The file is not loaded.</p>;
+    if (view === "hex") return image ? <HexView compact image={image} cursor={here.cursor} tick={here.cursor ?? 0} selection={hexSel} onCursor={nav} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs} onOpenCode={nav} /> : <p className="empty">The file is not loaded.</p>;
     if (view === "strings" || view === "imports") return <PaneData view={view} a={a} cursor={here.cursor} strRefs={strRefs} importRefs={importRefs} label={label} indicators={indicators} navigate={nav} onBytes={(va, len) => showHex(va, len)} siteOf={siteOf} />;
     return <FunctionView {...functionProps(here.address, here.cursor, nav)} {...asm} mobile={false} paneView={view} shortcutsEnabled={focused} />;
   };
@@ -1125,6 +1142,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
             </div>
           </Sheet>
         )}
+        {!embedded && <ToastHost />}
         {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
         {commentBox}
         {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
@@ -1256,6 +1274,7 @@ function Inner({ a, onNew, onFile, onShellcodeChange, onAnalyzeAgain, run, activ
       </footer>
       <div className="sr-only" role="status">{phase}</div>
       {dragging && <div className="overlay">Drop to analyze a new binary</div>}
+      {!embedded && <ToastHost />}
       {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
       {commentBox}
       {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
