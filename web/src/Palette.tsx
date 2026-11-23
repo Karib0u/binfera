@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useKeyboardInset } from "./keyboard";
 
 export interface PaletteItem { kind: string; title: string; detail?: string; run: () => void }
 
@@ -9,6 +10,7 @@ const SCOPED = /^([cafsix]):\s*/i;
 export default function Palette({ initial, search, onClose, placeholder }: { initial: string; search: (q: string) => PaletteItem[]; onClose: () => void;
   /** A palette for choosing one thing: this prompt instead of the search scopes. */
   placeholder?: string }) {
+  useKeyboardInset();
   const [q, setQ] = useState(initial);
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);

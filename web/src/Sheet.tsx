@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
+import { useKeyboardInset } from "./keyboard";
 
 /**
  * A bottom sheet for phones: dim backdrop, grab handle, swipe down or tap outside to close.
  * It stays inside thumb reach, unlike a popover anchored to a corner button.
  */
 export default function Sheet({ title, onClose, children }: { title?: string; onClose: () => void; children: React.ReactNode }) {
+  useKeyboardInset();
   const panel = useRef<HTMLDivElement>(null);
   const drag = useRef<{ y: number; dy: number } | null>(null);
   useEffect(() => {
@@ -27,12 +29,13 @@ export default function Sheet({ title, onClose, children }: { title?: string; on
   return (
     <div className="sheet-back" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="sheet" role="dialog" aria-modal="true" aria-label={title} ref={panel}>
-        <div className="sheet-grab"
+        {/* The handle and the title both drag: the title is a bigger target than the handle's 4px bar. */}
+        <div className="sheet-head"
           onPointerDown={(e) => { drag.current = { y: e.clientY, dy: 0 }; e.currentTarget.setPointerCapture(e.pointerId); }}
           onPointerMove={(e) => move(e.clientY)} onPointerUp={end} onPointerCancel={end}>
-          <i />
+          <div className="sheet-grab"><i /></div>
+          {title && <h2 className="sheet-title">{title}</h2>}
         </div>
-        {title && <h2 className="sheet-title">{title}</h2>}
         <div className="sheet-body">{children}</div>
       </div>
     </div>
