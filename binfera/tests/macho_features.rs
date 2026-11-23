@@ -229,6 +229,24 @@ fn fat_binary_explicit_x86_64_matches_auto() {
 }
 
 #[test]
+fn fat_arm64e_with_versioned_abi_flags_is_selectable() {
+    let mut bytes = fixture_bytes("fat-x86_64-arm64-exe");
+    let arm_entry = 8 + 20;
+    let offset = u32::from_be_bytes(bytes[arm_entry + 8..arm_entry + 12].try_into().unwrap());
+    let offset = offset as usize;
+    // Match a versioned arm64e ABI in both the fat directory and the thin header.
+    let subtype = 0x8000_0002u32;
+    bytes[arm_entry + 4..arm_entry + 8].copy_from_slice(&subtype.to_be_bytes());
+    bytes[offset + 8..offset + 12].copy_from_slice(&subtype.to_le_bytes());
+
+    let (slice, name) = binfera::extract::image::select_macho_slice(&bytes, Some("arm64e"))
+        .expect("selects the arm64e slice");
+    assert_eq!(slice.as_ptr(), bytes[offset..].as_ptr());
+    assert_eq!(name, "arm64e");
+    assert!(binfera::extract::image::select_macho_slice(&bytes, Some("arm64")).is_err());
+}
+
+#[test]
 fn requesting_an_unsupported_slice_lists_whats_actually_there() {
     let bytes = fixture_bytes("fat-x86_64-arm64-exe");
     // Neither slice this fat binary actually has ("x86_64", "arm64") -- an
