@@ -14,6 +14,7 @@ pub mod pair;
 
 pub use capability::{CapabilityDelta, RetargetedRule, RuleSummary};
 pub use file::{ChangedItem, FileDelta, ListDelta};
+pub(crate) use fingerprint::from_analysis;
 pub use fingerprint::{
     fingerprint, is_fingerprint, DetailBlock, DetailEdge, DetailInstruction, ExportFact, FileFacts,
     Fingerprint, FingerprintOptions, FunctionDetail, FunctionRecord, Header, ImportFact,

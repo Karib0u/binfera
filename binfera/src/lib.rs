@@ -16,6 +16,7 @@ pub mod dwarf;
 pub mod emulate;
 pub mod engine;
 pub mod extract;
+pub mod family;
 pub mod features;
 #[cfg(feature = "decompiler")]
 pub mod fid;
