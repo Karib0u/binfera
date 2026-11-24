@@ -89,7 +89,9 @@ export function CodeOriginCard({
   }
 
   const elig = report.eligible_functions;
-  const tooSmall = Math.max(0, report.total_functions - elig);
+  // The inventory the header counts; the engine lists functions the way the decompiler does.
+  const total = a.order.length || report.total_functions;
+  const tooSmall = Math.max(0, total - elig);
   const segments: { kind: FunctionOriginKind; label: string; count: number; hint: string }[] = [
     { kind: "malware", label: "Family code", count: report.family_matched_functions, hint: "Functions attributed to a malware family in the pack" },
     { kind: "shared", label: "Common malware code", count: report.shared_malware_functions, hint: "Seen across many unrelated malware families: says nothing about which family this is" },
@@ -165,7 +167,7 @@ export function CodeOriginCard({
       <footer className="co-foot">
         {packInput}
         <span title={tooSmall > 0 ? `${plural(tooSmall, "function")} are under 20 instructions or 2 blocks: too small to fingerprint reliably` : undefined}>
-          {num(elig)} of {num(report.total_functions)} functions fingerprinted
+          {num(elig)} of {num(total)} functions fingerprinted
         </span>
         <span aria-hidden>·</span>
         <span>{getFamilyPackName() ?? "Starter pack"}</span>

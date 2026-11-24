@@ -4,8 +4,7 @@
 //! WebAssembly and language bindings can use the same policy. The caller owns output.
 use super::{DecompilationTimings, DecompileError, DecompilerSession};
 use crate::api::Format;
-use crate::extract::image::ImageFormat;
-use crate::extract::recovery::{Analysis, SeedKind};
+use crate::extract::recovery::Analysis;
 use crate::packing::Packing;
 use crate::parallel::Jobs;
 use serde::Serialize;
@@ -21,13 +20,12 @@ pub use cache::{
 };
 mod listings;
 mod options;
-mod selection;
+pub(super) use crate::extract::recovery::listing::{self as selection, needs_compatibility};
 use crate::image_info::unsupported_elf_cpu;
 pub use evidence::StartEvidence;
 pub use graph::{FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, Reference};
 use listings::{emit_data_only_elf, emit_managed_methods};
 pub use options::{BatchOptions, RetryPolicy};
-pub(super) use selection::needs_compatibility;
 
 pub type InstructionRow = (u64, String, String);
 
@@ -168,46 +166,11 @@ fn decompile_all_impl(
     } else {
         let (mut session, native) = options.open_recovered(bytes, None, signature_jobs)?;
         native_seeds = options.evidence.then(|| native.seeds.clone());
-        let (analysis, rejected) = selection::select_analysis(bytes, native, &mut session)?;
+        let (analysis, rejected) = selection::select_analysis(bytes, native, &mut session);
         (session, analysis, rejected)
     };
     session.set_limits(options.limits)?;
-    let mut functions: std::collections::BTreeSet<u64> =
-        analysis.functions.keys().copied().collect();
-    // A Go binary lists its own functions: those are the functions, and anything recovery started
-    // inside one is part of it.
-    if let Some(go) = crate::golang::parse(&analysis.image) {
-        functions.retain(|address| !go.functions.inside(*address));
-        functions.extend(
-            go.functions
-                .functions
-                .iter()
-                .filter(|f| !matches!(f.name.as_str(), "go:buildid" | "go.buildid"))
-                .map(|f| f.entry),
-        );
-    }
-    functions.retain(|address| {
-        !rejected.contains(address)
-            && session.is_code_address(*address)
-            && !session.is_local_label(*address)
-    });
-    let called_stubs = selection::called_win64_stubs(&analysis, functions.iter().copied());
-    functions.retain(|address| {
-        // Calls, exports, unwind records, Guard CF and incremental-linking thunks can
-        // establish a linker stub as an entry.
-        !session.is_import_thunk(*address)
-            || called_stubs.contains(address)
-            || (analysis.image.format == ImageFormat::Pe
-                && analysis.seeds.get(address).is_some_and(|kinds| {
-                    kinds.contains(&SeedKind::Export)
-                        || kinds.contains(&SeedKind::Unwind)
-                        || kinds.contains(&SeedKind::GuardCf)
-                        || kinds.contains(&SeedKind::IncrementalTarget)
-                        || (kinds.contains(&SeedKind::Unclaimed)
-                            && analysis.image.architecture
-                                == crate::extract::image::Architecture::X64)
-                }))
-    });
+    let functions = selection::listed_functions(&analysis, &rejected, &session);
     let addresses: Vec<u64> = functions.iter().copied().collect();
     // The viewer reads branches out of the listing, and AArch64 text is not x86's.
     let arch_name = analysis.image.architecture.name();

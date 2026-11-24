@@ -19,6 +19,7 @@ mod emucode;
 pub mod flirt;
 pub mod golang;
 pub(crate) mod idioms;
+pub mod listing;
 pub mod libc_start_main;
 pub mod msvcfunc;
 pub mod noreturn;

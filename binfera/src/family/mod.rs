@@ -228,8 +228,10 @@ fn embedded_flirt() -> Option<&'static Signatures> {
         .as_ref()
 }
 
-/// Runs native code recovery, tags MSVC/ATL/MFC/common-library functions via bundled FLIRT
-/// signatures on x86/x64 PEs, and returns a [`SampleSketch`] ready for [`FamilyPack::match_sketch`].
+/// Runs native code recovery, lists its functions as the decompiler does
+/// ([`recovery::listing::list_functions`]), tags MSVC/ATL/MFC/common-library functions via bundled
+/// FLIRT signatures on x86/x64 PEs, and returns a [`SampleSketch`] ready for
+/// [`FamilyPack::match_sketch`].
 pub fn sketch_bytes(
     bytes: &[u8],
     family: &str,
@@ -255,6 +257,9 @@ pub fn sketch_bytes(
         recovery::analyze_with_backend(image_bytes, RecoveryBackend::Native)
     }
     .map_err(DiffError::from)?;
+    // Fingerprint the functions the decompiler lists, so an origin verdict names a function the
+    // analyst can open and a pack is matched on the same starts it was built from.
+    let (analysis, listed) = recovery::listing::list_functions(image_bytes, analysis);
 
     let flirt_addrs: BTreeSet<u64> = if analysis.image.format == ImageFormat::Pe
         && matches!(
@@ -271,6 +276,7 @@ pub fn sketch_bytes(
 
     let fp = diff::from_analysis(image_bytes, bytes, &analysis, &options);
     let mut sketch = sketch_from_fingerprint(&fp, family, path, unpacked_dump);
+    sketch.functions.retain(|f| listed.contains(&f.address));
     if !flirt_addrs.is_empty() {
         for f in &mut sketch.functions {
             if flirt_addrs.contains(&f.address) {
