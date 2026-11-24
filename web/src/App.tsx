@@ -12,6 +12,7 @@ import type { Analysis } from "./types";
 import type { Folder } from "./project/types";
 import { bytes } from "./workspace/labels";
 import { lastEntry, locOf, pageUrl, parseHash, writeEntry, type Entry, type Target } from "./workspace/location";
+import { installOpenerImport } from "./openerImport";
 import Workspace from "./workspace/Workspace";
 import type { RawCodeOptions } from "./engine/engine.worker";
 
@@ -86,6 +87,15 @@ export default function App() {
     window.addEventListener("binfera-folder", onFolder);
     return () => window.removeEventListener("binfera-folder", onFolder);
   }, []);
+
+  const startRef = useRef(start);
+  startRef.current = start;
+  // External tools (e.g. FileBus) open `#import` and transfer raw bytes directly over postMessage.
+  useEffect(() => installOpenerImport({
+    win: window,
+    onFile: (file) => { void startRef.current(file, undefined, true); },
+    onClearHash: () => { history.replaceState(null, "", pageUrl()); },
+  }), []);
 
   // Links also work when a tab is already showing the landing page.
   useEffect(() => {
