@@ -2,7 +2,13 @@ import type { Arch } from "../types";
 
 /** Normalized file metadata from Rust's image_info API. */
 export interface Section { name: string; va: number; vsize: number; off: number; size: number; perms: string; entropy: number }
-export interface ImportEntry { dll: string; name: string; /** Address of the import's pointer slot. */ va: number }
+export interface ImportEntry {
+  dll: string; name: string;
+  /** Address of the import's pointer slot; for a variable, of the file's copy of it. */
+  va: number;
+  /** A library variable (ELF copy relocation, such as `stdout`), not a function. */
+  data?: boolean;
+}
 export interface ExportEntry { name: string; va: number; forward?: string }
 export interface Region { off: number; size: number; va: number }
 

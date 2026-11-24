@@ -2,6 +2,7 @@ import type { Analysis, CapaRule, StringEntry } from "../types";
 import { hex } from "../workspace/labels";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import GraphView from "../GraphView";
+import { CallTree } from "./CallTree";
 import { linesWithSetup } from "../graph";
 import { useNotes } from "../names";
 import Asm, { type AsmHandle } from "../Asm";
@@ -75,10 +76,16 @@ function XrefGroup({ title, items, a, onGoto, pending }: { title: string; items?
   );
 }
 
+type MobileTab = "c" | "asm" | "graph" | "listing" | "refs";
+
 export interface FnViewProps {
   a: Analysis; address: number; rules: CapaRule[];
   resolve: (t: string) => number | undefined; onGoto: (ad: number) => void;
   callers?: number[]; callees?: number[]; xrefsReady: boolean;
+  /** Any function's callers and callees, for the phone's call tree. */
+  callersOf?: (ad: number) => number[] | undefined; calleesOf?: (ad: number) => number[] | undefined;
+  /** The imported APIs a function calls. */
+  apisOf?: (ad: number) => string[] | undefined;
   strings: StringEntry[]; onString: (text: string) => void; strAt: (ad: number) => string | undefined;
   /** Text at a data address that the strings list leaves out. */
   textAt: (ad: number) => string | undefined;
@@ -119,13 +126,16 @@ export interface FnViewProps {
   /** The Listing, with the instructions of the selected C line marked. */
   listing: (marked: Set<number>) => React.ReactNode; callGraph: (onOpen: (ad: number) => void) => React.ReactNode;
   /** Phone only: bumped when the strip is tapped, to show the listing; the strip itself; the ⋯ menu's shared items; opening search. */
-  listingReq: number; strip: React.ReactNode; menuItems: MenuItem[]; onSearch: () => void;
+  listingReq: number;
+  /** The last Listing request a function page acted on. Kept by the workspace, so a request made from Data opens the Listing tab of the page it mounts. */
+  listingSeen?: React.MutableRefObject<number>;
+  strip: React.ReactNode; menuItems: MenuItem[]; onSearch: () => void;
 }
 
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -377,7 +387,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   const frameContent = <StackFrame frame={f?.frame} arch={a.arch} pending={!f} onWord={setWord} onInstruction={(ad) => { focusInstruction(ad); onCursor(ad); }} />;
 
   const [expandedCapsFor, setExpandedCapsFor] = useState<number | null>(null);
-  const [mTab, setMTab] = useState<CodeView | "refs">("c");
+  const [mTab, setMTab] = useState<MobileTab>("c");
+  const [rel, setRel] = useState<"callees" | "callers" | "strings" | "stack">("callees");
   function showMobileAsm(ad: number) {
     if (cursor !== ad) picked.current = ad;
     focusInstruction(ad);
@@ -385,8 +396,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
     setMTab("asm");
   }
   const touch = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => { setMTab((tab) => tab === "calls" ? "calls" : "c"); }, [address]);
-  const handledReq = useRef(listingReq);
+  useEffect(() => { setMTab("c"); }, [address]);
+  const ownReq = useRef(listingReq), handledReq = listingSeen ?? ownReq;
   useEffect(() => { if (listingReq !== handledReq.current) { handledReq.current = listingReq; setMTab("listing"); } }, [listingReq, address]);
   // Tapping a C line selects its instructions (and the reverse); show them when the tab opens.
   useEffect(() => {
@@ -429,11 +440,37 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
   );
 
   if (mobile) {
-    const refCount = (callees?.length ?? 0) + (callers?.length ?? 0) + strings.length;
+    const refCount = (callees?.length ?? 0) + (apisOf?.(address)?.length ?? 0) + (callers?.length ?? 0) + strings.length;
+    const fnName = (ad: number) => fnLabel(ad, a.functions.get(ad)?.name);
+    const calls = (callees?.length ?? 0) + (apisOf?.(address)?.length ?? 0);
+    const relTabs = [["callees", "Calls", calls], ["callers", "Called by", callers?.length], ["strings", "Strings", strings.length], ["stack", "Stack", undefined]] as const;
+    // Calls, callers, strings and the frame in one place; the call graph's depth is the tree's expand arrows.
+    const mobileRefs = (
+      <>
+        <div className="m-subseg" role="tablist" aria-label="Function references">
+          {relTabs.map(([k, name, n]) => (
+            <button key={k} role="tab" aria-selected={rel === k} className={rel === k ? "on" : ""} onClick={() => setRel(k)}>
+              {name}{xrefsReady && n !== undefined && <em>{n}</em>}
+            </button>
+          ))}
+        </div>
+        {(rel === "callees" || rel === "callers") && (!xrefsReady
+          ? <p className="ct-empty">Calls are known once decompilation finishes.</p>
+          : <CallTree key={rel + address} root={address} dir={rel} edges={(ad) => ad === address ? (rel === "callees" ? callees : callers) : (rel === "callees" ? calleesOf : callersOf)?.(ad)}
+              apis={rel === "callees" ? apisOf : undefined} onApi={onImport}
+              label={fnName} caps={capsOf} onOpen={(ad) => { setMTab("c"); onGoto(ad); }} />)}
+        {rel === "strings" && (!xrefsReady ? <p className="ct-empty">Computed when decompilation finishes.</p>
+          : strings.length === 0 ? <p className="ct-empty">This function references no strings.</p>
+          : <div className="m-strs">{strings.map((x) => (
+            <button key={x.a} className="m-str" onClick={() => openString(x.s, x.a)}><span>{x.s}</span><code>{hex(x.a)}</code></button>
+          ))}</div>)}
+        {rel === "stack" && <div className="rail m-frame">{frameContent}</div>}
+      </>
+    );
     // Capability chips scroll away with the code instead of pinning a row to the screen.
     const capChips = rules.length > 0 && <div className="m-caps">{rules.map(capButton)}</div>;
     // A horizontal swipe on text moves between views; graphs and the listing keep the gesture for panning.
-    const order: (CodeView | "refs")[] = ["c", "asm", "graph", "calls", "listing", "refs"];
+    const order: MobileTab[] = ["c", "asm", "graph", "listing", "refs"];
     const swipeable = mTab === "c" || mTab === "asm" || mTab === "refs";
     const swipe = {
       onTouchStart: (e: React.TouchEvent) => { const t = e.touches[0]; touch.current = swipeable ? { x: t.clientX, y: t.clientY } : null; },
@@ -468,7 +505,7 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
           ]} />
         </div>
         <div className="m-seg" role="tablist">
-          {([["c", "C"], ["asm", "Asm"], ["graph", "Flow"], ["calls", "Calls"], ["listing", "List"], ["refs", "Refs"]] as const).map(([k, name]) => (
+          {([["c", "C"], ["asm", "Asm"], ["graph", "Flow"], ["listing", "Listing"], ["refs", "Refs"]] as const).map(([k, name]) => (
             <button key={k} role="tab" aria-selected={mTab === k} className={mTab === k ? "on" : ""} onClick={() => setMTab(k)}>
               {name}{k === "refs" && xrefsReady && refCount > 0 && <em>{refCount}</em>}
             </button>
@@ -480,9 +517,8 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
           {mTab === "c" && <div className="cp-pane" ref={cPane}>{capChips}{cContent}</div>}
           {mTab === "asm" && <div className="cp-pane">{capChips}{aContent}</div>}
           {mTab === "graph" && <div className="cp-pane graph-pane">{graphContent}</div>}
-          {mTab === "calls" && <div className="cp-pane graph-pane">{callsContent}</div>}
           {mTab === "listing" && <div className="cp-pane graph-pane">{listing(hlAddrs)}</div>}
-          {mTab === "refs" && <div className="cp-pane rail m-refs"><div className="inspector-head">{inspectorTabs}</div>{inspector === "refs" ? refsContent : frameContent}</div>}
+          {mTab === "refs" && <div className="cp-pane m-refs">{mobileRefs}</div>}
         </div>
         {tokenBar && (
           <div className="m-tokbar" role="toolbar" aria-label={"Actions for " + tokenBar.text}>

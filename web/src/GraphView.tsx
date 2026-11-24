@@ -4,12 +4,15 @@ import { importKey, tokenized, tokKey } from "./highlight";
 import { slotSource } from "./resolved";
 import { useNotes } from "./names";
 import type { FunctionGraph, CapaRule } from "./types";
+import { useMobile } from "./workspace/useMobile";
 
 const LINE_H = 18, HEAD_H = 24, CAP_H = 18, PAD_X = 10, PAD_Y = 6;
 const MIN_ZOOM = 0.1, MAX_ZOOM = 2.5;
 /** A graph that only fits below this zoom opens at READ_ZOOM on its entry block instead, where the text can be read. */
 const LEGIBLE_ZOOM = 0.6, READ_ZOOM = 0.9;
 const MINI_W = 150, MINI_H = 190;
+/** A phone's minimap stays in a corner, small enough to leave the code readable. */
+const MINI_PHONE_W = 84, MINI_PHONE_H = 110;
 const EDGE_VAR: Record<EdgeKind, string> = { true: "var(--c-str)", false: "var(--err)", jump: "var(--c-fn)" };
 
 let charWidth = 0;
@@ -53,6 +56,7 @@ interface View { x: number; y: number; k: number }
 /** Control-flow graph of one function, in the manner of IDA's graph view: blocks, coloured edges, pan and zoom. */
 export default function GraphView({ rows, recovered, arch, self, name, rules, resolve, label, strAt, textAt, onGoto, cursor, onCursor, marked, slot, onImport, isData, onData, onCode, argNotes }: Props) {
   const cfg = useMemo(() => buildCfg(rows, arch, recovered), [rows, arch, recovered]);
+  const mobile = useMobile();
   // The parent passes fresh closures and arrays on every render; key the layout on content so it is not redone (and the view reset).
   const strRef = useRef(strAt);
   strRef.current = strAt;
@@ -225,7 +229,7 @@ export default function GraphView({ rows, recovered, arch, self, name, rules, re
         <button onClick={fit} title="Fit the whole graph in the pane">Fit</button>
         <small>{cfg.blocks.length} blocks · {cfg.edges.length} edges</small>
       </div>
-      <div className="graph-legend"><i style={{ background: EDGE_VAR.true }} />true<i style={{ background: EDGE_VAR.false }} />false<i style={{ background: EDGE_VAR.jump }} />jump / fall-through</div>
+      {!mobile && <div className="graph-legend"><i style={{ background: EDGE_VAR.true }} />true<i style={{ background: EDGE_VAR.false }} />false<i style={{ background: EDGE_VAR.jump }} />jump / fall-through</div>}
       <div ref={box} className={"graph-view" + (panning ? " panning" : "")} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
         onPointerLeave={(e) => { if (!e.currentTarget.hasPointerCapture(e.pointerId)) onUp(e); }}
         onClick={(e) => { if (moved.current < 4 && !(e.target as HTMLElement).closest(".gb")) setPicked(null); }}>
@@ -265,14 +269,15 @@ export default function GraphView({ rows, recovered, arch, self, name, rules, re
             );
           })}
         </div>
-        {(layout.width * view.k > size.w || layout.height * view.k > size.h) && <Minimap layout={layout} entry={self} blocks={cfg.blocks} view={view} size={size} onCenter={(x, y) => { touched.current = true; centerOn(x, y, view.k); }} />}
+        {(layout.width * view.k > size.w || layout.height * view.k > size.h) && <Minimap max={mobile ? [MINI_PHONE_W, MINI_PHONE_H] : [MINI_W, MINI_H]} layout={layout} entry={self} blocks={cfg.blocks} view={view} size={size} onCenter={(x, y) => { touched.current = true; centerOn(x, y, view.k); }} />}
       </div>
     </div>
   );
 }
 
 /** The whole graph in small, with the visible area marked; click or drag to move there. */
-function Minimap({ layout, entry, blocks, view, size, onCenter }: {
+function Minimap({ max, layout, entry, blocks, view, size, onCenter }: {
+  max: [number, number];
   layout: { width: number; height: number; nodes: { id: number; x: number; y: number; w: number; h: number }[] };
   entry: number; blocks: { addr: number }[]; view: View; size: { w: number; h: number }; onCenter: (x: number, y: number) => void;
 }) {
@@ -282,7 +287,7 @@ function Minimap({ layout, entry, blocks, view, size, onCenter }: {
     for (const p of layout.nodes) out[blocks[p.id].addr === entry ? "entry" : "other"] += `M${p.x} ${p.y}h${p.w}v${p.h}h${-p.w}z`;
     return out;
   }, [layout, blocks, entry]);
-  const k = Math.min(MINI_W / layout.width, MINI_H / layout.height);
+  const k = Math.min(max[0] / layout.width, max[1] / layout.height);
   const w = layout.width * k, h = layout.height * k;
   const to = (e: React.PointerEvent<SVGSVGElement>) => { const r = e.currentTarget.getBoundingClientRect(); onCenter((e.clientX - r.left) / k, (e.clientY - r.top) / k); };
   return (

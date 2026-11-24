@@ -54,6 +54,7 @@ import type { RawCodeOptions } from "../engine/engine.worker";
 const HOME_TITLE = document.title;
 
 const SORT_LABELS: Record<FnSort, string> = { address: "Address", importance: "Importance", bottom_up: "Bottom-up", caps: "Capabilities", name: "Name" };
+const SORT_HINTS: Record<FnSort, string> = { address: "Order in the file", importance: "Most worth reading first", bottom_up: "Leaf functions before their callers", caps: "Most capability matches first", name: "Alphabetical" };
 
 const MARK_TITLE = { changed: "Differs in the other file", added: "Only in this file", removed: "Only in this file", same: "The same in the other file" } as const;
 
@@ -176,6 +177,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const [fnSort, setFnSort] = useState<FnSort>("address");
   const [hideLibrary, setHideLibrary] = useStored("hide-library", false);
   const [listingReq, setListingReq] = useState(0);
+  const listingSeen = useRef(0);
   const [wideLayout, setWideLayout] = useState<Layout>(() => { if (initial.layout) return initial.layout; try { const v = localStorage.getItem("layout2"); return v ? panesOf(v).join("+") : "c+listing"; } catch { return "c+listing"; } });
   const [compactLayout, setCompactLayout] = useState<Layout>("c");
   const layout = compact ? compactLayout : wideLayout, setLayout = compact ? setCompactLayout : setWideLayout;
@@ -332,6 +334,15 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
 
   // Cross-references are derived from the decompiled text: any identifier or hex literal that names a function.
   const { resolve, callers, callees, strRefs, fnStrings, strByAddr, importRefs, xrefs, codeIndex } = useReferences(a);
+  /** The imported APIs each function calls, by name. */
+  const apisByFn = useMemo(() => {
+    const m = new Map<number, string[]>();
+    // Reading a library variable such as stdout is not a call.
+    const variables = new Set(a.image?.imports.filter((i) => i.data).map((i) => i.name));
+    for (const [name, fns] of importRefs) if (!variables.has(name)) for (const ad of new Set(fns)) m.set(ad, [...(m.get(ad) ?? []), name]);
+    for (const names of m.values()) names.sort((x, y) => x.localeCompare(y));
+    return m;
+  }, [importRefs, a.image]);
   const library = useMemo(() => new Set(a.capa?.library ?? []), [a.capa]);
   const libraryCount = useMemo(() => a.order.filter((ad) => library.has(ad)).length, [a.order, library]);
   // Triage signals: computed once the functions have settled, since they read the call graph and references.
@@ -464,16 +475,34 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   };
   /** A data address clicked in code: strings open the Strings pane; anything else shows in the Listing. */
   const openData = (va: number, nav?: (va: number) => void) => { if (strByAddr.has(va)) openStringAt(va, nav); else (nav ?? showData)(va); };
-  /** Show an address in a hex pane beside the code, optionally selecting the bytes of a string. Phones, and files with no functions yet, keep the hex in Data. */
+  /** Show an address in a hex pane beside the code, optionally selecting the bytes of a string. A phone opens its Hex tab; a file with no functions yet keeps the hex beside the Data list. */
   const showHex = (va: number, len = 0) => {
     setCursor(va);
-    if (len) setHexSel({ va, len });
-    if (mobile || !a.order.length) { if (typeof sel === "number" || sel === "capa") setSel(lastData.current); return; }
+    setHexSel(len ? { va, len } : null);
+    if (mobile) { setSel("hex"); return; }
+    if (!a.order.length) { if (typeof sel === "number" || sel === "capa") setSel(lastData.current); return; }
     ensurePane("hex");
     const target = codeOwner(va) ?? (typeof sel === "number" ? sel : lastFn.current ?? a.order[0]);
     if (target !== undefined) setSel(target, true);
   };
   /** Go to an address: the instruction when it is code, else the bytes. */
+  /** An export or a library variable: its function when it is code, its line in the Listing when it is file data, its references when it has no bytes in the file (.bss). */
+  const openSymbol = (va: number) => {
+    const code = containment ? containment.has(va) : a.order.includes(va);
+    if (code) { goto(va); return; }
+    if (image && image.vaToOff(va) === null) {
+      if (xrefCount(va)) { showRefs(va); return; }
+      const where = image.sectionAt(va)?.name;
+      toast(`${exportOf(va) ?? hex(va)} is uninitialised data${where ? " in " + where : ""}: no bytes in the file, and no code refers to it`);
+      return;
+    }
+    const t = listingTarget(va);
+    if (t === undefined) { showHex(va); return; }
+    setCursor(va); setHexSel(null);
+    ensurePane("listing");
+    setListingReq((n) => n + 1);
+    setSel(t, true);
+  };
   const jump = (ad: number) => {
     const code = containment ? containment.has(ad) : a.order.includes(ad);
     if (code || !image || image.vaToOff(ad) === null) goto(ad); else showHex(ad);
@@ -748,15 +777,17 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   );
   /** Phone: the same list, windowed. A function with capability matches gets a second line; both heights are fixed so the window can be computed. */
   const fnList = (
-    <VirtualList className="m-fnlist" items={list} rowHeight={(ad) => (byFn.has(ad) ? 82 : 60)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
+    <VirtualList className="m-fnlist" items={list} rowHeight={(ad) => (byFn.has(ad) ? 72 : 52)} selected={typeof sel === "number" ? list.indexOf(sel) : -1}
       empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
       render={(ad) => {
         const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
         return (
           <button aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
             <span className="fn">
-              <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
-              {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small>{hex(ad)}</small>}
+              <span className="m-fnline">
+                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
+                {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small className="m-fnaddr">{hex(ad)}</small>}
+              </span>
               {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
             </span>
             {rules && <em className="pill">{rules.length}</em>}
@@ -794,7 +825,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         <div className={mobile ? "data-single" : "data-split"}>
           <div className="data-list">
             {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} />}
-            {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
+            {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} onSymbol={openSymbol} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
             {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} onAnalyze={embedded ? undefined : onFile} />}
           </div>
           {!mobile && !a.order.length && <div className="data-hex">{image ? <HexView compact image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
@@ -1011,10 +1042,10 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     onBack: () => { if (canBack) back(); else push({ ...loc, tab: "functions", detail: false }); },
     strings: (fnStrings.get(at) ?? []).map((v) => strByAddr.get(v)!).filter(Boolean),
     onString: (s) => openString(s, nav),
-    callers: callers.get(at), callees: callees.get(at), xrefsReady: a.settled,
+    callers: callers.get(at), callees: callees.get(at), callersOf: (ad) => callers.get(ad), calleesOf: (ad) => callees.get(ad), apisOf: (ad) => apisByFn.get(ad), xrefsReady: a.settled,
     strAt: strAtVa, textAt: textAtVa, onCursor: nav ?? setCursor, isData: dataAt, onData: (va) => openData(va, nav), slot,
     onImport: (n) => openImport(n, nav),
-    layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, strip, menuItems: goMenu, onSearch: () => setPalette(""),
+    layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, listingSeen, strip, menuItems: goMenu, onSearch: () => setPalette(""),
     callGraph: (onOpen) => <CallGraph order={a.order} callees={callees} callers={callers} center={at} setCenter={nav ?? setSel} label={label} caps={(ad) => (byFn.get(ad) ?? []).map((r) => r.name)} onOpen={onOpen} ready={a.settled} />,
     onCode: nav ?? navigate, capsOf: (ad) => (byFn.get(ad) ?? []).map((r) => r.name),
     onHex: (va) => { setCursor(va); setSel("hex"); }, onComment: () => editComment(here ?? at), onNotesChange: bump,
@@ -1133,11 +1164,12 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
               <label><input type="checkbox" checked={onlyStars} onChange={(e) => setOnlyStars(e.target.checked)} /> Only starred functions</label>
               {libraryCount > 0 && <label><input type="checkbox" checked={hideLibrary} onChange={(e) => setHideLibrary(e.target.checked)} /> Hide library functions ({libraryCount})</label>}
               {embedded && <label><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only changed functions</label>}
-              <div className="sheet-seg" role="group" aria-label="Sort functions">
+              <fieldset className="sheet-radios">
+                <legend>Sort by</legend>
                 {(["address", "importance", "bottom_up", "caps", "name"] as const).map((k) => (
-                  <button key={k} aria-pressed={fnSort === k} className={fnSort === k ? "on" : ""} onClick={() => setFnSort(k)}>{SORT_LABELS[k]}</button>
+                  <label key={k}><input type="radio" name="fn-sort" checked={fnSort === k} onChange={() => setFnSort(k)} /><span>{SORT_LABELS[k]}<small>{SORT_HINTS[k]}</small></span></label>
                 ))}
-              </div>
+              </fieldset>
               <button className="sheet-done" onClick={() => setFiltersOpen(false)}>Show {list.length} {list.length === 1 ? "function" : "functions"}</button>
             </div>
           </Sheet>

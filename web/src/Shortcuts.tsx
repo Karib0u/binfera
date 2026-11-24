@@ -22,8 +22,8 @@ export default function Shortcuts({ onClose, extra }: { onClose: () => void; ext
   }, []);
   return (
     <div className="palette-back" onMouseDown={onClose} onKeyDown={(e) => { if (e.key === "Escape" || e.key === "?") { e.stopPropagation(); onClose(); } }}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="keys-title" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
+      <div className="keys" role="dialog" aria-modal="true" aria-labelledby="keys-title" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="keys-head">
           <h2 id="keys-title">Keyboard shortcuts</h2>
           <button ref={close} className="ghost" onClick={onClose}>Close</button>
         </div>

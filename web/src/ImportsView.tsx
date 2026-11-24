@@ -6,7 +6,9 @@ import { FunctionReferences } from "./views/FunctionReferences";
 const hex = (n: number) => "0x" + n.toString(16);
 const PAGE = 300;
 
-export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, query, setQuery, mobile, cursor }: {
+export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, onSymbol, query, setQuery, mobile, cursor }: {
+  /** Open an export or a library variable by address; defaults to onAddr. */
+  onSymbol?: (va: number) => void;
   cursor?: number | null;
   /** Phone: compact rows whose callers open on tap. */
   mobile?: boolean;
@@ -19,7 +21,7 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
   const image = a.image;
   const needle = query.trim().toLowerCase();
   const groups = useMemo(() => {
-    const g = new Map<string, { name: string; va: number }[]>();
+    const g = new Map<string, { name: string; va: number; data?: boolean }[]>();
     for (const i of image?.imports ?? []) {
       if (needle && !i.name.toLowerCase().includes(needle) && !i.dll.toLowerCase().includes(needle)) continue;
       const k = i.dll || "dynamic symbols";
@@ -48,9 +50,15 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
       {exports.length > 0 && (
         <section>
           <h2>Exports <small>{exports.length}</small></h2>
-          {exports.slice(0, limit).map((e) => (
+          {exports.slice(0, limit).map((e) => mobile ? (
+            // Phone: the same row as an import, the whole row a target.
+            <button className="imp m" key={e.name + e.va} disabled={!!e.forward} onClick={() => (onSymbol ?? onAddr)(e.va)}>
+              <span className="imp-name">{e.name}</span>
+              <small>{e.forward ? `→ ${e.forward}` : hex(e.va)}</small>
+            </button>
+          ) : (
             <div className={"imp" + (cursor === e.va ? " selected" : "")} data-current={cursor === e.va || undefined} key={e.name + e.va}>
-              {e.forward ? <span className="imp-name">{e.name}</span> : <button className="imp-name" onClick={() => onAddr(e.va)}>{e.name}</button>}
+              {e.forward ? <span className="imp-name">{e.name}</span> : <button className="imp-name" onClick={() => (onSymbol ?? onAddr)(e.va)}>{e.name}</button>}
               {e.forward ? <code>forwarded to {e.forward}</code> : <code>{hex(e.va)}</code>}
             </div>
           ))}
@@ -63,16 +71,22 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
             if (shown++ >= limit) return null;
             const r = refs.get(i.name);
             const selected = cursor != null && i.va > 0 && cursor >= i.va && cursor < i.va + (image?.ptrSize ?? 1);
+            // A library variable is read, not called; its copy in .bss has no bytes to show, so it opens its references.
+            const users = (n: number) => i.data ? `read by ${n} function${n === 1 ? "" : "s"}` : `${n} caller${n === 1 ? "" : "s"}`;
+            const none = i.data ? "not read" : "no callers";
+            const tag = i.data && <span className="imp-tag" title="A library variable: this file holds a copy of it (an ELF copy relocation)">variable</span>;
             if (mobile) {
               const key = dll + i.name + i.va, isOpen = open === key;
               return (
                 <div className={"imp m" + (isOpen ? " open" : "")} key={key} onClick={() => setOpen(isOpen ? null : key)}>
-                  <span className="imp-name">{i.name}</span>
-                  <small>{r ? `${r.length} caller${r.length === 1 ? "" : "s"}` : a.done ? "no callers" : ""}</small>
+                  <span className="imp-name">{i.name}{tag}</span>
+                  <small>{r ? users(r.length) : a.done ? none : ""}</small>
                   {isOpen && (
                     <div className="str-actions" onClick={(e) => e.stopPropagation()}>
                       {r && <FunctionReferences addresses={r} limit={8} label={label} onSelect={(ad) => onFn(ad, i.name)} />}
-                      {i.va > 0 && <button className="primary" onClick={() => (onBytes ?? onAddr)(i.va)}>View slot</button>}
+                      {i.va > 0 && (i.data
+                        ? <button className="primary" onClick={() => (onSymbol ?? onAddr)(i.va)}>Every reference</button>
+                        : <button className="primary" onClick={() => (onBytes ?? onAddr)(i.va)}>View slot</button>)}
                     </div>
                   )}
                 </div>
@@ -80,11 +94,13 @@ export default function ImportsView({ a, refs, label, onFn, onAddr, onBytes, que
             }
             return (
               <div className={"imp" + (selected ? " selected" : "")} data-current={selected || undefined} key={dll + i.name + i.va}>
-                <span className="imp-name">{i.name}</span>
-                {i.va > 0 && <button className="imp-slot" onClick={(e) => { e.stopPropagation(); (onBytes ?? onAddr)(i.va); }} title="Show the import slot in the hex view">{hex(i.va)}</button>}
+                <span className="imp-name">{i.name}{tag}</span>
+                {i.va > 0 && (i.data
+                  ? <button className="imp-slot" onClick={(e) => { e.stopPropagation(); (onSymbol ?? onAddr)(i.va); }} title="Show every instruction that reads this variable">{hex(i.va)}</button>
+                  : <button className="imp-slot" onClick={(e) => { e.stopPropagation(); (onBytes ?? onAddr)(i.va); }} title="Show the import slot in the hex view">{hex(i.va)}</button>)}
                 <span className="addrs used">
                   {r ? <FunctionReferences addresses={r} limit={6} label={label} onSelect={(ad) => onFn(ad, i.name)} />
-                    : <small>{a.done ? "no callers found" : ""}</small>}
+                    : <small>{a.done ? (i.data ? "not read" : "no callers found") : ""}</small>}
                 </span>
               </div>
             );
