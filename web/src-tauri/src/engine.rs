@@ -167,6 +167,7 @@ const FLAGS: &[(&str, bool)] = &[
     ("--capa-b", true),
     ("--pair", true),
     ("--function-map", true),
+    ("--pack", true),
 ];
 
 fn is_hex(text: &str) -> bool {
@@ -185,6 +186,8 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
     if let Some(first) = rest.first() {
         if first == "fingerprint" || first == "diff" {
             rest = &rest[1..];
+        } else if first == "family" && rest.get(1).is_some_and(|s| s == "match") {
+            rest = &rest[2..];
         }
     }
     let mut i = 0;
@@ -201,6 +204,7 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
             i += 1;
             let ok = match arg {
                 "--rules" => value == "{rules}",
+                "--pack" => value == "{family_pack}",
                 "--jobs" => value.parse::<u32>().is_ok_and(|n| (1..=64).contains(&n)),
                 "--decompile-function" => is_hex(value),
                 "--format" => matches!(value.as_str(), "sc32" | "sc64"),
@@ -222,6 +226,22 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
     Ok(())
 }
 
+fn family_pack_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("BINFERA_FAMILY_PACK") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.push(binfera_project::data_dir().join("family.bxfam"));
+    if let Ok(resources) = app.path().resource_dir() {
+        candidates.push(resources.join("family.bxfam"));
+    }
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/family.bxfam"));
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| "no family fingerprint pack installed".to_string())
+}
+
 #[tauri::command]
 pub async fn run_engine(
     app: AppHandle,
@@ -238,8 +258,14 @@ pub async fn run_engine(
     } else {
         None
     };
+    let uses_pack = request.args.iter().any(|a| a.contains("{family_pack}"));
+    let family_pack = if uses_pack {
+        Some(family_pack_path(&app)?)
+    } else {
+        None
+    };
     tauri::async_runtime::spawn_blocking(move || {
-        run_blocking(&engine, program, rules, request, on_line)
+        run_blocking(&engine, program, rules, family_pack, request, on_line)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -249,6 +275,7 @@ fn run_blocking(
     engine: &Engine,
     program: PathBuf,
     rules: Option<PathBuf>,
+    family_pack: Option<PathBuf>,
     request: RunRequest,
     on_line: Channel<String>,
 ) -> Result<RunOutcome, String> {
@@ -301,6 +328,9 @@ fn run_blocking(
             }
             if let Some(rules) = &rules {
                 arg = arg.replace("{rules}", &rules.to_string_lossy());
+            }
+            if let Some(pack) = &family_pack {
+                arg = arg.replace("{family_pack}", &pack.to_string_lossy());
             }
             args.push(arg);
         }
@@ -480,6 +510,7 @@ mod tests {
             &["fingerprint", "{sample}"],
             &["{sample}", "--decompile-function", "0x401000", "--json"],
             &["{sample}", "--decompile-all", "--jobs", "8"],
+            &["family", "match", "--pack", "{family_pack}", "{sample}", "--json"],
         ] {
             assert!(validate_args(&args(list), &none).is_ok(), "{list:?}");
         }
@@ -532,6 +563,7 @@ mod tests {
             &["{sample}", "--pair", "0x1:zz"],
             &["diff", "other.idx"],
             &["diff", "../a.idx"],
+            &["family", "match", "--pack", "/etc/passwd", "{sample}"],
         ] {
             assert!(validate_args(&args(list), &f).is_err(), "{list:?}");
         }

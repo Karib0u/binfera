@@ -1,4 +1,5 @@
 import type { Analysis, CapaRule, StringEntry } from "../types";
+import type { FunctionOrigin } from "../familyOrigin";
 import { hex } from "../workspace/labels";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import GraphView from "../GraphView";
@@ -80,6 +81,7 @@ type MobileTab = "c" | "asm" | "graph" | "listing" | "refs";
 
 export interface FnViewProps {
   a: Analysis; address: number; rules: CapaRule[];
+  origin?: FunctionOrigin;
   resolve: (t: string) => number | undefined; onGoto: (ad: number) => void;
   callers?: number[]; callees?: number[]; xrefsReady: boolean;
   /** Any function's callers and callees, for the phone's call tree. */
@@ -135,7 +137,7 @@ export interface FnViewProps {
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, origin, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -468,7 +470,16 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
       </>
     );
     // Capability chips scroll away with the code instead of pinning a row to the screen.
-    const capChips = rules.length > 0 && <div className="m-caps">{rules.map(capButton)}</div>;
+    const capChips = (rules.length > 0 || (origin && origin.kind !== "unique")) && (
+      <div className="m-caps">
+        {origin && origin.kind !== "unique" && (
+          <span className={"cap co-badge co-badge-" + origin.kind} title={origin.detail}>
+            {origin.kind === "malware" ? origin.label : origin.kind === "trusted" ? `Trusted · ${origin.label}` : "Shared malware"}
+          </span>
+        )}
+        {rules.map(capButton)}
+      </div>
+    );
     // A horizontal swipe on text moves between views; graphs and the listing keep the gesture for panning.
     const order: MobileTab[] = ["c", "asm", "graph", "listing", "refs"];
     const swipeable = mTab === "c" || mTab === "asm" || mTab === "refs";
@@ -552,6 +563,11 @@ export function FunctionView({ a, address, rules, resolve, onGoto, callers, call
           <code className="addr">{copied ? "Copied" : hex(address)}</code>
         </div>
         <div className="cp-caps-inline">
+          {origin && origin.kind !== "unique" && (
+            <span className={"cap co-badge co-badge-" + origin.kind} title={origin.detail}>
+              {origin.kind === "malware" ? origin.label : origin.kind === "trusted" ? `Trusted · ${origin.label}` : "Shared malware"}
+            </span>
+          )}
           {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
           {!capsExpanded && rules.slice(0, INLINE_CAPABILITIES).map(capButton)}
         </div>

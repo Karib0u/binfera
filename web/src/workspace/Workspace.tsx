@@ -32,6 +32,8 @@ import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../
 import { chooseTheme, storedTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
 import { FirstLook, guessToolchains } from "../views/FirstLook";
+import { CodeOriginCard } from "../views/CodeOriginCard";
+import { buildOriginIndex, type FunctionOriginKind } from "../familyOrigin";
 import { FileView } from "../views/FileView";
 import { CapabilityView } from "../views/CapabilityView";
 import { FunctionView, type FnViewProps, type Layout } from "../views/FunctionView";
@@ -174,6 +176,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   // The dock reads artifacts and the input path on mount, so register the project first.
   const agentSha = noteKey && notes.isAttached(noteKey) ? noteKey : null;
   const [onlyStars, setOnlyStars] = useState(false);
+  const [originFilter, setOriginFilter] = useState<FunctionOriginKind | null>(null);
   const [fnSort, setFnSort] = useState<FnSort>("address");
   const [hideLibrary, setHideLibrary] = useStored("hide-library", false);
   const [listingReq, setListingReq] = useState(0);
@@ -343,7 +346,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     for (const names of m.values()) names.sort((x, y) => x.localeCompare(y));
     return m;
   }, [importRefs, a.image]);
-  const library = useMemo(() => new Set(a.capa?.library ?? []), [a.capa]);
+  const originIndex = useMemo(() => buildOriginIndex(a.family, a.capa?.library), [a.family, a.capa]);
+  const library = originIndex.trustedSet;
   const libraryCount = useMemo(() => a.order.filter((ad) => library.has(ad)).length, [a.order, library]);
   // Triage signals: computed once the functions have settled, since they read the call graph and references.
   const importanceOf = useMemo(() => {
@@ -361,10 +365,16 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       if (onlyCaps && !byFn.has(ad)) return false;
       if (onlyChanged && (embedded?.marks.get(ad) ?? "same") === "same") return false;
       if (onlyStars && !isStarred(ad)) return false;
-      if (hideLibrary && library.has(ad)) return false;
+      if (originFilter === "malware" && !originIndex.malwareSet.has(ad)) return false;
+      if (originFilter === "shared" && !originIndex.sharedSet.has(ad)) return false;
+      if (originFilter === "unique" && !originIndex.uniqueSet.has(ad)) return false;
+      if (originFilter === "trusted" && !originIndex.trustedSet.has(ad)) return false;
+      if (hideLibrary && originFilter !== "trusted" && library.has(ad)) return false;
       if (!needle) return true;
       const f = a.functions.get(ad);
+      const originLabel = originIndex.byAddress.get(ad)?.label?.toLowerCase() ?? "";
       return hex(ad).includes(needle) || fnLabel(ad, f?.name).toLowerCase().includes(needle) ||
+        originLabel.includes(needle) ||
         (byFn.get(ad) ?? []).some((r) => r.name.toLowerCase().includes(needle));
     });
     // Most capability matches first; functions with the same count keep address order.
@@ -373,11 +383,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     else if (fnSort === "caps") shown.sort((x, y) => (byFn.get(y)?.length ?? 0) - (byFn.get(x)?.length ?? 0) || x - y);
     else if (fnSort === "name") shown.sort((x, y) => fnLabel(x, a.functions.get(x)?.name).localeCompare(fnLabel(y, a.functions.get(y)?.name)) || x - y);
     return shown;
-  }, [a.order, a.functions, q, onlyCaps, onlyStars, onlyChanged, embedded?.marks, embedded?.tick, fnSort, byFn, tick, hideLibrary, library, importanceOf, depthOf]);
+  }, [a.order, a.functions, q, onlyCaps, onlyStars, onlyChanged, originFilter, originIndex, embedded?.marks, embedded?.tick, fnSort, byFn, tick, hideLibrary, library, importanceOf, depthOf]);
 
   // A new order or filter starts at the top: the top is what the sort is for.
   const fnListRef = useRef<VirtualListHandle>(null);
-  useEffect(() => { fnListRef.current?.scrollToIndex(0); }, [fnSort, hideLibrary, onlyCaps, onlyStars, onlyChanged]);
+  useEffect(() => { fnListRef.current?.scrollToIndex(0); }, [fnSort, hideLibrary, onlyCaps, onlyStars, onlyChanged, originFilter]);
 
   // Keyboard: j/k step through the visible list from anywhere; the arrows only while the list has focus, so they still scroll and move inside other views.
   useEffect(() => {
@@ -670,6 +680,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       fileName: a.demo?.name ?? a.fileName, size: a.size, sha256: d?.facts.find((f) => f.group === "Hashes" && f.label === "SHA-256")?.value ?? a.capa?.sample.sha256,
       format: a.capa?.format ?? image?.format, os: a.capa?.os, arch: a.capa?.arch ?? a.arch ?? undefined,
       toolchains: image ? guessToolchains(a, image) : [],
+      codeOrigin: a.family ? {
+        breakdown: a.family.breakdown,
+        families: a.family.families.map((f) => ({ family: f.family, score: f.score, exclusive: f.exclusive_functions, coverage: f.coverage })),
+        trustedSources: a.family.trusted_sources.map((s) => ({ source: s.source, functions: s.functions })),
+      } : undefined,
       stringsShown: a.strings.length, stringsTotal: a.stringsTotal,
       packed: a.packed ? (a.packed.packer ? `packed with ${a.packed.packer}` : "looks packed") : undefined,
       findings: d?.anomalies.map((x) => ({ severity: x.severity, text: x.text })) ?? [],
@@ -701,6 +716,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const exportJson = () => {
     const doc = {
       file: a.fileName, size: a.size, sha256: a.capa?.sample.sha256, arch: a.arch,
+      family: a.family,
       capabilities: (a.capa?.rules ?? []).filter((r) => !r.lib).map((r) => ({ name: r.name, namespace: r.namespace, scope: r.scope, addresses: r.addresses })),
       functions: a.order.map((ad) => ({ address: ad, name: fnLabel(ad, a.functions.get(ad)?.name), starred: isStarred(ad), capabilities: (byFn.get(ad) ?? []).map((r) => r.name), calls: callees.get(ad) ?? [] })),
       sections: image?.sections, imports: image?.imports, exports: image?.exports, details: image?.details,
@@ -718,8 +734,21 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     caps: a.order.filter((ad) => byFn.has(ad)).length,
     stars: a.order.filter((ad) => isStarred(ad)).length,
     changed: a.order.filter((ad) => (embedded?.marks.get(ad) ?? "same") !== "same").length,
-  }), [a.order, byFn, embedded?.marks, embedded?.tick, tick]);
+    malware: a.order.filter((ad) => originIndex.malwareSet.has(ad)).length,
+    shared: a.order.filter((ad) => originIndex.sharedSet.has(ad)).length,
+    unique: a.order.filter((ad) => originIndex.uniqueSet.has(ad)).length,
+  }), [a.order, byFn, originIndex, embedded?.marks, embedded?.tick, tick]);
   const triage = useMemo(() => triageProgress(a.order, library, (ad) => notes.isExamined(ad), (ad) => notes.isDocumented(ad)), [a.order, library, tick]);
+  const filterByOrigin = (kind: FunctionOriginKind) => {
+    setOnlyCaps(false);
+    setOnlyStars(false);
+    setOnlyChanged(false);
+    setOriginFilter(kind);
+    if (kind === "trusted") setHideLibrary(false);
+    const targetSet = kind === "malware" ? originIndex.malwareSet : kind === "shared" ? originIndex.sharedSet : kind === "unique" ? originIndex.uniqueSet : originIndex.trustedSet;
+    const first = a.order.find((ad) => targetSet.has(ad)) ?? a.order[0];
+    if (first !== undefined) { setCursor(first); setSel(first, true); }
+  };
   const fnTools = (
   <div className="tools fn-tools">
     <div className="tool-row">
@@ -733,14 +762,16 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       </select>
     </div>
     <div className="chips" role="group" aria-label="Show functions">
-      <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); }}>All <em>{total}</em></button>
-      <button aria-pressed={onlyCaps} disabled={!counts.caps && !onlyCaps} title={`${counts.caps} functions have capability matches`} onClick={() => { setOnlyCaps(true); setOnlyStars(false); setOnlyChanged(false); }}>Matched <em>{counts.caps}</em></button>
-      <button aria-pressed={onlyStars} disabled={!counts.stars && !onlyStars} title="Functions you starred" onClick={() => { setOnlyStars(true); setOnlyCaps(false); setOnlyChanged(false); }}>★ Starred <em>{counts.stars}</em></button>
-      {libraryCount > 0 && <button aria-pressed={hideLibrary} title="Hide functions the signature matcher identified as library code" onClick={() => setHideLibrary(!hideLibrary)}>Hide library <em>{libraryCount}</em></button>}
-      {embedded && <button aria-pressed={onlyChanged} title="Functions that differ from the other file" onClick={() => { setOnlyChanged(true); setOnlyCaps(false); setOnlyStars(false); }}>Changed <em>{counts.changed}</em></button>}
+      <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged && !originFilter} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>All <em>{total}</em></button>
+      <button aria-pressed={onlyCaps} disabled={!counts.caps && !onlyCaps} title={`${counts.caps} functions have capability matches`} onClick={() => { setOnlyCaps(true); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>Matched <em>{counts.caps}</em></button>
+      <button aria-pressed={onlyStars} disabled={!counts.stars && !onlyStars} title="Functions you starred" onClick={() => { setOnlyStars(true); setOnlyCaps(false); setOnlyChanged(false); setOriginFilter(null); }}>★ Starred <em>{counts.stars}</em></button>
+      {counts.malware > 0 && <button aria-pressed={originFilter === "malware"} title="Functions attributed to a malware family" onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(originFilter === "malware" ? null : "malware"); }}>Family <em>{counts.malware}</em></button>}
+      {a.family && counts.unique > 0 && <button aria-pressed={originFilter === "unique"} title="Unique functions unseen in trusted runtimes or known families" onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(originFilter === "unique" ? null : "unique"); }}>Unique <em>{counts.unique}</em></button>}
+      {libraryCount > 0 && <button aria-pressed={hideLibrary && originFilter !== "trusted"} title={a.family ? "Hide trusted runtime, FLIRT, and benign library functions" : "Hide functions the signature matcher identified as library code"} onClick={() => { if (originFilter === "trusted") setOriginFilter(null); setHideLibrary(!hideLibrary); }}>{a.family ? "Hide trusted" : "Hide library"} <em>{libraryCount}</em></button>}
+      {embedded && <button aria-pressed={onlyChanged} title="Functions that differ from the other file" onClick={() => { setOnlyChanged(true); setOnlyCaps(false); setOnlyStars(false); setOriginFilter(null); }}>Changed <em>{counts.changed}</em></button>}
     </div>
     {triage.total > 0 && (
-      <div className="fn-progress" title={`${triage.examined} of ${triage.total} functions opened, ${triage.documented} named or commented${libraryCount ? " (library functions not counted)" : ""}`}>
+      <div className="fn-progress" title={`${triage.examined} of ${triage.total} functions opened, ${triage.documented} named or commented${libraryCount ? (a.family ? " (trusted functions not counted)" : " (library functions not counted)") : ""}`}>
         <span>Examined <b>{triage.examined}</b>/{triage.total}</span>
         <span>Documented <b>{triage.documented}</b>/{triage.total}</span>
       </div>
@@ -753,11 +784,12 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
       render={(ad) => {
         const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
+        const fnOrigin = originIndex.byAddress.get(ad);
         const why = importanceOf?.get(ad);
-        const detail = [hex(ad), ...(why ? [`importance ${why.score}: ${why.capabilities} capabilities · ${why.imports} imports · ${why.strings} strings · ${why.callers} callers`] : []), library.has(ad) ? "library function" : "", `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n");
+        const detail = [hex(ad), ...(why ? [`importance ${why.score}: ${why.capabilities} capabilities · ${why.imports} imports · ${why.strings} strings · ${why.callers} callers`] : []), fnOrigin?.detail ?? (library.has(ad) ? "library function" : ""), `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n");
         return (
           <button aria-current={sel === ad ? "true" : undefined} title={detail} className={"item compact" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
-            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
+            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
             {rules && <em className="pill">{rules.length}</em>}
             {!f && <span className="dot" title="pending" />}
             {f?.error && <span className="dot err" title="failed" />}
@@ -765,7 +797,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         );
       }} />
   );
-  const activeFilters = (onlyCaps ? 1 : 0) + (onlyStars ? 1 : 0) + (embedded && onlyChanged ? 1 : 0) + (hideLibrary && libraryCount ? 1 : 0) + (fnSort !== "address" ? 1 : 0);
+  const activeFilters = (onlyCaps ? 1 : 0) + (onlyStars ? 1 : 0) + (originFilter ? 1 : 0) + (embedded && onlyChanged ? 1 : 0) + (hideLibrary && originFilter !== "trusted" && libraryCount ? 1 : 0) + (fnSort !== "address" ? 1 : 0);
   const fnToolsMobile = (
     <div className="m-search">
       <input type="search" enterKeyHint="search" placeholder={`Search ${total || ""} functions`} aria-label="Filter functions" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -781,11 +813,12 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       empty={<p className="empty">{total ? "No matches." : a.tooLarge ? "Too large for the browser." : a.decompileError ? "No functions to show." : a.done ? "No functions found." : a.loading ? "Downloading the analysis engine…" : "Recovering functions…"}</p>}
       render={(ad) => {
         const f = a.functions.get(ad), rules = byFn.get(ad), name = fnLabel(ad, f?.name), mark = embedded?.marks.get(ad);
+        const fnOrigin = originIndex.byAddress.get(ad);
         return (
-          <button aria-current={sel === ad ? "true" : undefined} title={rules?.map((r) => r.name).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
+          <button aria-current={sel === ad ? "true" : undefined} title={[fnOrigin?.detail, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
             <span className="fn">
               <span className="m-fnline">
-                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
+                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
                 {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small className="m-fnaddr">{hex(ad)}</small>}
               </span>
               {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
@@ -865,8 +898,9 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     <div className="ov-container">
       <div className="ov">
         <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
+        <CodeOriginCard a={a} onFilterOrigin={filterByOrigin} onOpenFunction={(ad) => { setCursor(ad); setSel(ad, true); }} />
         {image && <div className="ov-wide">
-          <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+          <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} onOrigin={() => filterByOrigin(a.family?.families.length ? "malware" : "unique")} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />
         </div>}
         <div className="ov-body">
@@ -1038,7 +1072,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     if (target !== sel) setSel(target, true);
   };
   const functionProps = (at: number, here: number | null, nav?: (va: number) => void): FnViewProps => ({
-    a, address: at, cursor: here, rules: byFn.get(at) ?? [], resolve, onGoto: nav ?? setSel, mobile,
+    a, address: at, cursor: here, rules: byFn.get(at) ?? [], origin: originIndex.byAddress.get(at), resolve, onGoto: nav ?? setSel, mobile,
     onBack: () => { if (canBack) back(); else push({ ...loc, tab: "functions", detail: false }); },
     strings: (fnStrings.get(at) ?? []).map((v) => strByAddr.get(v)!).filter(Boolean),
     onString: (s) => openString(s, nav),
@@ -1162,7 +1196,9 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
             <div className="sheet-form">
               <label><input type="checkbox" checked={onlyCaps} onChange={(e) => setOnlyCaps(e.target.checked)} /> Only functions with capabilities</label>
               <label><input type="checkbox" checked={onlyStars} onChange={(e) => setOnlyStars(e.target.checked)} /> Only starred functions</label>
-              {libraryCount > 0 && <label><input type="checkbox" checked={hideLibrary} onChange={(e) => setHideLibrary(e.target.checked)} /> Hide library functions ({libraryCount})</label>}
+              {counts.malware > 0 && <label><input type="checkbox" checked={originFilter === "malware"} onChange={(e) => setOriginFilter(e.target.checked ? "malware" : null)} /> Only malware family functions ({counts.malware})</label>}
+              {a.family && counts.unique > 0 && <label><input type="checkbox" checked={originFilter === "unique"} onChange={(e) => setOriginFilter(e.target.checked ? "unique" : null)} /> Only unique functions ({counts.unique})</label>}
+              {libraryCount > 0 && <label><input type="checkbox" checked={hideLibrary} onChange={(e) => setHideLibrary(e.target.checked)} /> {a.family ? `Hide trusted functions (${libraryCount})` : `Hide library functions (${libraryCount})`}</label>}
               {embedded && <label><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only changed functions</label>}
               <fieldset className="sheet-radios">
                 <legend>Sort by</legend>

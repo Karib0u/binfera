@@ -115,6 +115,57 @@ export interface StringEntry {
   w: boolean;
 }
 
+export type FamilyMatchKind = "exact_content" | "exact_shape" | { fuzzy_band: { bands: number } };
+
+export interface FamilyMatchedFunction {
+  address: number;
+  instructions: number;
+  kind: FamilyMatchKind;
+  exclusivity: number;
+  sample_count: number;
+  contribution: number;
+}
+
+export interface FamilyMatch {
+  family: string;
+  score: number;
+  exclusive_functions: number;
+  exact_content_hits: number;
+  exact_shape_hits: number;
+  fuzzy_hits: number;
+  matched_instructions: number;
+  coverage: number;
+  functions: FamilyMatchedFunction[];
+}
+
+export interface TrustedSourceHit {
+  source: string;
+  functions: number;
+  instructions: number;
+  addresses: number[];
+}
+
+export interface CodeBreakdown {
+  trusted_pct: number;
+  malware_pct: number;
+  shared_pct: number;
+  unique_pct: number;
+}
+
+export interface FamilyReport {
+  total_functions: number;
+  eligible_functions: number;
+  trusted_functions: number;
+  shared_malware_functions: number;
+  family_matched_functions: number;
+  unique_functions: number;
+  breakdown: CodeBreakdown;
+  trusted_sources: TrustedSourceHit[];
+  shared_addresses: number[];
+  unique_addresses: number[];
+  families: FamilyMatch[];
+}
+
 export interface Analysis {
   shellcode?: RawCodeOptions & { guessed: boolean; ambiguous: boolean; evidence: string[]; osDetected: boolean; encoding: ShellcodeEncoding; inputSize: number };
   fileWarnings?: string[];
@@ -143,6 +194,11 @@ export interface Analysis {
   retryFunction?: (address: number) => Promise<void>;
   capa: CapaResult | null;
   capaError: string | null;
+  /** Offline family and trusted-software code-origin breakdown (BXFAM002 pack match). */
+  family: FamilyReport | null;
+  familyError: string | null;
+  /** Load a local `.bxfam` pack in memory and re-run code-origin matching on the current file. */
+  runFamilyPack?: (file: File) => Promise<void>;
   decompileError: string | null;
   /** Set when the decompiler refused the file as too large for the browser's memory: nothing is shown. */
   tooLarge: string | null;

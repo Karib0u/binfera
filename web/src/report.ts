@@ -1,8 +1,15 @@
+import type { CodeBreakdown } from "./types";
+
 /** A readable summary of an analysis, as Markdown or a single self-contained HTML page, and CSV tables for spreadsheets. */
 
 export interface ReportInput {
   fileName: string; size: number; sha256?: string; format?: string; os?: string; arch?: string;
   toolchains: string[]; packed?: string;
+  codeOrigin?: {
+    breakdown: CodeBreakdown;
+    families: { family: string; score: number; exclusive: number; coverage: number }[];
+    trustedSources: { source: string; functions: number }[];
+  };
   stringsShown?: number; stringsTotal?: number;
   findings: { severity: "warn" | "info"; text: string }[];
   signatures: string[];
@@ -36,6 +43,24 @@ function blocks(input: ReportInput): Block[] {
     ...input.signatures.map((s) => `Signature: ${s}`),
   ].filter(Boolean) as string[];
   out.push({ heading: "Identity", lines: identity.map((text) => ({ text })) });
+  if (input.codeOrigin) {
+    const { breakdown: b, families, trustedSources } = input.codeOrigin;
+    const lines: Block["lines"] = [
+      { text: `Breakdown: ${b.malware_pct.toFixed(1)}% malware family, ${b.shared_pct.toFixed(1)}% shared malware, ${b.unique_pct.toFixed(1)}% unique, ${b.trusted_pct.toFixed(1)}% trusted` },
+    ];
+    if (families.length) {
+      lines.push({
+        text: "Matched families",
+        sub: families.map((f) => `${f.family} (score ${f.score.toFixed(1)}, ${f.exclusive} exclusive, ${Math.round(f.coverage * 100)}% coverage)`),
+      });
+    } else {
+      lines.push({ text: "Matched families: none above threshold" });
+    }
+    if (trustedSources.length) {
+      lines.push({ text: `Trusted sources: ${trustedSources.map((s) => `${s.source} (${s.functions})`).join(", ")}` });
+    }
+    out.push({ heading: "Code origin", lines });
+  }
   if (input.findings.length) out.push({ heading: "Findings", lines: [...input.findings].sort((x, y) => Number(y.severity === "warn") - Number(x.severity === "warn")).map((f) => ({ text: `${f.severity === "warn" ? "Review: " : ""}${f.text}` })) });
   if (input.capabilities.length) {
     out.push({

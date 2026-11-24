@@ -69,7 +69,7 @@ export default function App() {
     writeEntry(replace ? "replace" : "push", { binfera: true, run: id, i: 0, ...locOf(sel), at }, pageUrl());
     setError(null);
     setLanding(false);
-    setA({ fileName: file.name, demo, size: file.size, order: [], strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, functions: new Map(), names: new Map(), settled: false, capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: { label: "Preparing…", fraction: null }, done: false });
+    setA({ fileName: file.name, demo, size: file.size, order: [], strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, functions: new Map(), names: new Map(), settled: false, capa: null, capaError: null, family: null, familyError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: { label: "Preparing…", fraction: null }, done: false });
     // analyze() batches its updates on a timer, so one can still fire after a failure; it must not bring the workspace back.
     let failed = false;
     analyze(file, (next) => { if (!failed) setA({ ...next, demo }); }, ctl.signal, raw, again).catch((e) => {
