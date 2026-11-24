@@ -672,7 +672,7 @@ fn names_of(
     names
 }
 
-fn from_analysis(
+pub(crate) fn from_analysis(
     bytes: &[u8],
     original: &[u8],
     analysis: &Analysis,
