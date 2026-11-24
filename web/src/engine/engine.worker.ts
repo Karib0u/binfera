@@ -20,6 +20,7 @@ interface Common {
 export type EngineRequest =
   | (Common & { kind: "inspect" })
   | (Common & { kind: "capa"; rules: Record<string, string> })
+  | (Common & { kind: "family"; pack: ArrayBuffer })
   | (Common & { kind: "decompile"; shard: [number, number] })
   | (Common & { kind: "fingerprint" })
   | (Common & { kind: "decompileOne"; address: number; resourceRetry?: boolean })
@@ -70,6 +71,9 @@ self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
       }
       // No threads in the browser build: --jobs 1 is the serial reference path.
       args = ["/sample.bin", "--json", "--jobs", "1", "--rules", "/rules"];
+    } else if (req.kind === "family") {
+      mod.FS.writeFile("/family.bxfam", new Uint8Array(req.pack));
+      args = ["family", "match", "--pack", "/family.bxfam", "/sample.bin", "--json"];
     } else if (req.kind === "fingerprint") {
       // Native recovery, like the decompiler's, with its higher limit.
       args = ["fingerprint", "/sample.bin", "--max-instructions", "3500000"];
@@ -84,7 +88,7 @@ self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
       // rule set to hold, so it keeps going past the build's default limit (web/README.md).
       args = ["/sample.bin", "--decompile-all", "--no-resource-retry", "--shard", `${req.shard[0]}/${req.shard[1]}`, "--max-instructions", "3500000"];
     }
-    if (req.raw) args.push("--format", req.raw.format, "--os", req.raw.os);
+    if (req.raw && req.kind !== "family") args.push("--format", req.raw.format, "--os", req.raw.os);
     let code = 0;
     try { code = mod.callMain(args) ?? 0; } catch (e) {
       const status = (e as { status?: number }).status;

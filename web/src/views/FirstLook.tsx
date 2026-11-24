@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { entropyOf, entropyWord, HIGH_ENTROPY } from "../engine/entropy";
 import type { Indicator } from "../indicators";
+import { matchStrength, STRENGTH_LABEL } from "../familyOrigin";
 import type { Analysis } from "../types";
 import { bytes as size } from "../workspace/labels";
 
@@ -55,13 +56,31 @@ const clip = (v: string, n = 56) => (v.length > n ? v.slice(0, n - 1) + "…" : 
 interface Item { label: string; value: React.ReactNode; tone?: "warn" | "ok"; go?: () => void; note?: string }
 
 /** Where to start with an unknown file: what built it, whether it hides, what it does and what it talks to. */
-export function FirstLook({ a, image, indicators, caps, onPick, onFile, onIndicators, onCaps }: {
+export function FirstLook({ a, image, indicators, caps, onPick, onFile, onIndicators, onCaps, onOrigin }: {
   a: Analysis; image: Image; indicators: Indicator[]; caps: number;
-  onPick: (va: number) => void; onFile: () => void; onIndicators: () => void; onCaps: () => void;
+  onPick: (va: number) => void; onFile: () => void; onIndicators: () => void; onCaps: () => void; onOrigin?: () => void;
 }) {
   const items = useMemo(() => {
     const out: Item[] = [];
     const d = image.details;
+    if (a.family && a.family.eligible_functions > 0) {
+      const top = a.family.families[0];
+      if (top) {
+        out.push({
+          label: "Code origin",
+          tone: "warn",
+          value: <>{STRENGTH_LABEL[matchStrength(top)]}: <code>{top.family}</code> · {top.exclusive_functions} functions found only in this family</>,
+          go: onOrigin,
+        });
+      } else {
+        out.push({
+          label: "Code origin",
+          tone: a.family.trusted_functions > 0 ? "ok" : undefined,
+          value: `No known malware family · ${a.family.unique_functions} unique function${a.family.unique_functions === 1 ? "" : "s"} to reverse`,
+          go: onOrigin,
+        });
+      }
+    }
     const toolchains = guessToolchains(a, image);
     const compiled = d?.facts.find((f) => f.label === "PDB path")?.value;
     out.push({ label: "Built with", value: toolchains.length ? toolchains.join(", ") : "No toolchain marks found" });

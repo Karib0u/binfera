@@ -22,7 +22,6 @@ use binfera::rules::{load_rule_directory, Rule};
 mod decompile_workers;
 #[cfg(not(target_arch = "wasm32"))]
 mod embedded_rules;
-#[cfg(not(target_arch = "wasm32"))]
 mod family_cmd;
 
 // Supported input formats and native/managed detection are documented in docs/cli.md.
@@ -286,7 +285,6 @@ enum Command {
     },
 
     /// Query offline malware-family and trusted-software fingerprint packs.
-    #[cfg(not(target_arch = "wasm32"))]
     Family {
         #[command(subcommand)]
         command: family_cmd::FamilyCommand,
@@ -525,7 +523,6 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             run_fingerprint(cli, input, !no_detail)?;
             return Ok(ExitCode::SUCCESS);
         }
-        #[cfg(not(target_arch = "wasm32"))]
         Some(Command::Family { command }) => {
             family_cmd::run_family_command(command, cli.json, cli.max_instructions.is_none())?;
             return Ok(ExitCode::SUCCESS);

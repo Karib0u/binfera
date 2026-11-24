@@ -1,7 +1,7 @@
 // Run after prepare-assets and pack-demos. Samples are only read by the WebAssembly engine.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -98,6 +98,31 @@ if (!id) {
     assert.equal(capa.meta.sample.sha256, sample.sha256);
     capabilities = Object.keys(capa.rules).length;
   }
+  const packUrl = new URL("public/sigs/family.bxfam", web);
+  let matchedFamily = null;
+  if (shard.startsWith("0/") && existsSync(packUrl)) {
+    const errors = [];
+    let famOut = "";
+    const engine = await createBinfera({
+      locateFile: name => fileURLToPath(new URL(`src/wasm/${name}`, web)),
+      noInitialRun: true,
+      print: line => { famOut += line; },
+      printErr: line => { if (errors.length < 50) errors.push(line); },
+    });
+    engine.FS.mkdir("/sigs");
+    if (sample.tags.includes("PE")) {
+      for (const file of signatures) engine.FS.writeFile(`/sigs/${file}`, readFileSync(new URL(`public/sigs/${file}`, web)));
+    }
+    engine.FS.writeFile("/family.bxfam", readFileSync(packUrl));
+    engine.FS.writeFile("/sample", bytes);
+    let code = 0;
+    try { code = engine.callMain(["family", "match", "--pack", "/family.bxfam", "/sample", "--json"]) ?? 0; }
+    catch (error) { if (typeof error.status !== "number") throw error; code = error.status; }
+    assert.equal(code, 0, `${id}: family match: ${errors.join("\n")}`);
+    const report = JSON.parse(famOut);
+    matchedFamily = report.families[0]?.family ?? null;
+    assert.equal(matchedFamily, sample.family, `${id}: expected family ${sample.family}, got ${matchedFamily}`);
+  }
   const capabilitySeconds = (performance.now() - start) / 1000;
   const addresses = new Set();
   let failed = 0, complete = false, settled = false;
@@ -116,7 +141,7 @@ if (!id) {
   assert.ok(settled, `${id}: decompilation did not settle`);
   assert.ok(complete, `${id}: decompilation did not finish`);
   assert.ok(addresses.size > 0, `${id}: no decompiled functions`);
-  console.log(JSON.stringify({ id, arch, bytes: bytes.length, capabilities,
+  console.log(JSON.stringify({ id, arch, bytes: bytes.length, capabilities, ...(matchedFamily ? { family: matchedFamily } : {}),
     addresses: [...addresses], functions: addresses.size, failed, capabilitySeconds: +capabilitySeconds.toFixed(2),
     decompileSeconds: +((performance.now() - decompileStart) / 1000).toFixed(2) }));
 }

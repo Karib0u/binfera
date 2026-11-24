@@ -1,6 +1,6 @@
 import type { Arch } from "./graph";
-import type { Analysis, DecompiledFunction, Packing } from "./types";
-import { loadAssets, loadEngine, loadEngineId, NATIVE, winApiFor } from "./engine/assets";
+import type { Analysis, DecompiledFunction, FamilyReport, Packing } from "./types";
+import { loadAssets, loadEngine, loadEngineId, loadFamilyPack, NATIVE, setCustomFamilyPack, winApiFor } from "./engine/assets";
 import { summarizeCapa } from "./engine/capa";
 import { EngineError, runEngine, TOO_LARGE } from "./engine/run";
 import { extractStrings } from "./engine/strings";
@@ -47,7 +47,7 @@ function decompileWorkers(size: number) {
 export async function analyze(file: File, onUpdate: (a: Analysis) => void, signal: AbortSignal, raw?: RawCodeOptions, again = false) {
   const a: Analysis = {
     fileName: file.name, size: file.size, strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, order: [], functions: new Map(), names: new Map(),
-    capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: false, done: false,
+    capa: null, capaError: null, family: null, familyError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: false, done: false,
   };
   let functions = new Map(a.functions), names = new Map(a.names);
   let functionsChanged = false, namesChanged = false;
@@ -151,6 +151,41 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     functionsChanged = true;
     flush();
   };
+  const matchWithPack = async (
+    pack: ArrayBuffer,
+    runSignal: AbortSignal,
+    preloaded?: { module: WebAssembly.Module; data: Record<string, ArrayBuffer> },
+  ) => {
+    const engine = preloaded ?? await (async () => {
+      const loaded = await loadAssets(null, progress, a.image?.format === "pe", null);
+      return { module: loaded.module, data: loaded.data("capa") };
+    })();
+    if (runSignal.aborted) return;
+    let json = "";
+    await runEngine(
+      { kind: "family", module: engine.module, sample: bytes.slice(0), data: engine.data, pack },
+      (line) => { json += line; },
+      runSignal,
+    );
+    if (runSignal.aborted) return;
+    a.family = JSON.parse(json) as FamilyReport;
+    a.familyError = null;
+    flush();
+  };
+  if (!NATIVE) a.runFamilyPack = async (packFile: File) => {
+    if (raw) return;
+    const packBytes = await packFile.arrayBuffer();
+    if (signal.aborted) return;
+    setCustomFamilyPack(packBytes, packFile.name);
+    a.familyError = null;
+    try {
+      await matchWithPack(packBytes.slice(0), signal);
+    } catch (e) {
+      if (signal.aborted) return;
+      a.familyError = message(e);
+      flush();
+    }
+  };
   const cached = sha256 && engineId && !again ? await readResults(sha256, engineId) : null;
   if (cached) {
     try {
@@ -168,6 +203,14 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       a.settled = true;
       a.done = true;
       publish();
+      if (!raw) {
+        const pack = await loadFamilyPack();
+        if (pack && !signal.aborted) {
+          await matchWithPack(pack, signal).catch((e) => {
+            if (!signal.aborted) { a.familyError = message(e); flush(); }
+          });
+        }
+      }
       return;
     } catch {
       // A corrupt entry is disposable. Start from clean state before running the engine.
@@ -242,9 +285,16 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     ),
   ).then(() => { decompComplete = !stop.signal.aborted; }).catch((e) => failed(e, (m) => (a.decompileError = m), true));
 
+  const familyMatch = () => (async () => {
+    if (raw) return;
+    const pack = await loadFamilyPack();
+    if (!pack || stop.signal.aborted) return;
+    await matchWithPack(pack, stop.signal, { module: assets.module, data: assets.data("capa") });
+  })().catch((e) => failed(e, (m) => (a.familyError = m), false));
+
   // Decompiled functions are what the page shows first, so on a constrained device they go
-  // first and capa follows once their memory is released; elsewhere both run at once.
-  if (memoryConstrained()) { await decompile(); await capa(); } else await Promise.all([capa(), decompile()]);
+  // first and capa follows once their memory is released; elsewhere all run at once.
+  if (memoryConstrained()) { await decompile(); await familyMatch(); await capa(); } else await Promise.all([familyMatch(), capa(), decompile()]);
   signal.removeEventListener("abort", stopAll);
   if (signal.aborted) return;
   if (sha256 && engineId && !raw && capaJson !== null && decompComplete && !stop.signal.aborted) {

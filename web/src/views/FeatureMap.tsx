@@ -1,24 +1,28 @@
 import { useMemo, useState } from "react";
 import { entropyOf, entropyWord } from "../engine/entropy";
+import { buildOriginIndex, type FunctionOriginKind } from "../familyOrigin";
 import type { Analysis } from "../types";
 import { hex } from "../workspace/labels";
 import { heat } from "./EntropyStrip";
 import { SectionLegend, sectionKind } from "./SectionLegend";
 
 type Image = NonNullable<Analysis["image"]>;
-type Layer = "sections" | "entropy" | "functions" | "capabilities" | "imports";
+type Layer = "sections" | "entropy" | "functions" | "origin" | "capabilities" | "imports";
 
-const LAYERS: [Layer, string][] = [["sections", "Sections"], ["entropy", "Entropy"], ["functions", "Functions"], ["capabilities", "Capabilities"], ["imports", "Imports"]];
+const BASE_LAYERS: [Layer, string][] = [["sections", "Sections"], ["entropy", "Entropy"], ["functions", "Functions"], ["capabilities", "Capabilities"], ["imports", "Imports"]];
+const ORIGIN_LAYERS: [Layer, string][] = [["sections", "Sections"], ["origin", "Origin"], ["entropy", "Entropy"], ["functions", "Functions"], ["capabilities", "Capabilities"], ["imports", "Imports"]];
 const COLS = 64;
 const ROWS = 10;
 
-interface Cell { off: number; end: number; section?: string; kind: string; entropy: number; functions: number[]; caps: number; imports: number; first?: boolean }
+interface Cell { off: number; end: number; section?: string; kind: string; entropy: number; functions: number[]; caps: number; imports: number; origin: Record<FunctionOriginKind, number>; first?: boolean }
 
 /** Every byte of the file as one tile, coloured by what lives there. Click a tile to see its bytes, or its first function. */
 export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Image; onPick: (va: number) => void; onFn: (address: number) => void }) {
   const [layer, setLayer] = useState<Layer>("sections");
   const [hover, setHover] = useState<number | null>(null);
   const total = image.bytes.length, n = COLS * ROWS;
+  const originIndex = useMemo(() => (a.family ? buildOriginIndex(a.family, a.capa?.library) : null), [a.family, a.capa]);
+  const layers = a.family ? ORIGIN_LAYERS : BASE_LAYERS;
 
   const cells = useMemo(() => {
     // The file in order as segments: each section, and the gaps between them (headers, overlay). A segment's share of the tiles
@@ -44,7 +48,7 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
       const size = (seg.end - seg.off) / tiles[k];
       for (let i = 0; i < tiles[k]; i++) {
         const off = Math.floor(seg.off + i * size), end = Math.min(seg.end, Math.max(off + 1, Math.floor(seg.off + (i + 1) * size)));
-        out.push({ off, end, section: seg.name, kind: seg.kind, entropy: entropyOf(image.bytes, off, end, 16384), functions: [], caps: 0, imports: 0, first: i === 0 });
+        out.push({ off, end, section: seg.name, kind: seg.kind, entropy: entropyOf(image.bytes, off, end, 16384), functions: [], caps: 0, imports: 0, origin: { malware: 0, shared: 0, unique: 0, trusted: 0 }, first: i === 0 });
       }
     });
     const cellOf = (va: number) => {
@@ -56,11 +60,17 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
       if (off < seg.off || off >= seg.end) return undefined;
       return out[starts[lo] + Math.min(tiles[lo] - 1, Math.floor(((off - seg.off) / (seg.end - seg.off)) * tiles[lo]))];
     };
-    for (const ad of a.order) cellOf(ad)?.functions.push(ad);
+    for (const ad of a.order) {
+      const c = cellOf(ad);
+      if (!c) continue;
+      c.functions.push(ad);
+      const kind = originIndex?.byAddress.get(ad)?.kind;
+      if (kind) c.origin[kind]++;
+    }
     for (const r of a.capa?.rules ?? []) if (!r.lib) for (const va of r.addresses) { const c = cellOf(va); if (c) c.caps++; }
     for (const i of image.imports) if (i.va) { const c = cellOf(i.va); if (c) c.imports++; }
     return out;
-  }, [a.order, a.capa, image, n, total]);
+  }, [a.order, a.capa, originIndex, image, n, total]);
 
   const max = useMemo(() => ({
     functions: Math.max(1, ...cells.map((c) => c.functions.length)),
@@ -71,6 +81,13 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
   if (!total) return null;
   const tone = (count: number, top: number, color: string) => count ? `color-mix(in srgb, var(${color}) ${Math.round(25 + 75 * Math.sqrt(count / top))}%, var(--soft))` : "var(--soft)";
   const paint = (c: Cell): React.CSSProperties => {
+    if (layer === "origin") {
+      if (c.origin.malware > 0) return { background: "var(--o-family)" };
+      if (c.origin.shared > 0) return { background: "var(--o-shared)" };
+      if (c.origin.unique > 0) return { background: "var(--o-unique)" };
+      if (c.origin.trusted > 0) return { background: "var(--o-trusted)" };
+      return { background: "var(--soft)" };
+    }
     if (layer === "entropy") return { background: heat(c.entropy) };
     if (layer === "functions") return { background: tone(c.functions.length, max.functions, "--c-fn") };
     if (layer === "capabilities") return { background: tone(c.caps, max.capabilities, "--c-kw") };
@@ -78,14 +95,19 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
     return c.kind === "none" ? { background: "var(--soft)" } : { background: `color-mix(in srgb, var(--section-color) 70%, var(--soft))` };
   };
   const click = (c: Cell) => {
-    if ((layer === "functions" || layer === "capabilities") && c.functions.length) { onFn(c.functions[0]); return; }
+    if ((layer === "functions" || layer === "capabilities" || layer === "origin") && c.functions.length) { onFn(c.functions[0]); return; }
     const va = image.offToVa(c.off) ?? image.offToVa(c.end - 1);
     if (va !== null) onPick(va);
   };
   const describe = (c: Cell) => [
     `${hex(c.off)} to ${hex(c.end)}`, c.section ? `section ${c.section}` : c.kind === "none" ? "outside any section" : "",
     `entropy ${c.entropy.toFixed(2)} (${entropyWord(c.entropy)})`,
-    c.functions.length ? `${c.functions.length} function${c.functions.length === 1 ? "" : "s"}` : "", c.caps ? `${c.caps} capability match${c.caps === 1 ? "" : "es"}` : "", c.imports ? `${c.imports} import slot${c.imports === 1 ? "" : "s"}` : "",
+    c.functions.length ? `${c.functions.length} function${c.functions.length === 1 ? "" : "s"}` : "",
+    c.origin.malware ? `${c.origin.malware} malware` : "",
+    c.origin.shared ? `${c.origin.shared} common malware` : "",
+    c.origin.unique ? `${c.origin.unique} unique` : "",
+    c.origin.trusted ? `${c.origin.trusted} library` : "",
+    c.caps ? `${c.caps} capability match${c.caps === 1 ? "" : "es"}` : "", c.imports ? `${c.imports} import slot${c.imports === 1 ? "" : "s"}` : "",
   ].filter(Boolean).join(" · ");
   const h = hover === null ? null : cells[hover];
 
@@ -94,7 +116,7 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
       <header>
         <h2>File map</h2>
         <div className="fm-layers" role="group" aria-label="Map layer">
-          {LAYERS.map(([k, name]) => <button key={k} aria-pressed={layer === k} className={layer === k ? "on" : ""} onClick={() => setLayer(k)}>{name}</button>)}
+          {layers.map(([k, name]) => <button key={k} aria-pressed={layer === k} className={layer === k ? "on" : ""} onClick={() => setLayer(k)}>{name}</button>)}
         </div>
       </header>
       <div className="fm-grid" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }} onPointerLeave={() => setHover(null)}>
@@ -104,7 +126,15 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
         ))}
       </div>
       {layer === "sections" && <SectionLegend sections={image.sections} />}
-      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
+      {layer === "origin" && (
+        <div className="fm-sections" aria-label="Code origin legend">
+          <span><i className="co-malware" />Family code</span>
+          <span><i className="co-shared" />Common malware code</span>
+          <span><i className="co-unique" />Unique</span>
+          <span><i className="co-trusted" />Known libraries</span>
+        </div>
+      )}
+      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Violet tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
     </section>
   );
 }

@@ -36,6 +36,8 @@ const mocks = moduleUrl(`
   export class EngineError extends Error {}
   export const TOO_LARGE = 14;
   export const loadEngine = async () => ({});
+  export const loadFamilyPack = async () => null;
+  export const setCustomFamilyPack = () => {};
   export const extractStrings = () => ({ strings: [], total: 0 });
   export const summarizeCapa = json => json;
   export const createImage = () => null;

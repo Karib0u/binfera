@@ -139,3 +139,41 @@ export function loadEngineId(): Promise<string | null> {
     })
     .catch(() => { engineId = null; return null; });
 }
+
+const FAMILY_MAGIC = [0x42, 0x58, 0x46, 0x41, 0x4d, 0x30, 0x30, 0x32]; // "BXFAM002"
+function isBxfam002(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 40) return false;
+  for (let i = 0; i < FAMILY_MAGIC.length; i++) if (bytes[i] !== FAMILY_MAGIC[i]) return false;
+  return true;
+}
+
+let defaultFamilyPack: Promise<Uint8Array<ArrayBuffer> | null> | null = null;
+let customFamilyPack: { bytes: Uint8Array<ArrayBuffer>; name: string } | null = null;
+
+/** Registers a user-supplied `.bxfam` pack in memory for this tab (never uploaded). */
+export function setCustomFamilyPack(bytes: ArrayBuffer, name: string): void {
+  const view = new Uint8Array(bytes.slice(0));
+  if (!isBxfam002(view)) throw new Error(`${name} is not a valid BXFAM002 family pack`);
+  customFamilyPack = { bytes: view, name };
+}
+
+export function getFamilyPackName(): string | null {
+  return customFamilyPack?.name ?? null;
+}
+
+/**
+ * Optionally fetches the hosted starter pack (`sigs/family.bxfam`) or returns the user-loaded pack.
+ * Missing or non-pack responses return `null` cleanly so builds without a pack stay quiet.
+ */
+export async function loadFamilyPack(): Promise<ArrayBuffer | null> {
+  if (customFamilyPack) return customFamilyPack.bytes.slice().buffer;
+  defaultFamilyPack ??= fetch(`${base}sigs/family.bxfam`)
+    .then(async (res) => {
+      if (!res.ok) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      return isBxfam002(buf) ? buf : null;
+    })
+    .catch(() => null);
+  const bytes = await defaultFamilyPack;
+  return bytes ? bytes.slice().buffer : null;
+}

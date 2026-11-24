@@ -16,7 +16,7 @@ try {
       __BINFERA_BUILD__: '{"version":"test","commit":null}' },
     plugins: [{ name: "engine-free", setup(b) {
       b.onResolve({ filter: /\/engine\/assets$/ }, () => ({ path: "engine-assets", namespace: "test" }));
-      b.onLoad({ filter: /.*/, namespace: "test" }, () => ({ contents: "export const NATIVE = false;" }));
+      b.onLoad({ filter: /.*/, namespace: "test" }, () => ({ contents: "export const NATIVE = false; export const getFamilyPackName = () => null;" }));
     } }],
   });
   const page = await browser.newPage({ viewport: { width: 1300, height: 900 } });

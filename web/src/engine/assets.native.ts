@@ -27,3 +27,7 @@ export async function loadEngine(_onProgress: (p: Progress | null) => void): Pro
 }
 
 export async function loadEngineId(): Promise<string | null> { return null; }
+
+export function setCustomFamilyPack(_bytes: ArrayBuffer, _name: string): void {}
+export function getFamilyPackName(): string | null { return null; }
+export async function loadFamilyPack(): Promise<ArrayBuffer | null> { return null; }

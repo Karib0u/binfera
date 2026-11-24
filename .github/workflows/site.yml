@@ -65,6 +65,8 @@ jobs:
       - run: npm run prepare-assets
       # The malware demos are never committed: reuse the packed files the live site serves.
       - run: npm run fetch-demos
+      # Reuse the hosted starter family pack if present on binfera.io.
+      - run: npm run fetch-family-pack
       - run: npm run build
 
       - name: Deploy
