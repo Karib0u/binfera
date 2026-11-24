@@ -66,6 +66,7 @@ jobs:
           npm run test:triage
           npm run test:compare-report
           npm run test:delivery
+          npm run test:opener-import
           npm run test:project
           npm run test:cache
           node scripts/check-risc-graph.mjs

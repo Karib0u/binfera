@@ -28,6 +28,7 @@
     "test:shellcode": "node scripts/check-shellcode-input.mjs && node scripts/check-shellcode.mjs",
     "test:archive": "node scripts/check-archive.mjs",
     "test:archive-browser": "node scripts/check-archive-browser.mjs",
+    "test:opener-import": "node scripts/check-opener-import.mjs",
     "test:delivery": "node scripts/check-delivery.mjs",
     "test:prerender": "node scripts/check-prerender.mjs",
     "test:deployment": "node scripts/check-deployed-delivery.mjs",
