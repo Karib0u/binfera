@@ -62,6 +62,10 @@ pub struct Import {
     pub dll: String,
     pub name: String,
     pub va: u64,
+    /// A variable, not a function: an ELF executable's copy of a shared library's data
+    /// (`stdout`, `optarg`), placed in its `.bss` by a copy relocation. `va` is that copy.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub data: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +142,7 @@ fn from_image(bytes: &[u8], image: &LoadedImage, offset: u64) -> ImageInfo {
                     },
                     name: name.into(),
                     va,
+                    data: false,
                 }
             })
             .collect(),

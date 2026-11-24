@@ -10,4 +10,8 @@ $C -fPIC -c libstub.c -o libstub.o
 ld.lld -shared -nostdlib -soname libstub.so libstub.o -o libstub.so
 $C -fno-pic -c dynamic.c -o dynamic.o
 ld.lld -nostdlib -e _start -dynamic-linker /lib64/ld-linux-x86-64.so.2 dynamic.o ./libstub.so -o dynamic.elf
-rm -f ./*.o libstub.so
+$C -fPIC -c datastub.c -o datastub.o
+ld.lld -shared -nostdlib -soname libdatastub.so datastub.o -o libdatastub.so
+$C -fno-pic -c copyreloc.c -o copyreloc.o
+ld.lld -nostdlib -e _start -dynamic-linker /lib64/ld-linux-x86-64.so.2 copyreloc.o ./libdatastub.so -o copyreloc.elf
+rm -f ./*.o libstub.so libdatastub.so

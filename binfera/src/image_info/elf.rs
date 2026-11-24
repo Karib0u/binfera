@@ -2,8 +2,9 @@
 use super::*;
 use crate::extract::image::{ImageFormat, Permissions};
 use goblin::elf::{
-    header::ET_REL,
+    header::{EM_386, EM_AARCH64, EM_ARM, EM_MIPS, EM_PPC, EM_X86_64, ET_REL},
     program_header::{PF_R, PF_W, PF_X, PT_LOAD},
+    reloc::{R_386_COPY, R_AARCH64_COPY, R_ARM_COPY, R_MIPS_COPY, R_PPC_COPY, R_X86_64_COPY},
     section_header::SHN_UNDEF,
     section_header::{SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS},
     Elf,
@@ -110,7 +111,28 @@ pub(super) fn inspect(bytes: &[u8]) -> Result<ImageInfo, ImageError> {
             info.sections = sections;
         }
     }
-    for sym in &elf.dynsyms {
+    // A copy relocation makes a library's variable look defined here: the executable holds the copy
+    // the library itself uses. It is an import of data, not something the file exports.
+    let copy_type = match elf.header.e_machine {
+        EM_X86_64 => Some(R_X86_64_COPY),
+        EM_386 => Some(R_386_COPY),
+        EM_AARCH64 => Some(R_AARCH64_COPY),
+        EM_ARM => Some(R_ARM_COPY),
+        EM_MIPS => Some(R_MIPS_COPY),
+        EM_PPC => Some(R_PPC_COPY),
+        _ => None,
+    };
+    let copied: std::collections::HashSet<usize> = copy_type
+        .map(|kind| {
+            elf.dynrelas
+                .iter()
+                .chain(elf.dynrels.iter())
+                .filter(|r| r.r_type == kind)
+                .map(|r| r.r_sym)
+                .collect()
+        })
+        .unwrap_or_default();
+    for (index, sym) in elf.dynsyms.iter().enumerate() {
         let name = elf.dynstrtab.get_at(sym.st_name).unwrap_or("");
         if name.is_empty() {
             continue;
@@ -121,7 +143,25 @@ pub(super) fn inspect(bytes: &[u8]) -> Result<ImageInfo, ImageError> {
                     dll: String::new(),
                     name: name.into(),
                     va: 0,
+                    data: false,
                 });
+            }
+        } else if copied.contains(&index) && sym.st_value != 0 {
+            // The loader may already list it from its relocation; mark that entry rather than add a second.
+            let va = address(sym.st_value)?;
+            match info.imports.iter_mut().find(|i| i.name == name) {
+                Some(existing) => {
+                    existing.data = true;
+                    if existing.va == 0 {
+                        existing.va = va;
+                    }
+                }
+                None => info.imports.push(Import {
+                    dll: String::new(),
+                    name: name.into(),
+                    va,
+                    data: true,
+                }),
             }
         } else if sym.st_value != 0 && sym.st_type() <= 2 {
             info.exports.push(Export {
