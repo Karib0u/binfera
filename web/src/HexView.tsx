@@ -7,6 +7,7 @@ import { buildSpans, spanAt } from "./engine/structs";
 import { useMobile } from "./workspace/useMobile";
 import { copyText } from "./ContextMenu";
 import { toast } from "./Toast";
+import Sheet from "./Sheet";
 
 const hex = (n: number, pad = 0) => n.toString(16).padStart(pad, "0");
 
@@ -45,6 +46,9 @@ export default function HexView({ image, cursor, tick, selection, onCursor, onSe
   const cursorOff = cursor === null ? null : image.vaToOff(cursor);
   const selOff = selection ? image.vaToOff(selection.va) : null;
   const sec = cursor === null ? undefined : image.sectionAt(cursor);
+  // Phone: sections and Go to open in sheets; a selection is two taps, first and last byte.
+  const [sheet, setSheet] = useState<"sections" | "goto" | null>(null);
+  const [selectFrom, setSelectFrom] = useState<number | null>(null);
 
   useEffect(() => {
     const el = box.current;
@@ -107,6 +111,7 @@ export default function HexView({ image, cursor, tick, selection, onCursor, onSe
     if (swallow.current) { swallow.current = false; return; }
     const o = byteAt(e);
     if (o === null) return;
+    if (selectFrom !== null) { select(selectFrom, o); setSelectFrom(null); return; }
     const va = image.offToVa(o);
     anchor.current = o; focus.current = o;
     if (va !== null) onCursor(va);
@@ -155,24 +160,41 @@ export default function HexView({ image, cursor, tick, selection, onCursor, onSe
   const sections = useMemo(() => image.sections, [image]);
   const field = structs && cursorOff !== null ? spanAt(spans, cursorOff) : undefined;
 
+  const sectionList = (pick: (va: number) => void) => (
+    <>
+      {sections.length === 0 && <p className="fine">No section table.</p>}
+      {sections.map((s) => {
+        const packed = s.entropy >= 7;
+        return (
+          <button key={s.name + s.off} className={"hsec section-" + sectionKind(s) + (sec === s ? " on" : "")} disabled={image.vaToOff(s.va) === null} onClick={() => pick(s.va)}>
+            <b>{s.name || "(unnamed)"}</b>
+            <code>{hex(s.va)}</code>
+            <small>{hex(Math.max(s.vsize, s.size))} · {s.perms}</small>
+            <span className="ent" title={`entropy ${s.entropy.toFixed(2)}`}><i style={{ width: `${(s.entropy / 8) * 100}%` }} className={packed ? "hi" : ""} /></span>
+            {packed && <small className="packed-tag">high entropy</small>}
+          </button>
+        );
+      })}
+    </>
+  );
+
   return (
     <div className={"hex" + (compact ? " compact" : "") + (mobile ? " m" : "")}>
-      {!compact && <div className="hex-secs">
+      {!compact && !mobile && <div className="hex-secs">
         <h3>Sections</h3>
-        {sections.length === 0 && <p className="fine">No section table.</p>}
-        {sections.map((s) => {
-          const packed = s.entropy >= 7;
-          return (
-            <button key={s.name + s.off} className={"hsec section-" + sectionKind(s) + (sec === s ? " on" : "")} disabled={image.vaToOff(s.va) === null} onClick={() => onCursor(s.va)}>
-              <b>{s.name || "(unnamed)"}</b>
-              <code>{hex(s.va)}</code>
-              <small>{hex(Math.max(s.vsize, s.size))} · {s.perms}</small>
-              <span className="ent" title={`entropy ${s.entropy.toFixed(2)}`}><i style={{ width: `${(s.entropy / 8) * 100}%` }} className={packed ? "hi" : ""} /></span>
-              {packed && <small className="packed-tag">high entropy</small>}
-            </button>
-          );
-        })}
+        {sectionList(onCursor)}
       </div>}
+      {mobile && (
+        <div className="hex-mbar">
+          <button className="hex-msec" onClick={() => setSheet("sections")} disabled={!sections.length} aria-label="Choose a section">
+            <small>Section</small><b>{sec?.name || (!sections.length ? "no section table" : cursorOff !== null && cursorOff < Math.min(...sections.map((x) => x.off || Infinity)) ? "file headers" : "outside sections")}</b>
+            <svg viewBox="0 0 24 24" aria-hidden><path d="M7 10l5 5 5-5" /></svg>
+          </button>
+          <button className="hex-mgo" onClick={() => setSheet("goto")}>Go to…</button>
+        </div>
+      )}
+      {sheet === "sections" && <Sheet title={`Sections · ${sections.length}`} onClose={() => setSheet(null)}><div className="hex-msecs">{sectionList((va) => { setSheet(null); onCursor(va); })}</div></Sheet>}
+      {sheet === "goto" && <Sheet title="Go to" onClose={() => setSheet(null)}><GoTo image={image} onVa={(va) => { setSheet(null); onCursor(va); }} onOff={(off) => { setSheet(null); jumpOff(off); }} /></Sheet>}
       <div className="hex-main">
         <EntropyStrip image={image} cursorOff={selOff ?? cursorOff} viewOff={Math.min(image.bytes.length, Math.floor(top / ROW) * WIDTH)} onPick={jumpOff} />
         <div className="hex-scroll" ref={box} tabIndex={0} aria-label="File bytes" onKeyDown={onKey} onScroll={(e) => setTop(e.currentTarget.scrollTop)} onMouseDown={onMouseDown} onMouseOver={onMouseOver} onClick={onClick}>
@@ -197,6 +219,9 @@ export default function HexView({ image, cursor, tick, selection, onCursor, onSe
                     <button key={label} className="ghost" onClick={() => { void copyText(fmt(image.bytes.subarray(selOff, selOff + selection.len))).then(() => toast(`Copied ${selection.len} byte${selection.len === 1 ? "" : "s"} as ${label === "Copy hex" ? "hex" : label === "C array" ? "a C array" : "text"}`)); }}>{label}</button>
                   ))}
                 </>}
+                {mobile && cursorOff !== null && (selectFrom === null
+                  ? <button className="ghost" onClick={() => { onSelect(null); setSelectFrom(cursorOff); }}>Select from here</button>
+                  : <button className="ghost on" onClick={() => setSelectFrom(null)}>Tap the last byte · Cancel</button>)}
                 {xrefCount(cursor) > 0 && <button className="ghost" onClick={() => onXrefs(cursor)}>{xrefCount(cursor)} reference{xrefCount(cursor) === 1 ? "" : "s"}</button>}
                 {fn && <button className="ghost" onClick={() => onOpenCode(cursor)}>In {fn.label} · open code</button>}
                 {spans.length > 0 && <button className="ghost" aria-pressed={structs} onClick={toggleStructs} title="Colour the bytes of file headers by field">{structs ? "Hide structures" : "Structures"}</button>}
@@ -207,5 +232,27 @@ export default function HexView({ image, cursor, tick, selection, onCursor, onSe
         </div>
       </div>
     </div>
+  );
+}
+
+/** Jump to a virtual address or a file offset, typed in hex. */
+function GoTo({ image, onVa, onOff }: { image: ImageInfo; onVa: (va: number) => void; onOff: (off: number) => void }) {
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState<"va" | "off">("va");
+  const n = /^(0x)?[0-9a-f]+$/i.test(text.trim()) ? parseInt(text.trim().replace(/^0x/i, ""), 16) : NaN;
+  const error = !text.trim() ? null : Number.isNaN(n) ? "Type a hexadecimal number."
+    : kind === "va" ? (image.vaToOff(n) === null ? "No file bytes at this address." : null)
+    : n >= image.bytes.length ? `The file is 0x${hex(image.bytes.length)} bytes long.` : null;
+  return (
+    <form className="sheet-form hex-goto" onSubmit={(e) => { e.preventDefault(); if (Number.isNaN(n) || error) return; if (kind === "va") onVa(n); else onOff(n); }}>
+      <div className="sheet-seg" role="group" aria-label="Kind of number">
+        <button type="button" aria-pressed={kind === "va"} className={kind === "va" ? "on" : ""} onClick={() => setKind("va")}>Address</button>
+        <button type="button" aria-pressed={kind === "off"} className={kind === "off" ? "on" : ""} onClick={() => setKind("off")}>File offset</button>
+      </div>
+      <input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={kind === "va" ? "0x401000" : "0x400"} aria-label={kind === "va" ? "Virtual address" : "File offset"}
+        autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="go" inputMode="text" />
+      <small className={error ? "err" : ""}>{error ?? (kind === "va" ? "A virtual address, as the code views show it." : "A position in the file on disk.")}</small>
+      <button className="sheet-done" type="submit" disabled={Number.isNaN(n) || !!error}>Go</button>
+    </form>
   );
 }

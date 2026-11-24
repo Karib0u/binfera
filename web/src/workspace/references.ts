@@ -100,12 +100,14 @@ export function useReferences(a: Analysis) {
       if (!l) m.set(to, [{ fn, at }]);
       else if (!l.some((x) => x.fn === fn && x.at === at)) l.push({ fn, at });
     };
+    // Inside a section counts, with or without bytes in the file: .bss globals have references too.
+    const mapped = (v: number) => image.vaToOff(v) !== null || (image.sectionAt(v)?.va ?? 0) > 0;
     for (const [fn, f] of a.functions) {
       const own = new Set((f.asm ?? []).map((r) => r[0]));
       const seen = new Set<number>();
       if (f.data_refs) {
         for (const ref of f.data_refs) {
-          if (own.has(ref.to) || image.vaToOff(ref.to) === null) continue;
+          if (own.has(ref.to) || !mapped(ref.to)) continue;
           seen.add(ref.to);
           add(ref.to, fn, ref.from);
         }
@@ -113,14 +115,14 @@ export function useReferences(a: Analysis) {
       for (const [at, , text] of f.data_refs ? [] : f.asm ?? []) {
         for (const mm of text.matchAll(ADDR_IN_ASM)) {
           const v = asmAddress(mm);
-          if (own.has(v) || image.vaToOff(v) === null) continue;
+          if (own.has(v) || !mapped(v)) continue;
           seen.add(v);
           add(v, fn, at);
         }
       }
       for (const t of f.text?.match(/\b0x[0-9a-fA-F]{5,16}\b|\b[A-Za-z_]\w*_[0-9a-fA-F]{6,16}\b/g) ?? []) {
         const v = parseInt(t.startsWith("0x") ? t : t.slice(t.lastIndexOf("_") + 1), 16);
-        if (!seen.has(v) && !Number.isNaN(v) && image.vaToOff(v) !== null && !own.has(v)) { seen.add(v); add(v, fn, -1); }
+        if (!seen.has(v) && !Number.isNaN(v) && mapped(v) && !own.has(v)) { seen.add(v); add(v, fn, -1); }
       }
     }
     // Strings the decompiler printed inline carry no address in the text; the string lookup found them.

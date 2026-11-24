@@ -189,6 +189,33 @@ fn pe_headers_are_laid_out_at_their_addresses() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn copy_relocated_variables_are_data_imports_not_exports() -> Result<(), Box<dyn std::error::Error>>
+{
+    // `stdout` and `optind` are defined in the executable's .bss only as copies of the library's.
+    let info = inspect(include_bytes!("fixtures/elf64_sysv/copyreloc.elf"), None)?;
+    assert!(info.exports.is_empty(), "{:?}", info.exports);
+    let mut data: Vec<_> = info
+        .imports
+        .iter()
+        .filter(|i| i.data)
+        .map(|i| (i.name.as_str(), i.va))
+        .collect();
+    data.sort();
+    assert_eq!(data, [("optind", 0x203428), ("stdout", 0x203430)]);
+    let stdout = info.imports.iter().filter(|i| i.name == "stdout").count();
+    assert_eq!(stdout, 1, "listed once");
+    let bss = info
+        .sections
+        .iter()
+        .find(|s| s.name == ".bss")
+        .ok_or("no .bss")?;
+    assert!(data
+        .iter()
+        .all(|&(_, va)| va >= bss.va && va < bss.va + bss.vsize));
+    Ok(())
+}
+
+#[test]
 fn elf_headers_map_through_load_segments() -> Result<(), Box<dyn std::error::Error>> {
     let info = inspect(include_bytes!("fixtures/elf32_sysv/dynamic.elf"), None)?;
     let header = info.details.structures.first().ok_or("no structures")?;

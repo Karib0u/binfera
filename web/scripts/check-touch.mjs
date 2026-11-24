@@ -1,4 +1,4 @@
-// Touch parity on a phone: the tapped-word action bar, the Star button in the header, and tap and pinch on the call graph.
+// Touch parity on a phone: the tapped-word action bar, the Star button in the header, and the call tree in Refs.
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { chromium, devices } from "playwright";
@@ -71,27 +71,22 @@ try {
   assert.equal(await bar.count(), 0, "the bar leaves with the page");
   await mount();
 
-  // Call graph: a tap on another function centers it, a second tap on the centered one opens its code. Two fingers zoom.
-  await page.getByRole("tab", { name: "Calls", exact: true }).tap();
-  const zoomLabel = page.getByRole("button", { name: "Reset zoom" });
-  assert.equal(await zoomLabel.textContent(), "100%");
-  await page.evaluate(() => {
-    const el = document.querySelector(".cg-scroll"), r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    const fire = (type, id, x) => el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: "touch", isPrimary: id === 1, clientX: x, clientY: cy, bubbles: true, cancelable: true }));
-    fire("pointerdown", 1, cx - 40); fire("pointerdown", 2, cx + 40);
-    for (let i = 1; i <= 6; i++) { fire("pointermove", 1, cx - 40 - i * 10); fire("pointermove", 2, cx + 40 + i * 10); }
-    fire("pointerup", 1, cx - 100); fire("pointerup", 2, cx + 100);
-  });
-  const zoomed = Number((await zoomLabel.textContent()).replace("%", ""));
-  assert.ok(zoomed > 100, `pinching out zooms in (${zoomed}%)`);
-  await zoomLabel.tap();
-  await page.getByRole("button", { name: "beta" }).tap();
-  await page.waitForFunction(() => document.querySelector(".cg-node.center")?.getAttribute("aria-label") === "beta");
-  assert.equal(await page.getByRole("tab", { name: "Calls", exact: true }).getAttribute("aria-selected"), "true", "the first tap re-centers and stays on the graph");
-  await page.locator(".cg-node.center").tap();
-  await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]')?.textContent === "C");
+  // Refs: calls as a tree. A tap on the arrow expands a callee into its own calls; a tap on a name opens it.
+  await page.getByRole("tab", { name: /^Refs/ }).tap();
+  const tree = page.getByRole("tree", { name: "Calls" });
+  await tree.waitFor();
+  assert.deepEqual(await tree.locator(".ct-fn code").allInnerTexts(), ["beta"]);
+  await tree.getByRole("button", { name: "Expand beta" }).tap();
+  assert.deepEqual(await tree.locator(".ct-fn code").allInnerTexts(), ["beta", "gamma"], "beta expands into gamma");
+  await page.getByRole("tab", { name: /^Called by/ }).tap();
+  assert.equal(await page.locator(".ct-empty").textContent(), "Nothing in this file calls this function.");
+  await page.getByRole("tab", { name: /^Calls/ }).tap();
+  await tree.getByRole("button", { name: "Expand beta" }).tap();
+  await page.locator(".ct-fn", { hasText: "gamma" }).tap();
+  await page.waitForFunction(() => document.querySelector(".m-title h1")?.textContent === "gamma");
+  assert.equal(await page.locator('.m-seg [role=tab][aria-selected=true]').textContent(), "C", "an opened function shows its C");
   assert.deepEqual(errors, []);
-  console.log("Touch: tapped-word action bar (rename, xrefs, comment, hex), header Star, call graph tap-to-open and pinch zoom: passed");
+  console.log("Touch: tapped-word action bar (rename, xrefs, comment, hex), header Star, call tree expand and open: passed");
 } finally {
   await browser.close();
   await rm(temp, { recursive: true, force: true });

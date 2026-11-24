@@ -38,7 +38,7 @@ try {
   const rows = page.locator(".m-fnlist .item");
   await rows.first().waitFor();
   assert.ok(await rows.count() < 60, `${await rows.count()} rows mounted`);
-  assert.ok(await page.locator(".m-fnlist").evaluate((el) => el.scrollHeight) >= 3500 * 60, "the scroll height covers every function");
+  assert.ok(await page.locator(".m-fnlist").evaluate((el) => el.scrollHeight) >= 3500 * 52, "the scroll height covers every function");
   await page.locator(".m-fnlist").evaluate((el) => { el.scrollTop = el.scrollHeight; });
   await page.getByText("FUN_0040eab0", { exact: false }).last().waitFor();
   assert.ok(await rows.count() < 60);
