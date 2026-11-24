@@ -82,10 +82,10 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
   const tone = (count: number, top: number, color: string) => count ? `color-mix(in srgb, var(${color}) ${Math.round(25 + 75 * Math.sqrt(count / top))}%, var(--soft))` : "var(--soft)";
   const paint = (c: Cell): React.CSSProperties => {
     if (layer === "origin") {
-      if (c.origin.malware > 0) return { background: "color-mix(in srgb, var(--err) 78%, var(--soft))" };
-      if (c.origin.shared > 0) return { background: "color-mix(in srgb, var(--warn) 72%, var(--soft))" };
-      if (c.origin.unique > 0) return { background: "color-mix(in srgb, var(--c-fn) 68%, var(--soft))" };
-      if (c.origin.trusted > 0) return { background: "color-mix(in srgb, var(--c-str) 64%, var(--soft))" };
+      if (c.origin.malware > 0) return { background: "var(--o-family)" };
+      if (c.origin.shared > 0) return { background: "var(--o-shared)" };
+      if (c.origin.unique > 0) return { background: "var(--o-unique)" };
+      if (c.origin.trusted > 0) return { background: "var(--o-trusted)" };
       return { background: "var(--soft)" };
     }
     if (layer === "entropy") return { background: heat(c.entropy) };
@@ -104,8 +104,9 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
     `entropy ${c.entropy.toFixed(2)} (${entropyWord(c.entropy)})`,
     c.functions.length ? `${c.functions.length} function${c.functions.length === 1 ? "" : "s"}` : "",
     c.origin.malware ? `${c.origin.malware} malware` : "",
-    c.origin.shared ? `${c.origin.shared} shared` : "",
-    c.origin.trusted ? `${c.origin.trusted} trusted` : "",
+    c.origin.shared ? `${c.origin.shared} common malware` : "",
+    c.origin.unique ? `${c.origin.unique} unique` : "",
+    c.origin.trusted ? `${c.origin.trusted} library` : "",
     c.caps ? `${c.caps} capability match${c.caps === 1 ? "" : "es"}` : "", c.imports ? `${c.imports} import slot${c.imports === 1 ? "" : "s"}` : "",
   ].filter(Boolean).join(" · ");
   const h = hover === null ? null : cells[hover];
@@ -127,13 +128,13 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
       {layer === "sections" && <SectionLegend sections={image.sections} />}
       {layer === "origin" && (
         <div className="fm-sections" aria-label="Code origin legend">
-          <span><i style={{ background: "var(--err)" }} />Malware family</span>
-          <span><i style={{ background: "var(--warn)" }} />Shared malware</span>
-          <span><i style={{ background: "var(--c-fn)" }} />Unique</span>
-          <span><i style={{ background: "var(--c-str)" }} />Trusted</span>
+          <span><i className="co-malware" />Family code</span>
+          <span><i className="co-shared" />Common malware code</span>
+          <span><i className="co-unique" />Unique</span>
+          <span><i className="co-trusted" />Known libraries</span>
         </div>
       )}
-      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Functions coloured by pack attribution: malware family, shared boilerplate, unique code, and trusted runtimes." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
+      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Violet tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
     </section>
   );
 }

@@ -51,7 +51,7 @@ function blocks(input: ReportInput): Block[] {
     if (families.length) {
       lines.push({
         text: "Matched families",
-        sub: families.map((f) => `${f.family} (score ${f.score.toFixed(1)}, ${f.exclusive} exclusive, ${Math.round(f.coverage * 100)}% coverage)`),
+        sub: families.map((f) => `${f.family}: ${f.exclusive} function${f.exclusive === 1 ? "" : "s"} found only in this family, ${Math.round(f.coverage * 100)}% of distinctive code`),
       });
     } else {
       lines.push({ text: "Matched families: none above threshold" });

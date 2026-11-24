@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { entropyOf, entropyWord, HIGH_ENTROPY } from "../engine/entropy";
 import type { Indicator } from "../indicators";
+import { matchStrength, STRENGTH_LABEL } from "../familyOrigin";
 import type { Analysis } from "../types";
 import { bytes as size } from "../workspace/labels";
 
@@ -68,14 +69,14 @@ export function FirstLook({ a, image, indicators, caps, onPick, onFile, onIndica
         out.push({
           label: "Code origin",
           tone: "warn",
-          value: <><code>{top.family}</code> · {top.exclusive_functions} exclusive ({a.family.breakdown.malware_pct.toFixed(1)}% malware)</>,
+          value: <>{STRENGTH_LABEL[matchStrength(top)]}: <code>{top.family}</code> · {top.exclusive_functions} functions found only in this family</>,
           go: onOrigin,
         });
       } else {
         out.push({
           label: "Code origin",
           tone: a.family.trusted_functions > 0 ? "ok" : undefined,
-          value: `No family match · ${a.family.breakdown.trusted_pct.toFixed(1)}% trusted, ${a.family.breakdown.unique_pct.toFixed(1)}% unique`,
+          value: `No known malware family · ${a.family.unique_functions} unique function${a.family.unique_functions === 1 ? "" : "s"} to reverse`,
           go: onOrigin,
         });
       }

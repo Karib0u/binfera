@@ -154,4 +154,16 @@ const md = reportMarkdown(reportInput);
 const html = reportHtml(reportInput);
 assert.ok(md.includes("## Code origin") && md.includes("win.wannacryptor"));
 assert.ok(html.includes("<h2>Code origin</h2>") && html.includes("win.wannacryptor"));
+assert.ok(!md.includes("score 42.5"), "report prose should not print the raw engine score");
 console.log("Code origin report export: passed");
+
+// 5. Match strength rests on exclusive functions, coverage and exactness, not the raw score
+const { matchStrength, describeMatchKinds } = await import(moduleUrl(await compile("../src/familyOrigin.ts")));
+const fam = (exclusive_functions, coverage, exact_content_hits, exact_shape_hits, fuzzy_hits = 0) => ({ exclusive_functions, coverage, exact_content_hits, exact_shape_hits, fuzzy_hits });
+assert.equal(matchStrength(fam(38, 1, 0, 38)), "strong");
+assert.equal(matchStrength(fam(5, 0.4, 2, 3)), "likely");
+assert.equal(matchStrength(fam(2, 0.9, 2, 0)), "weak");
+assert.equal(matchStrength(fam(38, 1, 0, 0, 38)), "likely", "fuzzy-only matches never read as strong");
+assert.equal(matchStrength(fam(5, 0.4, 0, 0, 5)), "weak");
+assert.equal(describeMatchKinds(fam(0, 0, 36, 2, 1)), "36 identical, 2 same control flow, 1 similar");
+console.log("Code origin match strength: passed");

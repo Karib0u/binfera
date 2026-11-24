@@ -1,7 +1,18 @@
 import { useRef, useState } from "react";
 import { getFamilyPackName } from "../engine/assets";
-import { formatSourceName, type FunctionOriginKind } from "../familyOrigin";
-import type { Analysis } from "../types";
+import {
+  describeMatchKinds,
+  formatSourceName,
+  matchStrength,
+  STRENGTH_LABEL,
+  type FunctionOriginKind,
+} from "../familyOrigin";
+import type { Analysis, FamilyMatch, FamilyReport } from "../types";
+
+const pct = (n: number, d: number) => (d > 0 ? (100 * n) / d : 0);
+const fmtPct = (v: number) => (v > 0 && v < 1 ? "<1%" : `${Math.round(v)}%`);
+const num = (n: number) => n.toLocaleString("en-US");
+const plural = (n: number, one: string, many = one + "s") => `${num(n)} ${n === 1 ? one : many}`;
 
 export function CodeOriginCard({
   a,
@@ -19,7 +30,6 @@ export function CodeOriginCard({
   if (a.shellcode) return null;
 
   const report = a.family;
-  const packName = getFamilyPackName();
 
   const onPickPack = async (file: File) => {
     if (!a.runFamilyPack) return;
@@ -34,32 +44,33 @@ export function CodeOriginCard({
     }
   };
 
-  const packPicker = a.runFamilyPack && (
-    <>
-      <input
-        ref={inputRef}
-        className="sr-only"
-        type="file"
-        accept=".bxfam"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void onPickPack(f);
-          e.target.value = "";
-        }}
-      />
+  const packInput = a.runFamilyPack && (
+    <input
+      ref={inputRef}
+      className="sr-only"
+      type="file"
+      accept=".bxfam"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) void onPickPack(f);
+        e.target.value = "";
+      }}
+    />
+  );
+  const pickPack = (label: string) =>
+    a.runFamilyPack && (
       <button
         type="button"
-        className="co-pack-btn"
+        className="co-link"
         disabled={loadingPack}
         onClick={() => inputRef.current?.click()}
-        title="Load a local .bxfam fingerprint pack (stays in this browser, never uploaded)"
+        title="Match against a local .bxfam fingerprint pack. It stays in this browser and is never uploaded."
       >
-        {loadingPack ? "Matching pack…" : packName ? `Pack: ${packName}` : report ? "Load pack…" : "Load .bxfam pack…"}
+        {loadingPack ? "Matching…" : label}
       </button>
-    </>
-  );
+    );
 
-  // Stay invisible until analysis has a report or finishes with an option to load a custom pack.
+  // Stay invisible until analysis has a report, or finishes with an option to load a custom pack.
   if (!report) {
     if (!a.done && !a.familyError) return null;
     if (!a.runFamilyPack && !a.familyError) return null;
@@ -69,132 +80,159 @@ export function CodeOriginCard({
           <h2>Code origin</h2>
           <div className="co-head-meta">
             <span>{a.familyError || packErr || "No fingerprint pack loaded"}</span>
-            {packPicker}
+            {packInput}
+            {pickPack("Load a .bxfam pack…")}
           </div>
         </header>
       </section>
     );
   }
 
-  const { breakdown: b } = report;
-  const segments: { kind: FunctionOriginKind; label: string; pct: number; count: number; hint: string }[] = [
-    { kind: "malware", label: "Malware family", pct: b.malware_pct, count: report.family_matched_functions, hint: "Functions attributed to a known malware family" },
-    { kind: "shared", label: "Shared malware", pct: b.shared_pct, count: report.shared_malware_functions, hint: "Boilerplate shared across multiple malware families" },
-    { kind: "unique", label: "Unique", pct: b.unique_pct, count: report.unique_functions, hint: "Unseen code worth reversing first" },
-    { kind: "trusted", label: "Trusted", pct: b.trusted_pct, count: report.trusted_functions, hint: "Known runtime, FLIRT, or benign software functions" },
+  const elig = report.eligible_functions;
+  const tooSmall = Math.max(0, report.total_functions - elig);
+  const segments: { kind: FunctionOriginKind; label: string; count: number; hint: string }[] = [
+    { kind: "malware", label: "Family code", count: report.family_matched_functions, hint: "Functions attributed to a malware family in the pack" },
+    { kind: "shared", label: "Common malware code", count: report.shared_malware_functions, hint: "Seen across many unrelated malware families: says nothing about which family this is" },
+    { kind: "unique", label: "Unique", count: report.unique_functions, hint: "Not found anywhere in the pack: the code to reverse first" },
+    { kind: "trusted", label: "Known libraries", count: report.trusted_functions, hint: report.trusted_sources.length ? `Known library code: ${report.trusted_sources.map((t) => formatSourceName(t.source)).join(", ")}` : "Compiler runtimes, FLIRT signatures and known benign software" },
   ];
+  const [top, ...others] = report.families;
 
   return (
     <section className="ov-card co-card" aria-label="Code origin">
       <header>
         <h2>Code origin</h2>
-        <div className="co-head-meta">
-          <span>
-            {report.eligible_functions.toLocaleString("en-US")} of {report.total_functions.toLocaleString("en-US")} functions analyzed
-          </span>
-          {packPicker}
-        </div>
       </header>
 
       {(a.familyError || packErr) && <p className="co-error">{a.familyError ?? packErr}</p>}
 
-      {report.eligible_functions > 0 ? (
+      {elig === 0 ? (
+        <p className="fine">No function is large enough to fingerprint (20+ instructions, 2+ blocks).</p>
+      ) : (
         <>
-          <div className="co-bar" role="img" aria-label={segments.filter((s) => s.count > 0).map((s) => `${s.label} ${s.pct.toFixed(1)}%`).join(", ")}>
+          <Verdict report={report} top={top} onOpenFunction={onOpenFunction} onFilterOrigin={onFilterOrigin} />
+
+          <div className="co-bar" role="img" aria-label={segments.filter((s) => s.count > 0).map((s) => `${s.label} ${fmtPct(pct(s.count, elig))}`).join(", ")}>
             {segments.map((s) =>
               s.count > 0 ? (
-                <i
-                  key={s.kind}
-                  className={"co-seg-" + s.kind}
-                  style={{ flexGrow: s.count }}
-                  title={`${s.label}: ${s.pct.toFixed(1)}% (${s.count})`}
-                />
+                <i key={s.kind} className={"co-seg co-" + s.kind} style={{ flexGrow: s.count }} title={`${s.label}: ${fmtPct(pct(s.count, elig))} (${plural(s.count, "function")})`} />
               ) : null,
             )}
           </div>
 
-          <div className="co-legend" role="group" aria-label="Filter functions by code origin">
+          <div className="co-legend" role="group" aria-label="Show functions by code origin">
             {segments.map((s) => (
-              <button
-                key={s.kind}
-                type="button"
-                className={"co-bucket co-b-" + s.kind}
-                disabled={s.count === 0}
-                title={s.hint}
-                onClick={() => onFilterOrigin(s.kind)}
-              >
-                <i aria-hidden />
+              <button key={s.kind} type="button" className={"co-bucket"} disabled={s.count === 0} title={s.hint} onClick={() => onFilterOrigin(s.kind)}>
+                <i className={"co-swatch co-" + s.kind} aria-hidden />
                 <span>{s.label}</span>
-                <b>{s.pct.toFixed(1)}%</b>
-                <small>{s.count.toLocaleString("en-US")}</small>
+                <b>{fmtPct(pct(s.count, elig))}</b>
+                <small>{num(s.count)}</small>
               </button>
             ))}
           </div>
+
+          {(others.length > 0 || report.trusted_sources.length > 0) && (
+            <dl className="co-more">
+              {others.length > 0 && (
+                <>
+                  <dt>Also resembles</dt>
+                  <dd>
+                    {others.slice(0, 4).map((fam) => (
+                      <button key={fam.family} type="button" className="co-chip" onClick={() => (fam.functions[0] ? onOpenFunction(fam.functions[0].address) : onFilterOrigin("malware"))} title={`${STRENGTH_LABEL[matchStrength(fam)]}: ${plural(fam.exclusive_functions, "function")} found only in this family`}>
+                        <code>{fam.family}</code> <em>{STRENGTH_LABEL[matchStrength(fam)].split(" ")[0].toLowerCase()}</em>
+                      </button>
+                    ))}
+                  </dd>
+                </>
+              )}
+              {report.trusted_sources.length > 0 && (
+                <>
+                  <dt>Libraries</dt>
+                  <dd>
+                    {report.trusted_sources.slice(0, 6).map((src) => (
+                      <button key={src.source} type="button" className="co-chip co-chip-trusted" onClick={() => (src.addresses[0] !== undefined ? onOpenFunction(src.addresses[0]) : onFilterOrigin("trusted"))} title={`${plural(src.functions, "function")} of ${num(elig)} fingerprinted (${num(src.instructions)} instructions)`}>
+                        {formatSourceName(src.source)} <em>{fmtPct(pct(src.functions, elig))}</em>
+                      </button>
+                    ))}
+                  </dd>
+                </>
+              )}
+            </dl>
+          )}
         </>
-      ) : (
-        <p className="fine">No functions met the minimum size threshold for pack matching.</p>
       )}
 
-      <div className="co-details">
-        {report.families.length > 0 ? (
-          <ul className="co-families">
-            {report.families.map((fam) => {
-              const topFn = fam.functions[0];
-              const hits = [
-                fam.exact_content_hits > 0 && `${fam.exact_content_hits} content`,
-                fam.exact_shape_hits > 0 && `${fam.exact_shape_hits} shape`,
-                fam.fuzzy_hits > 0 && `${fam.fuzzy_hits} fuzzy`,
-              ]
-                .filter(Boolean)
-                .join(" · ");
-              return (
-                <li key={fam.family}>
-                  <button
-                    type="button"
-                    className="co-fam-row"
-                    onClick={() => (topFn ? onOpenFunction(topFn.address) : onFilterOrigin("malware"))}
-                    title={topFn ? `Open largest matched function (0x${topFn.address.toString(16)})` : "Show matched functions"}
-                  >
-                    <span className="co-fam-name">
-                      <i className="co-dot co-malware" aria-hidden />
-                      <code>{fam.family}</code>
-                    </span>
-                    <span className="co-fam-meta">
-                      <b>{fam.exclusive_functions}</b> exclusive · <b>{Math.round(fam.coverage * 100)}%</b> coverage
-                      {hits && <> · {hits}</>}
-                    </span>
-                    <em className="co-score" title="Weighted family match score">score {fam.score.toFixed(1)}</em>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="co-clean">
-            <i className="co-dot co-trusted" aria-hidden />
-            No known malware family matched above threshold.
-          </p>
-        )}
-
-        {report.trusted_sources.length > 0 && (
-          <div className="co-trusted-row">
-            <span className="co-trusted-label">Trusted code</span>
-            <div className="co-trusted-chips">
-              {report.trusted_sources.slice(0, 6).map((src) => (
-                <button
-                  key={src.source}
-                  type="button"
-                  className="co-trusted-chip"
-                  onClick={() => (src.addresses[0] !== undefined ? onOpenFunction(src.addresses[0]) : onFilterOrigin("trusted"))}
-                  title={`${src.functions} functions (${src.instructions.toLocaleString("en-US")} instructions)`}
-                >
-                  {formatSourceName(src.source)} <em>{src.functions}</em>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <footer className="co-foot">
+        {packInput}
+        <span title={tooSmall > 0 ? `${plural(tooSmall, "function")} are under 20 instructions or 2 blocks: too small to fingerprint reliably` : undefined}>
+          {num(elig)} of {num(report.total_functions)} functions fingerprinted
+        </span>
+        <span aria-hidden>·</span>
+        <span>{getFamilyPackName() ?? "Starter pack"}</span>
+        {a.runFamilyPack && <span aria-hidden>·</span>}
+        {pickPack("Use another pack…")}
+      </footer>
     </section>
+  );
+}
+
+/** One sentence that answers "what is this?" and one that answers "where do I look?". */
+function Verdict({
+  report,
+  top,
+  onOpenFunction,
+  onFilterOrigin,
+}: {
+  report: FamilyReport;
+  top: FamilyMatch | undefined;
+  onOpenFunction: (address: number) => void;
+  onFilterOrigin: (kind: FunctionOriginKind) => void;
+}) {
+  const elig = report.eligible_functions;
+  const unique = report.unique_functions;
+  const next =
+    unique > 0 ? (
+      <button type="button" className="co-next" onClick={() => onFilterOrigin("unique")}>
+        <i className="co-swatch co-unique" aria-hidden />
+        <span>
+          <b>{plural(unique, "unique function")}</b> {unique === 1 ? "isn't" : "aren't"} in any pack: start reversing there
+        </span>
+        <span className="co-go" aria-hidden>→</span>
+      </button>
+    ) : (
+      <p className="co-next co-next-quiet">No unique code: every fingerprinted function is already known.</p>
+    );
+
+  if (!top) {
+    const trustedShare = pct(report.trusted_functions, elig);
+    return (
+      <div className="co-verdict co-verdict-none">
+        <p className="co-headline">
+          No known malware family
+          {trustedShare >= 50 && <span className="co-sub"> · {fmtPct(trustedShare)} is known library code</span>}
+        </p>
+        {next}
+      </div>
+    );
+  }
+
+  const strength = matchStrength(top);
+  const topFn = top.functions[0];
+  const kinds = describeMatchKinds(top);
+  return (
+    <div className={"co-verdict co-verdict-" + strength}>
+      <div className="co-headline">
+        <span className="co-pill">{STRENGTH_LABEL[strength]}</span>
+        <button type="button" className="co-family" onClick={() => (topFn ? onOpenFunction(topFn.address) : onFilterOrigin("malware"))} title={topFn ? `Open the largest matched function (0x${topFn.address.toString(16)})` : "Show matched functions"}>
+          <code>{top.family}</code>
+        </button>
+      </div>
+      <p className="co-evidence">
+        <b>{plural(top.exclusive_functions, "function")}</b> found only in this family's samples, covering{" "}
+        <b title="Distinctive code: fingerprinted functions that are neither known libraries nor common malware code">{fmtPct(top.coverage * 100)}</b> of the file's distinctive code
+        {kinds && <span className="co-kinds" title="Identical: same normalised instructions. Same control flow: same basic-block graph shape. Similar: fuzzy (MinHash) match."> · matched as {kinds}</span>}
+      </p>
+      {next}
+    </div>
   );
 }

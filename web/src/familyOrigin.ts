@@ -1,4 +1,4 @@
-import type { FamilyMatchKind, FamilyReport } from "./types";
+import type { FamilyMatch, FamilyMatchKind, FamilyReport } from "./types";
 
 export type FunctionOriginKind = "malware" | "shared" | "trusted" | "unique";
 
@@ -23,6 +23,38 @@ export function formatMatchKind(kind: FamilyMatchKind): string {
   if (kind === "exact_content") return "exact content";
   if (kind === "exact_shape") return "exact shape";
   return `fuzzy (${kind.fuzzy_band.bands}/8 bands)`;
+}
+
+export type MatchStrength = "strong" | "likely" | "weak";
+
+/**
+ * Turns a family match into a word an analyst can act on. The engine's `score` is an unbounded
+ * weighted sum, so the verdict rests on what it is made of instead: how many functions occur only
+ * in this family, how much of the file's distinctive code they cover, and whether any match is exact.
+ */
+export function matchStrength(fam: Pick<FamilyMatch, "exclusive_functions" | "coverage" | "exact_content_hits" | "exact_shape_hits">): MatchStrength {
+  const exact = fam.exact_content_hits + fam.exact_shape_hits > 0;
+  let level: MatchStrength =
+    fam.exclusive_functions >= 10 && fam.coverage >= 0.5 ? "strong"
+    : fam.exclusive_functions >= 3 && fam.coverage >= 0.25 ? "likely"
+    : "weak";
+  if (!exact) level = level === "strong" ? "likely" : "weak";
+  return level;
+}
+
+export const STRENGTH_LABEL: Record<MatchStrength, string> = {
+  strong: "Strong match",
+  likely: "Likely match",
+  weak: "Weak match",
+};
+
+/** Plain-language count of how the family's functions matched, e.g. "36 identical, 2 same control flow". */
+export function describeMatchKinds(fam: Pick<FamilyMatch, "exact_content_hits" | "exact_shape_hits" | "fuzzy_hits">): string {
+  return [
+    fam.exact_content_hits > 0 && `${fam.exact_content_hits} identical`,
+    fam.exact_shape_hits > 0 && `${fam.exact_shape_hits} same control flow`,
+    fam.fuzzy_hits > 0 && `${fam.fuzzy_hits} similar`,
+  ].filter(Boolean).join(", ");
 }
 
 export function formatSourceName(source: string): string {
