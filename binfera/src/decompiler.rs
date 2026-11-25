@@ -33,7 +33,6 @@ pub use batch::{
     FunctionGraph, GraphBlock, GraphEdge, GraphEdgeKind, InstructionRow, Reference, RetryPolicy,
 };
 
-mod candidates;
 mod code_pointer_slots;
 mod conventions;
 pub(crate) mod ctypes;
@@ -56,7 +55,8 @@ mod symbolic_constants;
 mod unit;
 mod win64_args;
 
-pub use candidates::rejected_compatibility_entries;
+pub use crate::extract::recovery::listing::rejected_compatibility_entries;
+use crate::extract::recovery::listing::{aarch64_import_thunk, aarch64_pointer, import_thunks};
 pub use unit::{Guess, Unit, UnitFunction};
 
 /// Ghidra 12.1.4 Function ID data for x64 and x86 Visual Studio runtimes; see `sigs/FID.md`.
@@ -2596,6 +2596,24 @@ fn unambiguous_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<binfera_ghidra::CodeRa
 }
 
 /// The function table's names, by entry.
+impl crate::extract::recovery::listing::ListingContext for DecompilerSession {
+    fn is_code_address(&self, address: u64) -> bool {
+        self.in_code(address)
+    }
+    fn is_local_label(&self, address: u64) -> bool {
+        self.local_labels.contains(&address)
+    }
+    fn is_named_function(&self, address: u64) -> bool {
+        DecompilerSession::is_named_function(self, address)
+    }
+    fn is_import_thunk(&self, address: u64) -> bool {
+        self.import_thunks.contains(&address)
+    }
+    fn warn(&mut self, message: String) {
+        self.warnings.push(message);
+    }
+}
+
 fn go_function_names(go: &GoBinary) -> BTreeMap<u64, String> {
     go.functions
         .functions
@@ -3178,153 +3196,6 @@ fn line_addresses(markup: &[u8], op_times: &[u32], op_addrs: &[u64], text: &str)
         .into_iter()
         .map(|line| line.into_iter().collect())
         .collect()
-}
-
-/// Recovered functions whose only instruction is an indirect jump through an import slot,
-/// with the import's name.
-fn import_thunks(analysis: &Analysis) -> BTreeMap<u64, String> {
-    if analysis.image.architecture.is_risc32() {
-        return crate::extract::risc::import_thunks(analysis);
-    }
-    let mut thunks: BTreeMap<u64, String> = analysis
-        .image
-        .import_locations
-        .iter()
-        .filter(|(address, _)| {
-            analysis.image.format == ImageFormat::Macho
-                && analysis
-                    .image
-                    .elf_plt_ranges
-                    .iter()
-                    .any(|(start, end)| *start <= **address && **address < *end)
-        })
-        .map(|(address, name)| (*address, name.clone()))
-        .collect();
-    if analysis.image.architecture == Architecture::AArch64 {
-        // A tail-only PLT entry may have been absorbed into its caller by recovery.
-        let plt_entries = analysis
-            .image
-            .elf_plt_ranges
-            .iter()
-            .flat_map(|&(start, end)| {
-                let size = usize::try_from(end - start).unwrap_or(0);
-                let mapped = analysis
-                    .image
-                    .bytes_at(start, size)
-                    .map_or(0, |bytes| bytes.len());
-                (start..start.saturating_add(mapped as u64).min(end)).step_by(4)
-            });
-        for address in analysis
-            .image
-            .import_locations
-            .keys()
-            .copied()
-            .chain(analysis.functions.keys().copied())
-            .chain(plt_entries)
-        {
-            if let Some((_, slot)) = aarch64_import_thunk(analysis, address) {
-                if let Some(name) = analysis.image.import_locations.get(&slot) {
-                    thunks.insert(address, name.clone());
-                } else if let Some(target) = aarch64_pointer(&analysis.image, slot) {
-                    if let Some(name) = analysis
-                        .elf_function_symbols
-                        .get(&target)
-                        .and_then(|n| n.first())
-                    {
-                        thunks.insert(address, format!("*.{name}"));
-                    }
-                }
-            }
-        }
-        return thunks;
-    }
-    for (address, function) in &analysis.functions {
-        let Some(only) = function
-            .blocks
-            .iter()
-            .find(|block| block.addr == *address)
-            .into_iter()
-            .flat_map(|block| &block.insns)
-            .find(|insn| {
-                !matches!(
-                    insn.x86_instruction().mnemonic(),
-                    Mnemonic::Endbr64 | Mnemonic::Endbr32 | Mnemonic::Nop
-                )
-            })
-        else {
-            continue;
-        };
-        if only.flow != Flow::IndirectBranch {
-            continue;
-        }
-        if let Some(name) = only
-            .memory_target
-            .and_then(|slot| analysis.image.import_locations.get(&slot))
-        {
-            thunks.insert(*address, name.clone());
-        }
-    }
-    thunks
-}
-
-/// Ghidra's AARCH64PltThunkAnalyzer patterns: ADRP/LDR/[ADD]/BR, with an
-/// optional BTI landing pad. Validate the complete stub and branch register;
-/// an ordinary GOT load inside a function must not rename that function.
-fn aarch64_import_thunk(analysis: &Analysis, entry: u64) -> Option<(u64, u64)> {
-    let image = &analysis.image;
-    if image.architecture != Architecture::AArch64 || !image.is_executable_address(entry) {
-        return None;
-    }
-    let word = |address| -> Option<u32> {
-        Some(u32::from_le_bytes(
-            image.bytes_at(address, 4)?.try_into().ok()?,
-        ))
-    };
-    let mut address = entry;
-    if word(address)? & 0xffff_fc1f == 0xd503_241f {
-        address = address.checked_add(4)?; // BTI
-    }
-    let adrp = word(address)?;
-    let ldr = word(address.checked_add(4)?)?;
-    if adrp & 0x9f00_0000 != 0x9000_0000 || ldr & 0xffc0_0000 != 0xf940_0000 {
-        return None;
-    }
-    let base = adrp & 31;
-    let target = ldr & 31;
-    if base == 31 || target == 31 || (ldr >> 5) & 31 != base {
-        return None;
-    }
-    let immediate = (((adrp >> 5) & 0x7ffff) << 2) | ((adrp >> 29) & 3);
-    let offset = ((immediate as i64) << 43) >> 31;
-    let page = (address & !0xfff).wrapping_add_signed(offset);
-    let slot = page.wrapping_add(u64::from((ldr >> 10) & 0xfff) * 8);
-    let mut branch = address.checked_add(8)?;
-    let add = word(branch)?;
-    if add & 0xffc0_0000 == 0x9100_0000 {
-        // The ELF PLT updates its page register to the GOT slot for the resolver.
-        if base == target
-            || add & 31 != base
-            || (add >> 5) & 31 != base
-            || u64::from((add >> 10) & 0xfff) != slot & 0xfff
-        {
-            return None;
-        }
-        branch = branch.checked_add(4)?;
-    }
-    if word(branch)? != 0xd61f_0000 | (target << 5)
-        || !(image.import_locations.contains_key(&slot)
-            || aarch64_pointer(image, slot)
-                .is_some_and(|target| image.is_executable_address(target)))
-    {
-        return None;
-    }
-    Some((branch, slot))
-}
-
-fn aarch64_pointer(image: &LoadedImage, slot: u64) -> Option<u64> {
-    Some(u64::from_le_bytes(
-        image.bytes_at(slot, 8)?.try_into().ok()?,
-    ))
 }
 
 /// The PLT stubs of a position-independent i386 ELF, `jmp [ebx + disp]`, by the import they jump

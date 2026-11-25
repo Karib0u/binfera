@@ -20,6 +20,7 @@ pub mod flirt;
 pub mod golang;
 pub(crate) mod idioms;
 pub mod libc_start_main;
+pub mod listing;
 pub mod msvcfunc;
 pub mod noreturn;
 mod pointers;

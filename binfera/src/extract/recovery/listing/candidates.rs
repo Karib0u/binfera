@@ -1,6 +1,10 @@
 //! Reconcile compatibility-only entries with positive native data/flow evidence.
-use super::*;
-use crate::extract::recovery::SeedKind;
+use std::collections::BTreeSet;
+
+use iced_x86::{Mnemonic, OpKind, Register};
+
+use crate::extract::image::{Architecture, LoadedImage};
+use crate::extract::recovery::{Analysis, SeedKind};
 
 /// Compatibility recovery can seed literals, switch tables and internal labels.
 /// Keep uncertain entries, including code reached only through a data pointer.

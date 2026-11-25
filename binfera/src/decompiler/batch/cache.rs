@@ -50,7 +50,7 @@ pub fn prepare_with_signature_jobs(
     let compatible = selection::needs_compatibility(&native);
     bincode::serde::encode_into_std_write(compatible, &mut output, config()).map_err(error)?;
     if compatible {
-        let (listed, rejected) = selection::select_analysis(bytes, native, &mut session)?;
+        let (listed, rejected) = selection::select_analysis(bytes, native, &mut session);
         bincode::serde::encode_into_std_write((&listed, &rejected), &mut output, config())
             .map_err(error)?;
     }
