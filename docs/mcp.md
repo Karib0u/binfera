@@ -76,14 +76,17 @@ There are no workflows to learn. Ask in plain words:
 |---|---|
 | `open_binary` | Open a file, or reuse its project. Analysis runs in the background. |
 | `get_project` | Status, revision, run history and coverage. |
-| `get_overview`, `get_capabilities` | File structure and capability matches. |
-| `list_functions` | Filter (`undocumented`, `unexamined`, …), sort by `importance` or `bottom_up`, search. |
+| `get_overview`, `get_capabilities` | File structure, capability matches and a Code Origin summary when a pack is available. |
+| `get_code_origin` | Pack info, the four-way code breakdown, top families and trusted sources. Set `include_functions` to include up to 20 malware-attributed functions. |
+| `list_functions` | Filter by documentation or code origin (`malware`, `shared`, `unique`, `trusted`), sort by `importance` or `bottom_up`, search. |
 | `get_function`, `get_references` | Pseudocode with annotations, strings, callers and callees. |
 | `search_symbols` | Search names, imports, exports and strings. |
 | `emulate_function`, `emulate_call_sites` | Run a function in the [emulator](emulation.md). |
 | `apply_annotations` | Rename functions and variables, add comments, star functions. |
 | `undo_ai_run` | Revert one agent run. |
 | `save_report`, `get_report` | Versioned reports in Markdown and JSON. |
+
+The server uses the [default Code Origin pack](cli.md#code-origin) and caches matches per binary and pack. With a pack installed, `list_functions` and `get_function` include attribution for fingerprinted functions. The `undocumented` filter excludes trusted code from the pack along with library and symbol-named functions.
 
 ## Your edits come first
 

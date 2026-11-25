@@ -27,7 +27,7 @@ export function runEngine(req: EngineRequest, onLine: (line: string) => void, si
     };
     worker.onerror = (ev) => finish(() => reject(new Error(ev.message || "worker failed")));
     const transfer: Transferable[] = [req.sample, ...Object.values(req.data)];
-    if (req.kind === "family") transfer.push(req.pack);
+    if (req.kind === "family" && req.pack) transfer.push(req.pack);
     worker.postMessage(req, transfer);
   });
 }

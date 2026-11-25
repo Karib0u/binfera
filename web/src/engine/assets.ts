@@ -140,6 +140,8 @@ export function loadEngineId(): Promise<string | null> {
     .catch(() => { engineId = null; return null; });
 }
 
+export async function pickNativeFamilyPack(): Promise<null> { return null; }
+
 const FAMILY_MAGIC = [0x42, 0x58, 0x46, 0x41, 0x4d, 0x30, 0x30, 0x32]; // "BXFAM002"
 function isBxfam002(bytes: Uint8Array): boolean {
   if (bytes.byteLength < 40) return false;

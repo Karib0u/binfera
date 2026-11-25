@@ -20,7 +20,7 @@ interface Common {
 export type EngineRequest =
   | (Common & { kind: "inspect" })
   | (Common & { kind: "capa"; rules: Record<string, string> })
-  | (Common & { kind: "family"; pack: ArrayBuffer })
+  | (Common & { kind: "family"; pack?: ArrayBuffer })
   | (Common & { kind: "decompile"; shard: [number, number] })
   | (Common & { kind: "fingerprint" })
   | (Common & { kind: "decompileOne"; address: number; resourceRetry?: boolean })
@@ -72,6 +72,7 @@ self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
       // No threads in the browser build: --jobs 1 is the serial reference path.
       args = ["/sample.bin", "--json", "--jobs", "1", "--rules", "/rules"];
     } else if (req.kind === "family") {
+      if (!req.pack) throw new Error("No family pack supplied");
       mod.FS.writeFile("/family.bxfam", new Uint8Array(req.pack));
       args = ["family", "match", "--pack", "/family.bxfam", "/sample.bin", "--json"];
     } else if (req.kind === "fingerprint") {

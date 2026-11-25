@@ -153,6 +153,7 @@ dependencies = [
 name = "binfera-mcp"
 version = "1.0.1"
 dependencies = [
+ "binfera",
  "binfera-project",
  "serde",
  "serde_json",

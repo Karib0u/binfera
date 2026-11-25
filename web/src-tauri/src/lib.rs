@@ -33,6 +33,8 @@ pub fn run() {
             engine::stage_sample,
             engine::release_sample,
             engine::run_engine,
+            engine::family_pack_status,
+            engine::select_family_pack,
             engine::cancel_engine,
             agent::agent_detect,
             agent::agent_models,

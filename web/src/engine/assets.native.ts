@@ -1,3 +1,14 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export interface NativeFamilyPack {
+  available: true;
+  name: string;
+  size: number;
+  path: string;
+}
+
+type FamilyPackStatus = NativeFamilyPack | { available: false };
+
 // Desktop build's stand-in for assets.ts (vite.config.ts swaps it in with `--mode desktop`).
 // The native engine ships inside the app, with its signatures and rules, so there is nothing to
 // download and nothing to hand to a worker.
@@ -30,4 +41,12 @@ export async function loadEngineId(): Promise<string | null> { return null; }
 
 export function setCustomFamilyPack(_bytes: ArrayBuffer, _name: string): void {}
 export function getFamilyPackName(): string | null { return null; }
-export async function loadFamilyPack(): Promise<ArrayBuffer | null> { return null; }
+export async function loadFamilyPack(): Promise<NativeFamilyPack | null> {
+  const status = await invoke<FamilyPackStatus>("family_pack_status");
+  return status.available ? status : null;
+}
+
+export async function pickNativeFamilyPack(): Promise<NativeFamilyPack | null> {
+  const status = await invoke<FamilyPackStatus | null>("select_family_pack");
+  return status?.available ? status : null;
+}

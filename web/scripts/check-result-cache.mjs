@@ -101,6 +101,7 @@ const mocksUrl = moduleUrl(`
   export const TOO_LARGE = 14;
   export const loadEngine = async () => ({});
   export const loadFamilyPack = async () => null;
+  export const pickNativeFamilyPack = async () => null;
   export const setCustomFamilyPack = () => {};
   export const loadAssets = async () => ({ module: {}, data: () => ({}), rules: {} });
   export const extractStrings = () => ({ strings: [{ a: 10, s: "example", w: false }], total: 24567 });

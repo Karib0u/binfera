@@ -1,10 +1,11 @@
 //! Local Model Context Protocol server for Binfera, spoken over stdio.
 //!
 //! The server owns no analysis logic: it asks the `binfera` executable (in isolated child
-//! processes) for recovery and decompilation, caches the results on disk, and stores annotations
+//! processes) for recovery, decompilation and code origin, caches the results on disk, and stores annotations
 //! and reports in a `binfera-project` database that the desktop app shares.
 #![forbid(unsafe_code)]
 
+mod code_origin;
 mod engine;
 mod rpc;
 mod tools;
