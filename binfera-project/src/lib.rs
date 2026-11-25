@@ -21,7 +21,9 @@ pub use cache::{
 };
 
 mod family_pack;
-pub use family_pack::{find_family_pack, resolve_family_pack};
+pub use family_pack::{
+    find_family_pack, find_family_packs, resolve_family_pack, resolve_family_packs,
+};
 
 pub const SCHEMA_VERSION: i64 = 3;
 pub const MAX_NAME_LEN: usize = 128;

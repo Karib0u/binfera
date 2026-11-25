@@ -86,7 +86,9 @@ There are no workflows to learn. Ask in plain words:
 | `undo_ai_run` | Revert one agent run. |
 | `save_report`, `get_report` | Versioned reports in Markdown and JSON. |
 
-The server uses the [default Code Origin pack](cli.md#code-origin) and caches matches per binary and pack. With a pack installed, `list_functions` and `get_function` include attribution for fingerprinted functions. The `undocumented` filter excludes trusted code from the pack along with library and symbol-named functions.
+The server uses the [default Code Origin packs](cli.md#code-origin), including layered packs from `BINFERA_FAMILY_PACKS`, and caches matches per binary and pack set. With a pack installed, `list_functions` and `get_function` include attribution for fingerprinted functions. The `undocumented` filter excludes trusted code from the pack along with library and symbol-named functions.
+
+With a `BXFAM003` pack, an unnamed Trusted function shows the pack's trusted symbol as its name, marked `name_source: "pack_trusted"`. `get_code_origin` adds a `string_origin` summary, and `search_symbols` accepts `string_origin` and `hide_trusted` to filter strings. String Reuse never changes the code families or their confidence.
 
 ## Your edits come first
 
