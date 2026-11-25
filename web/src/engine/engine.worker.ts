@@ -20,7 +20,8 @@ interface Common {
 export type EngineRequest =
   | (Common & { kind: "inspect" })
   | (Common & { kind: "capa"; rules: Record<string, string> })
-  | (Common & { kind: "family"; pack?: ArrayBuffer })
+  /** Packs base first; browser buffers, or nothing on desktop where the native side resolves paths. */
+  | (Common & { kind: "family"; packs?: ArrayBuffer[]; packNames?: string[]; overlays?: number })
   | (Common & { kind: "decompile"; shard: [number, number] })
   | (Common & { kind: "fingerprint" })
   | (Common & { kind: "decompileOne"; address: number; resourceRetry?: boolean })
@@ -41,6 +42,12 @@ function mkdirs(fs: { mkdir(p: string): void }, path: string, made: Set<string>)
     cur += "/" + part;
     if (!made.has(cur)) { fs.mkdir(cur); made.add(cur); }
   }
+}
+
+/** A pack's display name as a plain file name: no folders, no leading dot or dash. */
+export function packFileName(name: string | undefined): string {
+  const safe = (name ?? "").replace(/[\/\\\0]/g, "_").replace(/^[.\-\s]+/, "").slice(0, 120);
+  return safe || "pack.bxfam";
 }
 
 self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
@@ -72,9 +79,18 @@ self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
       // No threads in the browser build: --jobs 1 is the serial reference path.
       args = ["/sample.bin", "--json", "--jobs", "1", "--rules", "/rules"];
     } else if (req.kind === "family") {
-      if (!req.pack) throw new Error("No family pack supplied");
-      mod.FS.writeFile("/family.bxfam", new Uint8Array(req.pack));
-      args = ["family", "match", "--pack", "/family.bxfam", "/sample.bin", "--json"];
+      if (!req.packs?.length) throw new Error("No family pack supplied");
+      args = ["family", "match"];
+      // Each pack under its own name, in a folder of its own: the engine reports matches by file name.
+      const made = new Set<string>();
+      req.packs.forEach((pack, i) => {
+        const dir = `/packs/${i}`;
+        mkdirs(mod.FS, dir, made);
+        const path = `${dir}/${packFileName(req.packNames?.[i])}`;
+        mod.FS.writeFile(path, new Uint8Array(pack));
+        args.push("--pack", path);
+      });
+      args.push("/sample.bin", "--json");
     } else if (req.kind === "fingerprint") {
       // Native recovery, like the decompiler's, with its higher limit.
       args = ["fingerprint", "/sample.bin", "--max-instructions", "3500000"];

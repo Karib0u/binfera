@@ -7,7 +7,7 @@ import {
   STRENGTH_LABEL,
   type FunctionOriginKind,
 } from "../familyOrigin";
-import type { Analysis, FamilyMatch, FamilyReport } from "../types";
+import type { Analysis, FamilyMatch, FamilyPackInfo, FamilyReport, StringOriginKind, StringOriginReport } from "../types";
 
 const pct = (n: number, d: number) => (d > 0 ? (100 * n) / d : 0);
 const fmtPct = (v: number) => (v > 0 && v < 1 ? "<1%" : `${Math.round(v)}%`);
@@ -18,12 +18,16 @@ export function CodeOriginCard({
   a,
   onFilterOrigin,
   onOpenFunction,
+  onShowStrings,
 }: {
   a: Analysis;
   onFilterOrigin: (kind: FunctionOriginKind) => void;
   onOpenFunction: (address: number) => void;
+  /** Open the Strings view filtered to one String Reuse class, optionally searching for a value. */
+  onShowStrings?: (kind: StringOriginKind | null, query?: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const overlayRef = useRef<HTMLInputElement>(null);
   const [loadingPack, setLoadingPack] = useState(false);
   const [packErr, setPackErr] = useState<string | null>(null);
 
@@ -58,6 +62,21 @@ export function CodeOriginCard({
       }}
     />
   );
+  const addOverlay = a.addFamilyOverlay;
+  const overlayInput = addOverlay && !a.pickFamilyPack && (
+    <input
+      ref={overlayRef}
+      className="sr-only"
+      type="file"
+      accept=".bxfam"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) void onPickPack(() => addOverlay(f));
+        e.target.value = "";
+      }}
+    />
+  );
+  const removeOverlay = a.removeFamilyOverlay;
   const pickPack = (label: string) =>
     canPickPack && (
       <button
@@ -167,15 +186,35 @@ export function CodeOriginCard({
         </>
       )}
 
+      {elig > 0 && report.strings && report.strings.total_strings > 0 && (
+        <StringReuse strings={report.strings} codeAbstained={report.families.length === 0} onShowStrings={onShowStrings} />
+      )}
+
       <footer className="co-foot">
         {packInput}
+        {overlayInput}
         <span title={tooSmall > 0 ? `${plural(tooSmall, "function")} are under 20 instructions or 2 blocks: too small to fingerprint reliably` : undefined}>
           {num(elig)} of {num(total)} functions fingerprinted
         </span>
         <span aria-hidden>·</span>
-        <span>{a.familyPackName ?? getFamilyPackName() ?? "Starter pack"}</span>
+        <PackChips
+          packs={a.familyPacks ?? [{ name: a.familyPackName ?? getFamilyPackName() ?? "Starter pack", role: "base" }]}
+          busy={loadingPack}
+          onRemove={removeOverlay && ((i) => void onPickPack(() => removeOverlay(i)))}
+        />
+        {addOverlay && (
+          <button
+            type="button"
+            className="co-link"
+            disabled={loadingPack}
+            onClick={() => (a.pickFamilyPack ? void onPickPack(() => addOverlay()) : overlayRef.current?.click())}
+            title="Layer another .bxfam pack over these, such as your organization's Trusted code. A function or string any pack trusts is Trusted."
+          >
+            {loadingPack ? "Matching…" : "Add overlay pack…"}
+          </button>
+        )}
         {canPickPack && <span aria-hidden>·</span>}
-        {pickPack("Use another pack…")}
+        {pickPack("Use another base pack…")}
       </footer>
     </section>
   );
@@ -239,5 +278,106 @@ function Verdict({
       </p>
       {next}
     </div>
+  );
+}
+
+const fmtSize = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+
+/** The active packs, base first, each removable when it is an overlay. */
+function PackChips({ packs, busy, onRemove }: { packs: FamilyPackInfo[]; busy: boolean; onRemove?: (overlayIndex: number) => void }) {
+  let overlay = -1;
+  return (
+    <span className="co-packs" role="list" aria-label="Fingerprint packs, base first">
+      {packs.map((p, i) => {
+        const index = p.role === "overlay" ? ++overlay : -1;
+        const meta = [p.format, p.size !== undefined ? fmtSize(p.size) : undefined].filter(Boolean).join(" · ");
+        return (
+          <span key={i} role="listitem" className={"co-pack" + (p.role === "overlay" ? " co-pack-overlay" : "")} title={`${p.role === "base" ? "Base pack" : `Overlay ${index + 1}: later packs take precedence for Trusted names`}${meta ? ` · ${meta}` : ""}`}>
+            {p.role === "overlay" && <span aria-hidden>+</span>}
+            <b>{p.name}</b>
+            {meta && <small>{meta}</small>}
+            {p.role === "overlay" && onRemove && (
+              <button type="button" className="co-pack-x" disabled={busy} aria-label={`Remove overlay ${p.name}`} title="Remove this overlay and match again" onClick={() => onRemove(index)}>×</button>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+const STRING_SEGMENTS: { kind: StringOriginKind; label: string; key: keyof Pick<StringOriginReport, "malware_strings" | "shared_strings" | "unique_strings" | "trusted_strings"> }[] = [
+  { kind: "malware", label: "Family", key: "malware_strings" },
+  { kind: "shared", label: "Shared", key: "shared_strings" },
+  { kind: "unique", label: "Unique", key: "unique_strings" },
+  { kind: "trusted", label: "Trusted", key: "trusted_strings" },
+];
+
+/**
+ * String Reuse: supporting evidence beside the code verdict, never part of it. Exclusive strings
+ * open the Strings view; a string-only hint is shown only when code attribution abstained.
+ */
+function StringReuse({ strings, codeAbstained, onShowStrings }: { strings: StringOriginReport; codeAbstained: boolean; onShowStrings?: (kind: StringOriginKind | null, query?: string) => void }) {
+  const total = strings.total_strings;
+  const exclusive = strings.entries.filter((e) => e.kind === "malware").slice(0, 5);
+  const hint = codeAbstained ? strings.string_only_hint : undefined;
+  return (
+    <section className="co-strings" aria-label="String reuse">
+      <div className="co-strings-head">
+        <h3>String reuse</h3>
+        <span className="co-sub" title="Strings are classified after the code verdict and never change it">
+          {plural(total, "string")} · supporting evidence only
+        </span>
+      </div>
+      <div className="co-bar co-bar-thin" role="img" aria-label={STRING_SEGMENTS.filter((s) => strings[s.key] > 0).map((s) => `${s.label} ${fmtPct(pct(strings[s.key], total))}`).join(", ")}>
+        {STRING_SEGMENTS.map((s) => strings[s.key] > 0 ? <i key={s.kind} className={"co-seg co-" + s.kind} style={{ flexGrow: strings[s.key] }} /> : null)}
+      </div>
+      <div className="co-legend" role="group" aria-label="Show strings by origin">
+        {STRING_SEGMENTS.map((s) => (
+          <button key={s.kind} type="button" className="co-bucket" disabled={strings[s.key] === 0 || !onShowStrings} onClick={() => onShowStrings?.(s.kind)}
+            title={s.kind === "trusted" ? "Common in benign software: hide these to read what the malware wrote" : s.kind === "unique" ? "Not in any loaded pack" : s.kind === "shared" ? "Seen in two or three malware families" : "Seen in one malware family's samples only"}>
+            <i className={"co-swatch co-" + s.kind} aria-hidden />
+            <span>{s.label}</span>
+            <b>{fmtPct(pct(strings[s.key], total))}</b>
+            <small>{num(strings[s.key])}</small>
+          </button>
+        ))}
+      </div>
+      {hint && (
+        <p className="co-hint" role="note">
+          <span className="co-hint-tag">Low-confidence string-only hint</span>
+          {" "}<code>{hint.family}</code>: {plural(hint.exclusive_strings, "exclusive string")} agree. Code attribution abstained, so this is a lead to verify, not a match.
+        </p>
+      )}
+      {(strings.families.length > 0 || exclusive.length > 0) && (
+        <dl className="co-more">
+          {strings.families.length > 0 && (
+            <>
+              <dt>Families</dt>
+              <dd>
+                {strings.families.slice(0, 4).map((f) => (
+                  <button key={f.family} type="button" className="co-chip" disabled={!onShowStrings} onClick={() => onShowStrings?.("malware", f.family)}
+                    title={`${plural(f.exclusive_strings, "string")} found only in ${f.family}, ${plural(f.shared_strings, "string")} shared with other families${f.corroborates_code ? ". Code attribution names it too." : ""}`}>
+                    <code>{f.family}</code> <em>{num(f.exclusive_strings)}</em>{f.corroborates_code && <span className="co-corr" aria-label="corroborates code">✓ code</span>}
+                  </button>
+                ))}
+              </dd>
+            </>
+          )}
+          {exclusive.length > 0 && (
+            <>
+              <dt>Exclusive</dt>
+              <dd className="co-str-list">
+                {exclusive.map((e) => (
+                  <button key={e.hash} type="button" className="co-str" disabled={!onShowStrings} onClick={() => onShowStrings?.(null, e.value)} title={`${e.value}\nOnly in ${e.families?.join(", ") || "one family"}: show it in Strings`}>
+                    <span>{e.value}</span><em>{e.families?.[0]}</em>
+                  </button>
+                ))}
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+    </section>
   );
 }

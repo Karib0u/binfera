@@ -55,6 +55,8 @@ Both commands look for packs in this order:
 
 String Reuse is supporting evidence only. It never adds, removes or rescores a code family. When code attribution abstains and at least three distinct exclusive malware strings name one family more than any other, the report adds `string_only_hint`, a lead to verify rather than a verdict.
 
+The web and desktop apps show the same data. **Add overlay pack…** in the **Code origin** card layers another pack over the active ones, shown as removable chips with each pack's format and size, and matching runs again whenever a pack is added or removed. In the browser, packs stay in the tab and are never uploaded. A Trusted function with no analyst name, file symbol, signature name or export is labeled with its pack symbol and a **Trusted** tag. With `BXFAM003` string data, the card adds a **String reuse** section and the Strings view gets origin filters and **Hide trusted**. A `string_only_hint` is shown as a low-confidence hint, never as a match. With `BXFAM002` packs, none of the string or symbol UI appears. Reports and the JSON export include the string summary and the pack-derived names.
+
 ## Input formats
 
 PE and ELF inputs use recovered code scopes with FLIRT library-function exclusion. Raw x86/x64 shellcode (`-f sc32` or `-f sc64`) uses no FLIRT signatures. Capability results place it at capa's [shellcode base address](https://github.com/Karib0u/binfera/blob/main/binfera/src/extract/loader/image.rs), `0x690000`, so addresses match Python capa; decompilation and emulation map it at zero, so their addresses are offsets in the file. Freeze files are also accepted.

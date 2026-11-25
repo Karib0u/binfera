@@ -153,7 +153,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
   const [inspector, setInspector] = useState<"refs" | "stack">("refs");
   const inlineStr = true; // strings a data label points at are written inline
   // Analyst names and export names replace the decompiler's in the body, and in what is copied.
-  const fnDisplay = (t: string) => { const r = resolve(t); return r === undefined ? undefined : notes.renamed(r) ?? (t.startsWith("FUN_") ? exportOf(r) : undefined); };
+  const fnDisplay = (t: string) => { const r = resolve(t); return r === undefined ? undefined : notes.renamed(r) ?? (t.startsWith("FUN_") ? exportOf(r) ?? notes.trustedOf(r)?.name : undefined); };
   // Local variables carry the analyst's names for this function only.
   const display = (t: string) => fnDisplay(t) ?? notes.varName(address, t);
   const copy = () => { if (f?.text) navigator.clipboard.writeText(applyNames(f.text, display)).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }); };

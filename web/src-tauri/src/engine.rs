@@ -30,6 +30,8 @@ struct Inner {
     /// Staged samples: a private snapshot and its SHA-256, which names the sample in the cache.
     samples: Mutex<HashMap<u64, (Arc<tempfile::NamedTempFile>, String)>>,
     family_pack: Mutex<Option<PathBuf>>,
+    /// Packs layered over the base pack, in order. The webview names them by index only.
+    family_overlays: Mutex<Vec<PathBuf>>,
     /// Process id of each live run's `binfera` process (also its process group on Unix).
     running: Mutex<HashMap<u64, u32>>,
     /// Runs the frontend cancelled, so a cancel that races ahead of the spawn still takes effect.
@@ -47,6 +49,7 @@ impl Engine {
             next: AtomicU64::new(1),
             samples: Mutex::default(),
             family_pack: Mutex::default(),
+            family_overlays: Mutex::default(),
             running: Mutex::default(),
             cancelled: Mutex::default(),
         }))
@@ -206,7 +209,7 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
             i += 1;
             let ok = match arg {
                 "--rules" => value == "{rules}",
-                "--pack" => value == "{family_pack}",
+                "--pack" => value == "{family_pack}" || overlay_index(value).is_some(),
                 "--jobs" => value.parse::<u32>().is_ok_and(|n| (1..=64).contains(&n)),
                 "--decompile-function" => is_hex(value),
                 "--format" => matches!(value.as_str(), "sc32" | "sc64"),
@@ -228,12 +231,34 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
     Ok(())
 }
 
+/// The overlay a `{family_overlay:N}` placeholder names.
+fn overlay_index(arg: &str) -> Option<usize> {
+    let n = arg.strip_prefix("{family_overlay:")?.strip_suffix('}')?;
+    if n.is_empty() || n.len() > 3 || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    n.parse().ok()
+}
+
+/// "BXFAM002" or "BXFAM003" when the file starts with a family pack magic.
+fn pack_format(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut magic = [0_u8; 8];
+    std::fs::File::open(path)
+        .ok()?
+        .read_exact(&mut magic)
+        .ok()?;
+    matches!(&magic, b"BXFAM002" | b"BXFAM003")
+        .then(|| String::from_utf8_lossy(&magic).into_owned())
+}
+
 #[derive(Serialize)]
 pub struct FamilyPackStatus {
     available: bool,
     name: Option<String>,
     size: Option<u64>,
     path: Option<String>,
+    format: Option<String>,
 }
 
 impl FamilyPackStatus {
@@ -249,6 +274,7 @@ impl FamilyPackStatus {
                 .map(|name| name.to_string_lossy().into_owned()),
             size,
             path: path.map(|p| p.to_string_lossy().into_owned()),
+            format: path.and_then(pack_format),
         }
     }
 }
@@ -299,11 +325,8 @@ fn selected_family_pack(path: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("reading {}: {e}", path.display()))
 }
 
-#[tauri::command]
-pub async fn select_family_pack(
-    app: AppHandle,
-    state: State<'_, Engine>,
-) -> Result<Option<FamilyPackStatus>, String> {
+/// Asks for a `.bxfam` file with the native dialog; `None` when cancelled.
+async fn pick_pack_file(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -320,12 +343,89 @@ pub async fn select_family_pack(
         return Ok(None);
     };
     let path = selected_family_pack(&file.into_path().map_err(|e| e.to_string())?)?;
-    let status = FamilyPackStatus::from_path(Some(&path));
-    if !status.available {
+    if !FamilyPackStatus::from_path(Some(&path)).available {
         return Err("The selected family pack is unavailable.".into());
     }
+    Ok(Some(path))
+}
+
+#[tauri::command]
+pub async fn select_family_pack(
+    app: AppHandle,
+    state: State<'_, Engine>,
+) -> Result<Option<FamilyPackStatus>, String> {
+    let Some(path) = pick_pack_file(&app).await? else {
+        return Ok(None);
+    };
+    let status = FamilyPackStatus::from_path(Some(&path));
     *state.0.family_pack.lock().map_err(|e| e.to_string())? = Some(path);
     Ok(Some(status))
+}
+
+/// Status of each overlay pack, in layer order.
+#[tauri::command]
+pub fn family_overlays_status(state: State<'_, Engine>) -> Result<Vec<FamilyPackStatus>, String> {
+    let overlays = state.0.family_overlays.lock().map_err(|e| e.to_string())?;
+    Ok(overlays
+        .iter()
+        .map(|p| FamilyPackStatus::from_path(Some(p)))
+        .collect())
+}
+
+/// Picks a pack with the native dialog and layers it over the others.
+#[tauri::command]
+pub async fn add_family_overlay(
+    app: AppHandle,
+    state: State<'_, Engine>,
+) -> Result<Option<FamilyPackStatus>, String> {
+    let Some(path) = pick_pack_file(&app).await? else {
+        return Ok(None);
+    };
+    let status = FamilyPackStatus::from_path(Some(&path));
+    add_overlay(state.inner(), path)?;
+    Ok(Some(status))
+}
+
+fn add_overlay(engine: &Engine, path: PathBuf) -> Result<(), String> {
+    let mut overlays = engine.0.family_overlays.lock().map_err(|e| e.to_string())?;
+    if overlays.len() >= MAX_FAMILY_OVERLAYS {
+        return Err(format!(
+            "At most {MAX_FAMILY_OVERLAYS} overlay packs can be layered."
+        ));
+    }
+    overlays.push(path);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_family_overlay(state: State<'_, Engine>, index: usize) -> Result<(), String> {
+    let mut overlays = state.0.family_overlays.lock().map_err(|e| e.to_string())?;
+    if index < overlays.len() {
+        overlays.remove(index);
+    }
+    Ok(())
+}
+
+/// Overlays a run may layer, which also bounds the `{family_overlay:N}` placeholders.
+const MAX_FAMILY_OVERLAYS: usize = 16;
+
+/// The paths of the overlays a run's placeholders name, in index order.
+fn overlay_paths(engine: &Engine, args: &[String]) -> Result<Vec<PathBuf>, String> {
+    let wanted = args.iter().filter_map(|a| overlay_index(a)).max();
+    let Some(max) = wanted else {
+        return Ok(Vec::new());
+    };
+    let overlays = engine.0.family_overlays.lock().map_err(|e| e.to_string())?;
+    if max >= overlays.len() {
+        return Err("an overlay family pack was removed before the run started".into());
+    }
+    overlays
+        .iter()
+        .map(|p| {
+            p.canonicalize()
+                .map_err(|e| format!("reading {}: {e}", p.display()))
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -350,18 +450,37 @@ pub async fn run_engine(
     } else {
         None
     };
+    let packs = FamilyPacks {
+        base: family_pack,
+        overlays: overlay_paths(&engine, &request.args)?,
+    };
     tauri::async_runtime::spawn_blocking(move || {
-        run_blocking(&engine, program, rules, family_pack, request, on_line)
+        run_blocking(&engine, program, rules, packs, request, on_line)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The pack paths a run's `{family_pack}` and `{family_overlay:N}` placeholders become.
+struct FamilyPacks {
+    base: Option<PathBuf>,
+    overlays: Vec<PathBuf>,
+}
+
+impl FamilyPacks {
+    fn resolve(&self, arg: &str) -> Option<&Path> {
+        if arg == "{family_pack}" {
+            return self.base.as_deref();
+        }
+        self.overlays.get(overlay_index(arg)?).map(PathBuf::as_path)
+    }
 }
 
 fn run_blocking(
     engine: &Engine,
     program: PathBuf,
     rules: Option<PathBuf>,
-    family_pack: Option<PathBuf>,
+    family_packs: FamilyPacks,
     request: RunRequest,
     on_line: Channel<String>,
 ) -> Result<RunOutcome, String> {
@@ -415,9 +534,9 @@ fn run_blocking(
             if let Some(rules) = &rules {
                 arg = arg.replace("{rules}", &rules.to_string_lossy());
             }
-            let arg = match &family_pack {
-                Some(pack) if arg == "{family_pack}" => pack.as_os_str().to_owned(),
-                _ => arg.into(),
+            let arg = match family_packs.resolve(&arg) {
+                Some(pack) => pack.as_os_str().to_owned(),
+                None => arg.into(),
             };
             args.push(arg);
         }
@@ -582,6 +701,96 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn pack_status_reads_the_format_from_the_header() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let v2 = dir.path().join("base.bxfam");
+        let v3 = dir.path().join("org.bxfam");
+        let other = dir.path().join("other.bxfam");
+        std::fs::write(&v2, b"BXFAM002 rest of header")?;
+        std::fs::write(&v3, b"BXFAM003 rest of header")?;
+        std::fs::write(&other, b"PK\x03\x04 not a pack")?;
+        assert_eq!(
+            FamilyPackStatus::from_path(Some(&v2)).format.as_deref(),
+            Some("BXFAM002")
+        );
+        assert_eq!(
+            FamilyPackStatus::from_path(Some(&v3)).format.as_deref(),
+            Some("BXFAM003")
+        );
+        assert_eq!(FamilyPackStatus::from_path(Some(&other)).format, None);
+        Ok(())
+    }
+
+    #[test]
+    fn overlays_resolve_by_index_and_are_bounded() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let engine = Engine::new();
+        let mut paths = Vec::new();
+        for i in 0..MAX_FAMILY_OVERLAYS {
+            let p = dir.path().join(format!("overlay-{i}.bxfam"));
+            std::fs::write(&p, b"BXFAM003")?;
+            add_overlay(&engine, p.clone()).map_err(std::io::Error::other)?;
+            paths.push(p);
+        }
+        assert!(
+            add_overlay(&engine, paths[0].clone()).is_err(),
+            "the overlay count is capped"
+        );
+
+        let run = args(&[
+            "family",
+            "match",
+            "--pack",
+            "{family_pack}",
+            "--pack",
+            "{family_overlay:1}",
+            "{sample}",
+            "--json",
+        ]);
+        let resolved = overlay_paths(&engine, &run).map_err(std::io::Error::other)?;
+        let packs = FamilyPacks {
+            base: Some(dir.path().join("base.bxfam")),
+            overlays: resolved,
+        };
+        assert_eq!(
+            packs.resolve("{family_overlay:1}"),
+            Some(paths[1].canonicalize()?.as_path())
+        );
+        assert_eq!(
+            packs.resolve("{family_pack}"),
+            Some(dir.path().join("base.bxfam").as_path())
+        );
+        assert_eq!(packs.resolve("{sample}"), None);
+
+        engine.0.family_overlays.lock().unwrap().truncate(1);
+        assert!(
+            overlay_paths(&engine, &run).is_err(),
+            "a removed overlay fails the run instead of shifting packs"
+        );
+        assert!(overlay_paths(&engine, &args(&["{sample}", "--image-info"]))
+            .map_err(std::io::Error::other)?
+            .is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_placeholders_parse_strictly() {
+        assert_eq!(overlay_index("{family_overlay:0}"), Some(0));
+        assert_eq!(overlay_index("{family_overlay:12}"), Some(12));
+        for bad in [
+            "{family_overlay:}",
+            "{family_overlay:-1}",
+            "{family_overlay:1a}",
+            "{family_overlay:1234}",
+            "{family_overlay:0",
+            "family_overlay:0}",
+            "{family_overlay: 1}",
+        ] {
+            assert_eq!(overlay_index(bad), None, "{bad}");
+        }
+    }
+
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
@@ -626,6 +835,18 @@ mod tests {
                 "match",
                 "--pack",
                 "{family_pack}",
+                "{sample}",
+                "--json",
+            ],
+            &[
+                "family",
+                "match",
+                "--pack",
+                "{family_pack}",
+                "--pack",
+                "{family_overlay:0}",
+                "--pack",
+                "{family_overlay:1}",
                 "{sample}",
                 "--json",
             ],
@@ -682,6 +903,21 @@ mod tests {
             &["diff", "other.idx"],
             &["diff", "../a.idx"],
             &["family", "match", "--pack", "/etc/passwd", "{sample}"],
+            &[
+                "family",
+                "match",
+                "--pack",
+                "{family_overlay:x}",
+                "{sample}",
+            ],
+            &[
+                "family",
+                "match",
+                "--pack",
+                "{family_overlay:../a}",
+                "{sample}",
+            ],
+            &["family", "match", "{family_overlay:0}", "{sample}"],
         ] {
             assert!(validate_args(&args(list), &f).is_err(), "{list:?}");
         }

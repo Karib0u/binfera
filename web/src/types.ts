@@ -124,6 +124,8 @@ export interface FamilyMatchedFunction {
   exclusivity: number;
   sample_count: number;
   contribution: number;
+  /** The layered pack that contributed this match (BXFAM003 engines). */
+  pack_name?: string;
 }
 
 export interface FamilyMatch {
@@ -152,6 +154,59 @@ export interface CodeBreakdown {
   unique_pct: number;
 }
 
+/** A Trusted function's symbol name, from a BXFAM003 pack. */
+export interface TrustedSymbolHit {
+  address: number;
+  trusted_symbol: string;
+  source?: string;
+  pack_name?: string;
+}
+
+export type StringOriginKind = "malware" | "shared" | "unique" | "trusted";
+
+export interface StringMatch {
+  /** Normalized value (whitespace collapsed), at most 200 characters. */
+  value: string;
+  hash: string;
+  kind: StringOriginKind;
+  families?: string[];
+  encoding: "ascii" | "utf16le";
+  offset: number;
+}
+
+export interface StringFamilyHit {
+  family: string;
+  exclusive_strings: number;
+  shared_strings: number;
+  corroborates_code: boolean;
+}
+
+/** String Reuse evidence. Supporting evidence only: it never changes the code verdict. */
+export interface StringOriginReport {
+  total_strings: number;
+  trusted_strings: number;
+  malware_strings: number;
+  shared_strings: number;
+  unique_strings: number;
+  breakdown: CodeBreakdown;
+  families: StringFamilyHit[];
+  /** Malware and Shared strings first, then Trusted; Unique strings are only counted. */
+  entries: StringMatch[];
+  entries_truncated: boolean;
+  /** Only when code attribution abstained: a lead from strings alone, never a verdict. */
+  string_only_hint?: { family: string; exclusive_strings: number };
+}
+
+/** A pack in the active layer stack, base first. */
+export interface FamilyPackInfo {
+  name: string;
+  /** Bytes, when known. */
+  size?: number;
+  /** "BXFAM002" or "BXFAM003", read from the pack header. */
+  format?: string;
+  role: "base" | "overlay";
+}
+
 export interface FamilyReport {
   total_functions: number;
   eligible_functions: number;
@@ -164,6 +219,10 @@ export interface FamilyReport {
   shared_addresses: number[];
   unique_addresses: number[];
   families: FamilyMatch[];
+  /** BXFAM003: names for Trusted functions. */
+  trusted_symbols?: TrustedSymbolHit[];
+  /** BXFAM003: String Reuse evidence, absent with BXFAM002 packs. */
+  strings?: StringOriginReport;
 }
 
 export interface Analysis {
@@ -194,10 +253,16 @@ export interface Analysis {
   retryFunction?: (address: number) => Promise<void>;
   capa: CapaResult | null;
   capaError: string | null;
-  /** Offline family and trusted-software code-origin breakdown (BXFAM002 pack match). */
+  /** Offline family and trusted-software code-origin breakdown (BXFAM002/BXFAM003 pack match). */
   family: FamilyReport | null;
   familyError: string | null;
   familyPackName?: string;
+  /** The packs the last match used, base first. */
+  familyPacks?: FamilyPackInfo[];
+  /** Layer one more pack over the active ones and re-run matching (browser: the picked file; desktop: a dialog). */
+  addFamilyOverlay?: (file?: File) => Promise<void>;
+  /** Remove the overlay at this index (among overlays only) and re-run matching. */
+  removeFamilyOverlay?: (index: number) => Promise<void>;
   /** Select a local pack using the desktop file dialog and re-run matching. */
   pickFamilyPack?: () => Promise<void>;
   /** Load a local browser pack in memory and re-run matching. */

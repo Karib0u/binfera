@@ -1,4 +1,4 @@
-import type { FamilyMatch, FamilyMatchKind, FamilyReport } from "./types";
+import type { FamilyMatch, FamilyMatchKind, FamilyReport, StringMatch, StringOriginKind } from "./types";
 
 export type FunctionOriginKind = "malware" | "shared" | "trusted" | "unique";
 
@@ -9,6 +9,18 @@ export interface FunctionOrigin {
   /** Human-readable match detail for tooltips and badges. */
   detail?: string;
   exclusive?: boolean;
+  /** Symbol name a BXFAM003 pack records for this Trusted function. */
+  symbol?: string;
+}
+
+/** A pack-derived name for a Trusted function, shown only when nothing better names it. */
+export interface TrustedName {
+  name: string;
+  /** Formatted Trusted source, e.g. "OpenSSL". */
+  source?: string;
+  pack?: string;
+  /** Tooltip text, e.g. "Trusted symbol from pack · OpenSSL · EVP_DecryptUpdate". */
+  detail: string;
 }
 
 export interface OriginIndex {
@@ -81,14 +93,17 @@ export function buildOriginIndex(
   const uniqueSet = new Set<number>();
 
   if (report) {
+    const symbols = trustedNames(report);
     for (const src of report.trusted_sources) {
       const label = formatSourceName(src.source);
       for (const ad of src.addresses) {
         trustedSet.add(ad);
+        const symbol = symbols.get(ad)?.name;
         byAddress.set(ad, {
           kind: "trusted",
           label,
-          detail: `Trusted · ${label}`,
+          symbol,
+          detail: `Trusted · ${label}${symbol ? ` · ${symbol}` : ""}`,
         });
       }
     }
@@ -142,4 +157,64 @@ export function buildOriginIndex(
   }
 
   return { byAddress, trustedSet, malwareSet, sharedSet, uniqueSet };
+}
+
+/** Names the decompiler makes up for functions without a symbol (`FUN_00401000`, `sub_401000`). */
+export function isAutoName(name: string | null | undefined): boolean {
+  return !name || /^(?:thunk_)?(?:FUN|sub)_[0-9a-f]+$/i.test(name);
+}
+
+/** Pack-derived names for Trusted functions (BXFAM003), by address. Empty for BXFAM002 packs. */
+export function trustedNames(report: FamilyReport | null | undefined): Map<number, TrustedName> {
+  const out = new Map<number, TrustedName>();
+  for (const hit of report?.trusted_symbols ?? []) {
+    const name = hit.trusted_symbol.trim();
+    if (!name) continue;
+    const source = hit.source ? formatSourceName(hit.source) : undefined;
+    out.set(hit.address, {
+      name,
+      source,
+      pack: hit.pack_name,
+      detail: ["Trusted symbol from pack", source, name].filter(Boolean).join(" · ") + (hit.pack_name ? ` (${hit.pack_name})` : ""),
+    });
+  }
+  return out;
+}
+
+/** Most characters of a string value the engine keeps in a report entry. */
+const MAX_STRING_ENTRY_CHARS = 200;
+
+/**
+ * The key the engine's String Reuse entries are stored under: whitespace collapsed, at most 200
+ * characters. It does not apply the engine's eligibility rules (those decide what is counted);
+ * it only finds the report entry for a string the page already shows.
+ */
+export function stringOriginKey(raw: string): string {
+  const collapsed = raw.split(/\s+/).filter(Boolean).join(" ");
+  const chars = Array.from(collapsed);
+  return chars.length > MAX_STRING_ENTRY_CHARS ? chars.slice(0, MAX_STRING_ENTRY_CHARS).join("") : collapsed;
+}
+
+/** String Reuse entries by {@link stringOriginKey}, or null when the match has no string data (BXFAM002 packs). */
+export function buildStringOriginIndex(report: FamilyReport | null | undefined): Map<string, StringMatch> | null {
+  const strings = report?.strings;
+  if (!strings || strings.total_strings === 0) return null;
+  const out = new Map<string, StringMatch>();
+  for (const e of strings.entries) if (!out.has(e.value)) out.set(e.value, e);
+  return out;
+}
+
+/** Look up a page string's String Reuse class; strings the report leaves out are not in any pack. */
+export function stringOriginOf(index: Map<string, StringMatch> | null, raw: string): StringOriginKind | null {
+  if (!index) return null;
+  return index.get(stringOriginKey(raw))?.kind ?? "unique";
+}
+
+/** A compact badge for a classified string: the family for an exclusive string, else its class. */
+export function stringOriginBadge(m: StringMatch): { text: string; title: string } {
+  const fams = m.families ?? [];
+  if (m.kind === "malware") return { text: fams[0] ?? "Malware", title: `Seen only in ${fams[0] ?? "one malware family"}'s samples` };
+  if (m.kind === "shared") return { text: "Shared", title: fams.length ? `Seen in ${fams.join(", ")}` : "Seen in several malware families" };
+  if (m.kind === "trusted") return { text: "Trusted", title: "In a Trusted string filter of a loaded pack: common in benign software" };
+  return { text: "Unique", title: "Not in any loaded pack" };
 }

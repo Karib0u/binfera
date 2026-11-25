@@ -9,6 +9,17 @@ export interface ReportInput {
     breakdown: CodeBreakdown;
     families: { family: string; score: number; exclusive: number; coverage: number }[];
     trustedSources: { source: string; functions: number }[];
+    /** Active packs, base first, e.g. "Starter pack (BXFAM002)". */
+    packs?: string[];
+    /** Pack-derived names for Trusted functions that nothing else names (BXFAM003). */
+    trustedSymbols?: { address: string; name: string; source?: string }[];
+    /** String Reuse summary (BXFAM003); supporting evidence only. */
+    strings?: {
+      total: number; trusted: number; malware: number; shared: number; unique: number;
+      families: { family: string; exclusive: number; corroboratesCode: boolean }[];
+      exclusive: { value: string; families: string[] }[];
+      hint?: { family: string; strings: number };
+    };
   };
   stringsShown?: number; stringsTotal?: number;
   findings: { severity: "warn" | "info"; text: string }[];
@@ -58,6 +69,30 @@ function blocks(input: ReportInput): Block[] {
     }
     if (trustedSources.length) {
       lines.push({ text: `Trusted sources: ${trustedSources.map((s) => `${s.source} (${s.functions})`).join(", ")}` });
+    }
+    const { packs, trustedSymbols, strings } = input.codeOrigin;
+    if (packs && packs.length > 1) lines.push({ text: `Packs (base first): ${packs.join(", ")}` });
+    if (trustedSymbols?.length) {
+      lines.push({
+        text: `Trusted symbols from packs (${trustedSymbols.length})`,
+        sub: [
+          ...trustedSymbols.slice(0, MAX_VALUES).map((t) => `${t.address} ${t.name}${t.source ? ` (${t.source})` : ""}`),
+          ...(trustedSymbols.length > MAX_VALUES ? [`and ${trustedSymbols.length - MAX_VALUES} more`] : []),
+        ],
+      });
+    }
+    if (strings && strings.total > 0) {
+      const p = (n: number) => `${((100 * n) / strings.total).toFixed(1)}%`;
+      lines.push({ text: `String reuse (supporting evidence, not part of the verdict): ${strings.total} strings, ${p(strings.malware)} malware family, ${p(strings.shared)} shared, ${p(strings.unique)} unique, ${p(strings.trusted)} trusted` });
+      if (strings.families.length) {
+        lines.push({ text: "String reuse by family", sub: strings.families.map((f) => `${f.family}: ${f.exclusive} exclusive string${f.exclusive === 1 ? "" : "s"}${f.corroboratesCode ? ", corroborates the code match" : ""}`) });
+      }
+      if (strings.exclusive.length) {
+        lines.push({ text: "Malware-exclusive strings", sub: strings.exclusive.slice(0, MAX_VALUES).map((e) => `${e.value} (${e.families.join(", ")})`) });
+      }
+      if (strings.hint) {
+        lines.push({ text: `Low-confidence string-only hint: ${strings.hint.family} (${strings.hint.strings} exclusive strings). Code attribution abstained; this is not a match.` });
+      }
     }
     out.push({ heading: "Code origin", lines });
   }
