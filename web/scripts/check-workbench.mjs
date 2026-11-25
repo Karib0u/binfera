@@ -15,9 +15,13 @@ try {
     outfile: join(temp, "app.js"), jsx: "automatic", logLevel: "error",
     define: { "process.env.NODE_ENV": '"production"', "import.meta.url": '"http://localhost/app.js"', "import.meta.env.SSR": "false",
       __BINFERA_BUILD__: '{"version":"test","commit":null}' },
-    plugins: [{ name: "engine-free", setup(b) {
+    plugins: [{ name: "workbench-fixtures", setup(b) {
       b.onResolve({ filter: /\/engine\/assets$/ }, () => ({ path: "engine-assets", namespace: "test" }));
       b.onLoad({ filter: /.*/, namespace: "test" }, () => ({ contents: "export const NATIVE = false; export const getFamilyPackName = () => null;" }));
+      b.onResolve({ filter: /\/(agent|project)\/client$/ }, ({ path }) => {
+        const client = path.split("/").at(-2);
+        return { path: fileURLToPath(new URL(`../src/dev/${client}.mock.ts`, import.meta.url)) };
+      });
     } }],
   });
   const page = await browser.newPage({ viewport: { width: 1300, height: 800 } });
@@ -70,8 +74,46 @@ try {
   await page.getByRole("menuitem", { name: /Rename variable/ }).click();
   await page.getByRole("textbox", { name: "Rename iVar3" }).waitFor();
   await page.keyboard.press("Escape");
+
+  // On a narrower desktop the dock overlays the code, while a wider desktop gives it its own space.
+  await page.setViewportSize({ width: 1152, height: 800 });
+  await page.evaluate(() => localStorage.setItem("binfera-ui:agent-width", "640"));
+  await mount(base, "c");
+  const dock = page.getByRole("complementary", { name: "Agent" });
+  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await dock.waitFor();
+  const shell = await page.locator(".shell").boundingBox();
+  const panel = await dock.boundingBox();
+  assert.equal(panel.x + panel.width, shell.x + shell.width, "overlay meets the right edge");
+  assert.equal(panel.y, shell.y, "overlay starts below the header");
+  assert.equal(panel.width, 520, "overlay caps the saved width");
+  const artifacts = dock.getByRole("tab", { name: "Artifacts" });
+  await artifacts.click();
+  assert.equal(await artifacts.getAttribute("aria-selected"), "true");
+
+  await page.setViewportSize({ width: 1440, height: 800 });
+  await page.waitForFunction(() => document.querySelector(".agent-dock").getBoundingClientRect().width === 640);
+  assert.equal(await dock.evaluate((el) => getComputedStyle(el).position), "relative");
+  await page.setViewportSize({ width: 1152, height: 800 });
+  const divider = dock.getByRole("separator", { name: "Resize the agent panel" });
+  await page.waitForFunction(() => document.querySelector(".agent-dock").getBoundingClientRect().width === 520);
+  await divider.press("ArrowRight");
+  assert.equal(await divider.getAttribute("aria-valuenow"), "504", "resizing starts from the displayed width");
+  await dock.getByRole("button", { name: "Hide the agent panel" }).click();
+  await dock.waitFor({ state: "hidden" });
+
+  const report = page.getByRole("button", { name: "Report", exact: true });
+  assert.equal(await report.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const [first, ...rest] = range.getClientRects();
+    return rest.every((rect) => rect.top === first.top);
+  }), true, "Report and its arrow stay on one line");
+  await report.click();
+  await page.getByRole("menu", { exact: true }).waitFor();
+
   assert.deepEqual(errors, []);
-  console.log("Workbench: Data-mode File map, Overview Sections link, renaming every kind of local, and the Rename variable menu: passed");
+  console.log("Workbench: file navigation, local renaming, desktop Agent layouts, and the Report menu passed");
 } finally {
   await browser.close();
   await rm(temp, { recursive: true, force: true });

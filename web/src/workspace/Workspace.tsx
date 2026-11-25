@@ -286,6 +286,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const [agentBusy, setAgentBusy] = useState(false);
   // A narrow window gets the agent as an overlay on the code; a wide one pushes the code over.
   const overlayDock = useMedia("(max-width: 1300px)");
+  const agentMaxWidth = overlayDock ? 520 : 720;
+  const agentShownWidth = Math.min(agentWidth, agentMaxWidth);
   // Any other navigation leaves the AI view.
   useEffect(() => { setAgentView(false); }, [sel]);
   const root = useRef<HTMLDivElement>(null);
@@ -1315,8 +1317,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         </div>
         {agent && project && agentSha && agentMounted && (
           // Kept mounted while closed, so the conversation and a run in progress survive hiding the panel.
-          <aside className={"agent-dock" + (overlayDock ? " overlay" : "")} hidden={!agentOpen || focus} style={{ width: Math.min(agentWidth, overlayDock ? 520 : 720) }} aria-label="Agent">
-            <Splitter label="Resize the agent panel" value={agentWidth} min={300} max={720} invert onChange={setAgentWidth} style={{ left: 0 }} />
+          <aside className={"agent-dock" + (overlayDock ? " is-overlay" : "")} hidden={!agentOpen || focus} style={{ width: agentShownWidth }} aria-label="Agent">
+            <Splitter label="Resize the agent panel" value={agentShownWidth} min={300} max={agentMaxWidth} invert onChange={setAgentWidth} style={{ left: 0 }} />
             <AgentDock key={agentSha} notes={notes} tick={tick} symbols={() => a.order.map((ad) => ({ address: ad, name: label(ad) }))} onBusy={setAgentBusy} onClose={() => setAgentOpen(false)} onOpen={jump}
               context={{ sha: agentSha, name: a.fileName, address: typeof sel === "number" ? sel : null, functionName: typeof sel === "number" ? label(sel) : null }} />
           </aside>
@@ -1342,7 +1344,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         </span>
       </footer>
       <div className="sr-only" role="status">{phase}</div>
-      {dragging && <div className="overlay">Drop to analyze a new binary</div>}
+      {dragging && <div className="file-drop-overlay">Drop to analyze a new binary</div>}
       {!embedded && <ToastHost />}
       {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
       {commentBox}

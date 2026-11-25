@@ -279,7 +279,7 @@ h2 small { font-weight: 500; margin-left: 4px; }
 .warn ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
 .warn.packed { margin: 16px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--soft); }
 .warn.packed summary { font-weight: 600; }
-.overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(6px); display: grid; place-items: center; font-size: 18px; font-weight: 600; border: 2px dashed var(--accent); margin: 12px; border-radius: 18px; pointer-events: none; }
+.file-drop-overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(6px); display: grid; place-items: center; font-size: 18px; font-weight: 600; border: 2px dashed var(--accent); margin: 12px; border-radius: 18px; pointer-events: none; }
 
 .navbtns { display: flex; gap: 6px; }
 .navbtns .ghost { padding: 6px 10px; }
@@ -1796,6 +1796,7 @@ button.fv-finding:hover { background: var(--hover); }
 
 /* Report menu and filter chips */
 .dropmenu { position: relative; }
+.dropmenu > .ghost { white-space: nowrap; }
 .dropsheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 260px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px color-mix(in srgb, var(--text) 14%, transparent); }
 .dropsheet .drop-title { padding: 8px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .dropsheet button { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; width: 100%; padding: 7px 10px; border-radius: 8px; font-size: 13px; white-space: nowrap; }
@@ -1838,7 +1839,7 @@ button.fv-finding:hover { background: var(--hover); }
 .edge-tab:hover { color: var(--text); background: var(--hover); }
 .agent-tab { right: 0; border-right: 0; border-radius: 8px 0 0 8px; }
 .inspector-tab { right: 0; top: 120px; transform: none; border-right: 0; border-radius: 8px 0 0 8px; }
-.agent-dock.overlay { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; box-shadow: -12px 0 32px color-mix(in srgb, var(--text) 14%, transparent); }
+.agent-dock.is-overlay { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; box-shadow: -12px 0 32px color-mix(in srgb, var(--text) 14%, transparent); }
 .focus-exit { position: absolute; top: 8px; right: 14px; z-index: 6; padding: 4px 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); color: var(--muted); font-size: 12px; }
 .focus-exit:hover { color: var(--text); }
 
