@@ -1,6 +1,7 @@
-use crate::code_origin::{CodeOrigin, OriginKind};
+use crate::code_origin::{CodeOrigin, OriginKind, StringOrigin};
 use crate::engine::{Engine, Job};
 use crate::rpc::Handler;
+use binfera::family::StringOriginKind;
 use binfera_project::{Edit, EditKind, Error as ProjectError, Project, Source, Store};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -58,6 +59,41 @@ fn is_auto_name(name: &str) -> bool {
     ["FUN_", "sub_", "thunk_FUN_", "FID_conflict"]
         .iter()
         .any(|p| name.starts_with(p))
+}
+
+/// `name_source` for a display name taken from a family pack's Trusted symbols.
+const PACK_TRUSTED: &str = "pack_trusted";
+
+/// A pack's Trusted symbol, used as the display name only when neither the analyst nor the
+/// binary names the function.
+fn pack_display_name<'a>(
+    origin: Option<&'a CodeOrigin>,
+    names: &HashMap<u64, String>,
+    address: u64,
+    original: &str,
+) -> Option<&'a str> {
+    if names.contains_key(&address) || !is_auto_name(original) {
+        return None;
+    }
+    origin?.trusted_symbol(address)
+}
+
+fn function_label(
+    index: &crate::engine::Index,
+    names: &HashMap<u64, String>,
+    origin: Option<&CodeOrigin>,
+    address: u64,
+) -> Value {
+    let original = index.get(address).map(|f| f.name.as_str());
+    let symbol = original.and_then(|o| pack_display_name(origin, names, address, o));
+    let mut label = json!({
+        "address": hex(address),
+        "name": names.get(&address).map(String::as_str).or(symbol).or(original),
+    });
+    if symbol.is_some() {
+        label["name_source"] = json!(PACK_TRUSTED);
+    }
+    label
 }
 
 /// A usable identifier from a signature name such as `?post_pgo_initialization@@YAHXZ`, or `None`
@@ -475,6 +511,9 @@ impl Tools {
                 .and_then(|report| report.functions.get(&address))
         };
         let names = self.names(&sha)?;
+        let pack_symbol = |f: &crate::engine::FunctionEntry| {
+            pack_display_name(origin.as_deref(), &names, f.address, &f.name)
+        };
         self.ensure_library_names(&sha);
         let (documented, library) = self.classify(&sha)?;
         let examined = self.store.examined(&sha).map_err(project_err)?;
@@ -572,6 +611,8 @@ impl Tools {
                 let key = hex(f.address);
                 let shown = names
                     .get(&f.address)
+                    .map(String::as_str)
+                    .or_else(|| pack_symbol(f))
                     .unwrap_or(&f.name)
                     .to_ascii_lowercase();
                 match filter {
@@ -623,6 +664,10 @@ impl Tools {
                     "examined": examined.contains(&key),
                     "starred": starred.contains(&key),
                 });
+                if let Some(symbol) = pack_symbol(f) {
+                    row["name"] = json!(symbol);
+                    row["name_source"] = json!(PACK_TRUSTED);
+                }
                 if let Some(origin) = origin_at(f.address) {
                     row["origin"] = json!(origin);
                 }
@@ -641,6 +686,8 @@ impl Tools {
             .ok_or_else(|| format!("no function at {}", hex(address)))?;
         let record = index.record(entry)?;
         let names = self.names(&sha)?;
+        let project = self.store.project(&sha).map_err(project_err)?;
+        let origin = self.project_origin(&project).ok().flatten();
         let annotations = self.store.annotations(&sha, None).map_err(project_err)?;
         let key = hex(address);
 
@@ -667,10 +714,7 @@ impl Tools {
         let end = (start + max_chars).min(chars.len());
         let body: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
 
-        let label = |a: u64| -> Value {
-            let original = index.get(a).map(|f| f.name.clone());
-            json!({"address": hex(a), "name": names.get(&a).cloned().or(original)})
-        };
+        let label = |a: u64| -> Value { function_label(&index, &names, origin.as_deref(), a) };
         let callers = index.callers.get(&address).cloned().unwrap_or_default();
         let comments: Vec<Value> = annotations
             .iter()
@@ -683,7 +727,6 @@ impl Tools {
             .flatten()
             .take(5)
             .collect();
-        let project = self.store.project(&sha).map_err(project_err)?;
         let image = self.engine.image(&project)?;
         let rows: Vec<&Value> = record["asm"]
             .as_array()
@@ -719,21 +762,40 @@ impl Tools {
         } else {
             None
         };
+        let hide_trusted = args
+            .get("hide_trusted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut seen = HashSet::new();
         let strings: Vec<Value> = entry
             .data_refs
             .iter()
             .filter(|a| seen.insert(**a))
             .filter_map(|a| image.string_at(*a))
+            .filter_map(|s| {
+                let string_origin = origin.as_ref().and_then(|o| o.string_origin(&s.value));
+                if hide_trusted
+                    && string_origin
+                        .as_ref()
+                        .is_some_and(|o| o.kind == StringOriginKind::Trusted)
+                {
+                    return None;
+                }
+                let mut row = json!({"address": hex(s.address), "value": s.value.chars().take(160).collect::<String>(), "encoding": s.encoding});
+                if let Some(string_origin) = string_origin {
+                    row["origin"] = json!(string_origin);
+                }
+                Some(row)
+            })
             .take(25)
-            .map(|s| json!({"address": hex(s.address), "value": s.value.chars().take(160).collect::<String>(), "encoding": s.encoding}))
             .collect();
+        let pack_name = pack_display_name(origin.as_deref(), &names, address, &entry.name);
 
         self.store.mark_examined(&sha, &key).map_err(project_err)?;
         let mut out = json!({
             "notice": UNTRUSTED,
             "address": key,
-            "name": names.get(&address).unwrap_or(&entry.name),
+            "name": names.get(&address).map(String::as_str).or(pack_name).unwrap_or(&entry.name),
             "original_name": entry.name,
             "pseudocode": body,
             "pseudocode_range": {"offset": start, "end": end, "total": chars.len(), "truncated": end < chars.len()},
@@ -750,10 +812,11 @@ impl Tools {
             "variables_renamed": variables,
             "revision": self.store.revision(&sha).map_err(project_err)?,
         });
-        if let Some(report) = self.project_origin(&project).ok().flatten() {
-            if let Some(origin) = report.functions.get(&address) {
-                out["origin"] = json!(origin);
-            }
+        if pack_name.is_some() {
+            out["name_source"] = json!(PACK_TRUSTED);
+        }
+        if let Some(origin) = origin.as_ref().and_then(|o| o.functions.get(&address)) {
+            out["origin"] = json!(origin);
         }
         Ok(out)
     }
@@ -781,19 +844,35 @@ impl Tools {
             });
         let offset = int_arg(args, "offset", 0).max(0) as usize;
         let limit = int_arg(args, "limit", 50).clamp(1, 200) as usize;
+        let string_filter =
+            StringOrigin::parse_filter(args["string_origin"].as_str().unwrap_or("all"))?;
+        let hide_trusted = args
+            .get("hide_trusted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let project = self.store.project(&sha).map_err(project_err)?;
+        let origin = self.project_origin(&project).ok().flatten();
         let index = self.engine.index(&sha)?;
         let image = self.engine.image(&project)?;
         let names = self.names(&sha)?;
-        let label = |a: u64| json!({"address": hex(a), "name": names.get(&a).cloned().or_else(|| index.get(a).map(|f| f.name.clone()))});
+        let label = |a: u64| function_label(&index, &names, origin.as_deref(), a);
         let mut rows: Vec<Value> = Vec::new();
         if kinds.contains("function") {
             for f in &index.functions {
-                let current = names.get(&f.address).unwrap_or(&f.name);
+                let symbol = pack_display_name(origin.as_deref(), &names, f.address, &f.name);
+                let current = names
+                    .get(&f.address)
+                    .map(String::as_str)
+                    .or(symbol)
+                    .unwrap_or(&f.name);
                 if current.to_ascii_lowercase().contains(&query)
                     || f.name.to_ascii_lowercase().contains(&query)
                 {
-                    rows.push(json!({"kind": "function", "address": hex(f.address), "name": current, "original_name": f.name}));
+                    let mut row = json!({"kind": "function", "address": hex(f.address), "name": current, "original_name": f.name});
+                    if symbol.is_some() {
+                        row["name_source"] = json!(PACK_TRUSTED);
+                    }
+                    rows.push(row);
                 }
             }
         }
@@ -823,6 +902,13 @@ impl Tools {
         if kinds.contains("string") {
             for s in self.engine.strings(&project)?.iter() {
                 if s.value.to_ascii_lowercase().contains(&query) {
+                    let string_origin = origin.as_ref().and_then(|o| o.string_origin(&s.value));
+                    let kind = string_origin.as_ref().map(|o| o.kind);
+                    if (hide_trusted && kind == Some(StringOriginKind::Trusted))
+                        || (string_filter.is_some() && string_filter != kind)
+                    {
+                        continue;
+                    }
                     let users: Vec<Value> = index
                         .refs_to
                         .get(&s.address)
@@ -831,7 +917,11 @@ impl Tools {
                         .take(10)
                         .map(|a| label(*a))
                         .collect();
-                    rows.push(json!({"kind": "string", "address": hex(s.address), "value": s.value.chars().take(200).collect::<String>(), "encoding": s.encoding, "referenced_by": users}));
+                    let mut row = json!({"kind": "string", "address": hex(s.address), "value": s.value.chars().take(200).collect::<String>(), "encoding": s.encoding, "referenced_by": users});
+                    if let Some(string_origin) = string_origin {
+                        row["origin"] = json!(string_origin);
+                    }
+                    rows.push(row);
                 }
             }
         }
@@ -1149,16 +1239,16 @@ impl Handler for Tools {
              "inputSchema": schema(json!({"project_id":project}), &["project_id"])},
             {"name":"get_overview","description":"File format, architecture, entry point, sections, imports and exports (bounded), plus capability counts and a Code Origin summary when a family pack is installed.",
              "inputSchema": schema(json!({"project_id":project}), &["project_id"])},
-            {"name":"get_code_origin","description":"Offline family and trusted-code attribution for this binary. Returns pack availability, a four-way breakdown of fingerprinted functions, top malware families and trusted sources. Each family's shared_count counts its matched functions that also match other families. Set include_functions for up to 20 malware-attributed functions.",
+            {"name":"get_code_origin","description":"Offline family and trusted-code attribution for this binary. Returns pack availability, a four-way breakdown of fingerprinted functions, top malware families and trusted sources. Each family's shared_count counts its matched functions that also match other families. string_origin classifies the binary's strings as malware | shared | unique | trusted when a BXFAM003 pack has string data; it is supporting evidence that never changes the code families or confidence, and string_only_hint is a lead, not a verdict. Set include_functions for up to 20 malware-attributed functions.",
              "inputSchema": schema(json!({"project_id":project,"include_functions":{"type":"boolean"}}), &["project_id"])},
             {"name":"get_capabilities","description":"capa capability matches with the addresses where they matched. Paginated.",
              "inputSchema": schema(json!({"project_id":project,"search":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}), &["project_id"])},
-            {"name":"list_functions","description":"Recovered functions with current names and a starred boolean, paginated (limit <= 200). filter: all | undocumented (not yet annotated; excludes trusted, library and symbol-named functions) | documented | library | unexamined. origin: all | malware | shared | unique | trusted. sort: address | importance (capability matches, referenced strings and imports, callers, size; each row says why) | bottom_up (callees before callers, so names build on each other).",
+            {"name":"list_functions","description":"Recovered functions with current names and a starred boolean, paginated (limit <= 200). filter: all | undocumented (not yet annotated; excludes trusted, library and symbol-named functions) | documented | library | unexamined. origin: all | malware | shared | unique | trusted. Unnamed Trusted functions show the pack's trusted symbol as name, marked name_source: pack_trusted. sort: address | importance (capability matches, referenced strings and imports, callers, size; each row says why) | bottom_up (callees before callers, so names build on each other).",
              "inputSchema": schema(json!({"project_id":project,"filter":{"type":"string"},"origin":{"type":"string","enum":["all","malware","shared","unique","trusted"]},"sort":{"type":"string","enum":["address","importance","bottom_up"]},"search":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}), &["project_id"])},
-            {"name":"get_function","description":"Pseudocode (with your annotations applied), referenced strings, callers, callees, comments, warnings and code origin when available. Long bodies are paged with offset/max_chars. include_assembly=true adds the instruction list (address and text, paged with assembly_offset/assembly_limit), which is where instruction comments attach. Reading a function marks it examined.",
-             "inputSchema": schema(json!({"project_id":project,"address":address,"offset":{"type":"integer"},"max_chars":{"type":"integer"},"include_assembly":{"type":"boolean"},"assembly_offset":{"type":"integer"},"assembly_limit":{"type":"integer"}}), &["project_id","address"])},
-            {"name":"search_symbols","description":"Case-insensitive substring search across function names (current and original), imports, exports and strings. Strings and imports list the functions that reference them, which is the fastest way to find the code behind an interesting string or API. kinds: any of function, import, export, string.",
-             "inputSchema": schema(json!({"project_id":project,"query":{"type":"string"},"kinds":{"type":"array","items":{"type":"string","enum":["function","import","export","string"]}},"offset":{"type":"integer"},"limit":{"type":"integer"}}), &["project_id","query"])},
+            {"name":"get_function","description":"Pseudocode (with your annotations applied), referenced strings, callers, callees, comments, warnings and code origin when available. Long bodies are paged with offset/max_chars. include_assembly=true adds the instruction list (address and text, paged with assembly_offset/assembly_limit), which is where instruction comments attach. Reading a function marks it examined. Strings carry their String Reuse origin when known; hide_trusted drops Trusted strings. An unnamed Trusted function uses the pack's trusted symbol as name, marked name_source: pack_trusted.",
+             "inputSchema": schema(json!({"project_id":project,"address":address,"offset":{"type":"integer"},"max_chars":{"type":"integer"},"hide_trusted":{"type":"boolean"},"include_assembly":{"type":"boolean"},"assembly_offset":{"type":"integer"},"assembly_limit":{"type":"integer"}}), &["project_id","address"])},
+            {"name":"search_symbols","description":"Case-insensitive substring search across function names (current and original), imports, exports and strings. Strings and imports list the functions that reference them, which is the fastest way to find the code behind an interesting string or API. kinds: any of function, import, export, string. String results carry their String Reuse origin when a pack has string data; string_origin (all | malware | shared | unique | trusted) filters them and hide_trusted drops Trusted strings.",
+             "inputSchema": schema(json!({"project_id":project,"query":{"type":"string"},"kinds":{"type":"array","items":{"type":"string","enum":["function","import","export","string"]}},"string_origin":{"type":"string","enum":["all","malware","shared","unique","trusted"]},"hide_trusted":{"type":"boolean"},"offset":{"type":"integer"},"limit":{"type":"integer"}}), &["project_id","query"])},
             {"name":"get_references","description":"Callers and callees of a function.",
              "inputSchema": schema(json!({"project_id":project,"address":address}), &["project_id","address"])},
             {"name":"apply_annotations","description":"Atomically apply a batch of edits, saved immediately. Edit kinds: rename_function (target = address), rename_variable (target = `address:variable_as_printed`, e.g. 0x401200:param_1), add_comment (target = a function address for the function's comment, or an instruction address for a comment on that instruction, shown inline like an IDA comment), star (target = function address, value = true as a string). Each edit: {kind,target,value,confidence: certain|likely|guess,evidence:[...]}. Names must be C identifiers. Keep comments to one to three sentences about non-obvious behaviour. Human-authored annotations are never overwritten. Pass expected_revision from get_project to detect concurrent edits, and optionally a run_id to group the batch; without one a run_id is generated and returned, and undo_ai_run reverts the batch by it.",

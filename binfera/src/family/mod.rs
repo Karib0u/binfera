@@ -1,11 +1,17 @@
-//! Offline malware-family and trusted-software code matching (`BXFAM002` pack reader).
+//! Offline malware-family and trusted-software code matching (`BXFAM002` and `BXFAM003` packs).
 //!
 //! Built directly on top of [`crate::diff::Fingerprint`], so matching uses only native code
 //! recovery plus bundled FLIRT signatures (no decompiler or capa evaluation) and runs in
 //! milliseconds in both native Rust and WebAssembly.
+//!
+//! `BXFAM003` packs may add Trusted function symbols and String Reuse data. String Reuse is
+//! reported separately in [`MatchReport::strings`] and never changes code attribution.
+//! [`FamilyPackSet`] layers several packs, with Trusted taking precedence across all of them.
 
 mod matcher;
 mod pack;
+mod set;
+mod strings;
 
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
@@ -24,11 +30,18 @@ use crate::parallel::AnalysisOptions;
 
 pub use matcher::{
     CodeBreakdown, FamilyMatch, MatchConfig, MatchKind, MatchReport, MatchedFunction,
-    TrustedSourceHit,
+    StringBreakdown, StringFamilyHit, StringMatch, StringOnlyHint, StringOriginKind,
+    StringOriginReport, TrustedSourceHit, TrustedSymbolHit, MAX_STRING_ENTRIES,
+    MAX_STRING_ENTRY_CHARS, MIN_STRING_HINT_STRINGS,
 };
 pub use pack::{
-    BandRecord, FamilyMeta, FamilyPack, HashRecord, PackHeader, PackStats, SharedRecord,
-    TrustedRecord,
+    BandRecord, FamilyMeta, FamilyPack, HashRecord, MalwareStringRecord, PackHeader, PackStats,
+    SharedRecord, TrustedRecord, TrustedSymbol, TrustedSymbolRef, MAX_STRING_FAMILIES,
+};
+pub use set::{FamilyPackSet, PackLayer};
+pub use strings::{
+    extract_origin_strings, normalize_origin_string, origin_string_hash, OriginString,
+    StringEncoding, MAX_SAMPLE_STRINGS, MIN_ORIGIN_STRING_CHARS,
 };
 
 /// Number of LSH bands derived from the 32-slot MinHash vector (8 bands of 4 slots).

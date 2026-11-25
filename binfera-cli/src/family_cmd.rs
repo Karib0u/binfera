@@ -4,18 +4,20 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use binfera::family::{
-    sketch_bytes, FamilyPack, MatchConfig, PackHeader, LSH_BANDS, LSH_SLOTS_PER_BAND,
+    extract_origin_strings, sketch_bytes, FamilyPack, FamilyPackSet, MatchConfig, PackHeader,
+    LSH_BANDS, LSH_SLOTS_PER_BAND,
 };
 
 use crate::{CliError, E_CORRUPT_FILE, E_MISSING_FILE};
 
 #[derive(clap::Subcommand)]
 pub(crate) enum FamilyCommand {
-    /// Match a binary against a `.bxfam` pack and print its Trusted / Malware / Shared / Unique breakdown.
+    /// Match a binary against one or more `.bxfam` packs and print its Trusted / Malware / Shared / Unique breakdown.
     Match {
-        /// Path to the `.bxfam` pack
-        #[arg(long)]
-        pack: Option<PathBuf>,
+        /// Path to a `.bxfam` pack. Repeat to layer packs, base first: a function or string
+        /// Trusted by any pack is Trusted, and later packs take precedence for Trusted names.
+        #[arg(long = "pack")]
+        packs: Vec<PathBuf>,
         /// Binary file to classify
         input: PathBuf,
         #[arg(long, default_value_t = 20)]
@@ -44,7 +46,7 @@ pub(crate) fn run_family_command(
 ) -> Result<(), CliError> {
     match cmd {
         FamilyCommand::Match {
-            pack,
+            packs,
             input,
             min_instructions,
             min_exclusive,
@@ -52,7 +54,7 @@ pub(crate) fn run_family_command(
             min_coverage,
             min_band_hits,
         } => run_match(
-            &pack_path(pack.as_deref())?,
+            &pack_paths(packs)?,
             input,
             MatchConfig {
                 min_instructions: *min_instructions,
@@ -70,23 +72,39 @@ pub(crate) fn run_family_command(
 }
 
 fn pack_path(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
+    let explicit: Vec<PathBuf> = explicit.map(Path::to_path_buf).into_iter().collect();
+    pack_paths(&explicit)?
+        .into_iter()
+        .next()
+        .ok_or_else(missing_pack)
+}
+
+fn pack_paths(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, CliError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let packs = binfera_project::resolve_family_packs(explicit);
+    #[cfg(target_arch = "wasm32")]
+    let packs = explicit.to_vec();
+    if packs.is_empty() {
+        Err(missing_pack())
+    } else {
+        Ok(packs)
+    }
+}
+
+fn missing_pack() -> CliError {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        binfera_project::resolve_family_pack(explicit).ok_or_else(|| {
-            CliError::new(
-                E_MISSING_FILE,
-                format!(
-                    "no family pack found; use --pack <path>, set BINFERA_FAMILY_PACK, or place family.bxfam in {} or beside the binfera executable",
-                    binfera_project::data_dir().display()
-                ),
-            )
-        })
+        CliError::new(
+            E_MISSING_FILE,
+            format!(
+                "no family pack found; use --pack <path>, set BINFERA_FAMILY_PACK (or a path list in BINFERA_FAMILY_PACKS), or place family.bxfam in {} or beside the binfera executable",
+                binfera_project::data_dir().display()
+            ),
+        )
     }
     #[cfg(target_arch = "wasm32")]
     {
-        explicit.map(Path::to_path_buf).ok_or_else(|| {
-            CliError::new(E_MISSING_FILE, "no family pack supplied; use --pack <path>")
-        })
+        CliError::new(E_MISSING_FILE, "no family pack supplied; use --pack <path>")
     }
 }
 
@@ -96,17 +114,21 @@ fn run_info(path: &Path, json: bool) -> Result<(), CliError> {
     let size = file.metadata().map_err(reading)?.len();
     let header = PackHeader::read(file)
         .map_err(|e| CliError::new(E_CORRUPT_FILE, format!("reading {}: {e}", path.display())))?;
-    let stats = header.stats;
+    let stats = &header.stats;
     if json {
         println!(
             "{}",
             serde_json::json!({
                 "path": path.to_string_lossy(),
                 "size": size,
+                "format": header.format_name(),
                 "format_version": header.format_version,
                 "family_count": stats.families,
                 "trusted_source_count": stats.trusted_sources,
                 "trusted_shape_count": stats.trusted_shapes,
+                "trusted_symbol_count": stats.trusted_symbols,
+                "trusted_string_count": stats.trusted_strings,
+                "malware_string_count": stats.malware_strings,
                 "lsh": {
                     "enabled": header.lsh_enabled,
                     "bands": LSH_BANDS,
@@ -117,14 +139,20 @@ fn run_info(path: &Path, json: bool) -> Result<(), CliError> {
         );
     } else {
         println!(
-            "{} ({size} bytes, BXFAM{:03})",
+            "{} ({size} bytes, {})",
             path.display(),
-            header.format_version
+            header.format_name()
         );
         println!(
             "{} families, {} trusted sources, {} trusted shapes",
             stats.families, stats.trusted_sources, stats.trusted_shapes
         );
+        if header.format_version >= 3 {
+            println!(
+                "{} trusted symbols, {} trusted strings, {} exclusive malware strings",
+                stats.trusted_symbols, stats.trusted_strings, stats.malware_strings
+            );
+        }
         if header.lsh_enabled {
             println!(
                 "LSH enabled: {LSH_BANDS} bands of {LSH_SLOTS_PER_BAND} slots, {} records",
@@ -138,7 +166,7 @@ fn run_info(path: &Path, json: bool) -> Result<(), CliError> {
 }
 
 fn run_match(
-    pack_path: &Path,
+    pack_paths: &[PathBuf],
     input: &Path,
     config: MatchConfig,
     json: bool,
@@ -147,14 +175,22 @@ fn run_match(
     if apply_default_instruction_limit {
         binfera::extract::recovery::set_instruction_limit(Some(500_000));
     }
-    let pack_bytes = std::fs::read(pack_path).map_err(|e| {
-        CliError::new(
-            E_MISSING_FILE,
-            format!("reading {}: {e}", pack_path.display()),
-        )
-    })?;
-    let pack = FamilyPack::from_bytes(&pack_bytes)
-        .map_err(|e| CliError::new(E_CORRUPT_FILE, e.to_string()))?;
+    let mut packs = FamilyPackSet::new();
+    for pack_path in pack_paths {
+        let pack_bytes = std::fs::read(pack_path).map_err(|e| {
+            CliError::new(
+                E_MISSING_FILE,
+                format!("reading {}: {e}", pack_path.display()),
+            )
+        })?;
+        let pack = FamilyPack::from_bytes(&pack_bytes)
+            .map_err(|e| CliError::new(E_CORRUPT_FILE, format!("{}: {e}", pack_path.display())))?;
+        let name = pack_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| pack_path.to_string_lossy().into_owned());
+        packs.push(name, pack);
+    }
     let sample_bytes = std::fs::read(input)
         .map_err(|e| CliError::new(E_MISSING_FILE, format!("reading {}: {e}", input.display())))?;
     let name = input
@@ -163,7 +199,10 @@ fn run_match(
         .unwrap_or_default();
     let sketch = sketch_bytes(&sample_bytes, "", &name, false)
         .map_err(|e| CliError::new(E_CORRUPT_FILE, e.to_string()))?;
-    let report = pack.match_sketch(&sketch, &config);
+    let strings = packs
+        .has_string_data()
+        .then(|| extract_origin_strings(&sample_bytes));
+    let report = packs.match_sample(&sketch, strings.as_deref(), &config);
     if json {
         let body = serde_json::to_string_pretty(&report)
             .map_err(|e| CliError::new(E_CORRUPT_FILE, e.to_string()))?;
@@ -205,6 +244,52 @@ fn run_match(
                     m.exact_shape_hits,
                     m.fuzzy_hits,
                     m.coverage * 100.0
+                );
+            }
+        }
+        if !report.trusted_symbols.is_empty() {
+            let symbols: Vec<String> = report
+                .trusted_symbols
+                .iter()
+                .take(5)
+                .map(|s| format!("{:#x} {}", s.address, s.trusted_symbol))
+                .collect();
+            println!(
+                "  trusted symbols: {} ({} total)",
+                symbols.join(", "),
+                report.trusted_symbols.len()
+            );
+        }
+        if let Some(strings) = &report.strings {
+            println!(
+                "  strings (supporting evidence only): {} -> Trusted {:.1}% ({}), Malware {:.1}% ({}), Shared {:.1}% ({}), Unique {:.1}% ({})",
+                strings.total_strings,
+                strings.breakdown.trusted_pct,
+                strings.trusted_strings,
+                strings.breakdown.malware_pct,
+                strings.malware_strings,
+                strings.breakdown.shared_pct,
+                strings.shared_strings,
+                strings.breakdown.unique_pct,
+                strings.unique_strings,
+            );
+            for f in strings.families.iter().take(3) {
+                println!(
+                    "    string reuse: {:<24} exclusive={:<3} shared={:<3}{}",
+                    f.family,
+                    f.exclusive_strings,
+                    f.shared_strings,
+                    if f.corroborates_code {
+                        " (corroborates code)"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            if let Some(hint) = &strings.string_only_hint {
+                println!(
+                    "    string-only hint (not a verdict): {} from {} exclusive strings",
+                    hint.family, hint.exclusive_strings
                 );
             }
         }

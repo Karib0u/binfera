@@ -34,16 +34,26 @@ binfera sample.exe --decompile-all --jobs 4
 binfera family info --json
 binfera family match sample.exe --json
 binfera family match --pack /path/to/custom.bxfam sample.exe
+binfera family match --pack base.bxfam --pack my-org-trusted.bxfam sample.exe
 ```
 
-Both commands look for a pack in this order:
+Both commands look for packs in this order:
 
-1. The path passed with `--pack`
-2. An existing file named by `BINFERA_FAMILY_PACK`
+1. The paths passed with `--pack`
+2. The existing files listed in `BINFERA_FAMILY_PACKS`, or else in `BINFERA_FAMILY_PACK`. Either holds one path or a path list (`:`-separated on macOS and Linux, `;` on Windows).
 3. `family.bxfam` in the [user data directory](mcp.md#what-is-stored)
 4. `family.bxfam` beside the executable
 
-`family info` reads the BXFAM002 header for counts and LSH configuration. This version of the format has no build metadata. `family match` loads the fingerprint tables and reports trusted, malware-family, shared and unique functions. The desktop app also checks these default locations and lets you select a local pack from the **Code origin** card.
+`family info` reads one pack's header: the format (`BXFAM002` or `BXFAM003`), counts, and LSH configuration. For `BXFAM003` it also reports the trusted symbol, trusted string, and exclusive malware string counts. The format has no build metadata. `family match` loads the fingerprint tables and reports trusted, malware-family, shared and unique functions. The desktop app also checks these default locations and lets you select a local pack from the **Code origin** card.
+
+`family match` layers several packs, base first. A function or string that any pack trusts is Trusted, so an organization's Trusted overlay silences false positives from the base pack. Trusted names come from the last pack that has one. A malware family matched by several packs counts each function once, and each match records its `pack_name`.
+
+`BXFAM003` packs can add two optional sections, and `BXFAM002` packs stay readable:
+
+- **Trusted symbols:** names for Trusted functions, reported as `trusted_symbols`.
+- **String Reuse:** a Trusted string filter and an index of strings exclusive to up to three malware families. `family match` extracts ASCII and UTF-16LE strings, normalizes them (whitespace collapsed, at least 8 characters, no pure hex, numbers, UUIDs, boilerplate or common Win32 API names), and reports them under `strings` as malware, shared, unique or trusted.
+
+String Reuse is supporting evidence only. It never adds, removes or rescores a code family. When code attribution abstains and at least three distinct exclusive malware strings name one family more than any other, the report adds `string_only_hint`, a lead to verify rather than a verdict.
 
 ## Input formats
 
