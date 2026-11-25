@@ -1,6 +1,6 @@
 import CommentEditor from "../views/CommentEditor";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Analysis } from "../types";
+import type { Analysis, StringOriginKind } from "../types";
 import HexView, { asText, cArray, hexOf, type HexSelection } from "../HexView";
 import ImportsView from "../ImportsView";
 import Listing from "../Listing";
@@ -33,7 +33,8 @@ import { chooseTheme, storedTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
 import { FirstLook, guessToolchains } from "../views/FirstLook";
 import { CodeOriginCard } from "../views/CodeOriginCard";
-import { buildOriginIndex, type FunctionOriginKind } from "../familyOrigin";
+import { buildOriginIndex, formatSourceName, trustedNames, type FunctionOriginKind } from "../familyOrigin";
+import { PackNameTag } from "../views/PackNameTag";
 import { FileView } from "../views/FileView";
 import { CapabilityView } from "../views/CapabilityView";
 import { FunctionView, type FnViewProps, type Layout } from "../views/FunctionView";
@@ -114,6 +115,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const containment = useContainment(a);
   // Exported names stand in for FUN_ labels; set before anything renders a label.
   useMemo(() => notes.setExportNames(new Map((a.image?.exports ?? []).filter((e) => e.va).map((e) => [e.va, e.name]))), [a.image]);
+  // Trusted symbols from a BXFAM003 pack name what nothing else names; analyst and file names stay on top.
+  useMemo(() => notes.setTrustedNames(trustedNames(a.family)), [a.family]);
   const { byFn, fileLevel } = useFunctionRules(a, containment);
   const indicators = useMemo(() => extractIndicators(a.strings), [a.strings]);
   // Every place visited is a browser history entry, so the toolbar arrows, browser Back and a phone's back gesture agree.
@@ -258,6 +261,18 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const [strQuery, setStrQuery] = useState("");
   const [strOnlyRef, setStrOnlyRef] = useState(true);
   const [strIndicators, setStrIndicators] = useState(false);
+  const [strOrigin, setStrOrigin] = useState<StringOriginKind | null>(null);
+  const [strHideTrusted, setStrHideTrusted] = useState(false);
+  const stringOrigin = { kind: strOrigin, setKind: setStrOrigin, hideTrusted: strHideTrusted, setHideTrusted: setStrHideTrusted };
+  /** From the Code origin card: open Strings on one String Reuse class, or on one value. */
+  const showStringsByOrigin = (kind: StringOriginKind | null, query?: string) => {
+    setStrIndicators(false);
+    setStrOnlyRef(false);
+    setStrOrigin(kind);
+    if (kind === "trusted") setStrHideTrusted(false);
+    setStrQuery(query ?? "");
+    setSel("strings");
+  };
   const [onlyCaps, setOnlyCaps] = useState(false);
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
@@ -684,6 +699,16 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         breakdown: a.family.breakdown,
         families: a.family.families.map((f) => ({ family: f.family, score: f.score, exclusive: f.exclusive_functions, coverage: f.coverage })),
         trustedSources: a.family.trusted_sources.map((s) => ({ source: s.source, functions: s.functions })),
+        packs: a.familyPacks?.map((p) => (p.format ? `${p.name} (${p.format})` : p.name)),
+        trustedSymbols: a.family.trusted_symbols?.filter((t) => notes.trustedLabel(t.address, a.functions.get(t.address)?.name ?? a.names.get(t.address)))
+          .map((t) => ({ address: hex(t.address), name: t.trusted_symbol, source: t.source ? formatSourceName(t.source) : undefined })),
+        strings: a.family.strings && a.family.strings.total_strings > 0 ? {
+          total: a.family.strings.total_strings, trusted: a.family.strings.trusted_strings, malware: a.family.strings.malware_strings,
+          shared: a.family.strings.shared_strings, unique: a.family.strings.unique_strings,
+          families: a.family.strings.families.map((f) => ({ family: f.family, exclusive: f.exclusive_strings, corroboratesCode: f.corroborates_code })),
+          exclusive: a.family.strings.entries.filter((e) => e.kind === "malware").map((e) => ({ value: e.value, families: e.families ?? [] })),
+          hint: a.family.families.length === 0 && a.family.strings.string_only_hint ? { family: a.family.strings.string_only_hint.family, strings: a.family.strings.string_only_hint.exclusive_strings } : undefined,
+        } : undefined,
       } : undefined,
       stringsShown: a.strings.length, stringsTotal: a.stringsTotal,
       packed: a.packed ? (a.packed.packer ? `packed with ${a.packed.packer}` : "looks packed") : undefined,
@@ -718,7 +743,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       file: a.fileName, size: a.size, sha256: a.capa?.sample.sha256, arch: a.arch,
       family: a.family,
       capabilities: (a.capa?.rules ?? []).filter((r) => !r.lib).map((r) => ({ name: r.name, namespace: r.namespace, scope: r.scope, addresses: r.addresses })),
-      functions: a.order.map((ad) => ({ address: ad, name: fnLabel(ad, a.functions.get(ad)?.name), starred: isStarred(ad), capabilities: (byFn.get(ad) ?? []).map((r) => r.name), calls: callees.get(ad) ?? [] })),
+      family_packs: a.familyPacks,
+      functions: a.order.map((ad) => ({ address: ad, name: fnLabel(ad, a.functions.get(ad)?.name), ...(notes.trustedLabel(ad, a.functions.get(ad)?.name ?? a.names.get(ad)) ? { name_source: "pack_trusted" } : {}), starred: isStarred(ad), capabilities: (byFn.get(ad) ?? []).map((r) => r.name), calls: callees.get(ad) ?? [] })),
       sections: image?.sections, imports: image?.imports, exports: image?.exports, details: image?.details,
       strings: a.strings,
       comments: notes.allComments(),
@@ -789,7 +815,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         const detail = [hex(ad), ...(why ? [`importance ${why.score}: ${why.capabilities} capabilities · ${why.imports} imports · ${why.strings} strings · ${why.callers} callers`] : []), fnOrigin?.detail ?? (library.has(ad) ? "library function" : ""), `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n");
         return (
           <button aria-current={sel === ad ? "true" : undefined} title={detail} className={"item compact" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
-            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
+            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}<PackNameTag at={ad} name={f?.name ?? a.names.get(ad)} /></code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
             {rules && <em className="pill">{rules.length}</em>}
             {!f && <span className="dot" title="pending" />}
             {f?.error && <span className="dot err" title="failed" />}
@@ -818,7 +844,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           <button aria-current={sel === ad ? "true" : undefined} title={[fnOrigin?.detail, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
             <span className="fn">
               <span className="m-fnline">
-                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
+                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}<PackNameTag at={ad} name={f?.name ?? a.names.get(ad)} /></code>
                 {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small className="m-fnaddr">{hex(ad)}</small>}
               </span>
               {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
@@ -857,7 +883,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       {mobile && chip === "sections" ? <div className="data-hex">{hexFull}</div> : (
         <div className={mobile ? "data-single" : "data-split"}>
           <div className="data-list">
-            {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} />}
+            {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} origin={stringOrigin} />}
             {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} onSymbol={openSymbol} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
             {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} onAnalyze={embedded ? undefined : onFile} />}
           </div>
@@ -898,7 +924,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     <div className="ov-container">
       <div className="ov">
         <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
-        <CodeOriginCard a={a} onFilterOrigin={filterByOrigin} onOpenFunction={(ad) => { setCursor(ad); setSel(ad, true); }} />
+        <CodeOriginCard a={a} onFilterOrigin={filterByOrigin} onOpenFunction={(ad) => { setCursor(ad); setSel(ad, true); }} onShowStrings={showStringsByOrigin} />
         {image && <div className="ov-wide">
           <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} onOrigin={() => filterByOrigin(a.family?.families.length ? "malware" : "unique")} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />

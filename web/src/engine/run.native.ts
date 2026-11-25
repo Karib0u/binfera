@@ -24,7 +24,8 @@ function plan(req: EngineRequest): Plan {
   switch (req.kind) {
     case "inspect": return { sample: true, args: ["{sample}", "--image-info", "--guess-shellcode"] };
     case "capa": return { sample: true, args: ["{sample}", "--json", "--rules", "{rules}"] };
-    case "family": return { sample: true, args: ["family", "match", "--pack", "{family_pack}", "{sample}", "--json"] };
+    // Overlay packs are named by index: the native side holds the paths, the webview never sees them.
+    case "family": return { sample: true, args: ["family", "match", "--pack", "{family_pack}", ...Array.from({ length: req.overlays ?? 0 }, (_, i) => ["--pack", `{family_overlay:${i}}`]).flat(), "{sample}", "--json"] };
     case "fingerprint": return { sample: true, args: ["fingerprint", "{sample}"] };
     case "decompileOne": return { sample: true, args: ["{sample}", "--decompile-function", `0x${req.address.toString(16)}`, "--json", ...(req.resourceRetry ? ["--resource-retry"] : [])] };
     case "decompile": {

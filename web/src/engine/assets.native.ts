@@ -5,6 +5,8 @@ export interface NativeFamilyPack {
   name: string;
   size: number;
   path: string;
+  /** "BXFAM002" or "BXFAM003", from the header; absent when unreadable. */
+  format?: string | null;
 }
 
 type FamilyPackStatus = NativeFamilyPack | { available: false };
@@ -41,12 +43,32 @@ export async function loadEngineId(): Promise<string | null> { return null; }
 
 export function setCustomFamilyPack(_bytes: ArrayBuffer, _name: string): void {}
 export function getFamilyPackName(): string | null { return null; }
+export function addFamilyOverlay(_bytes: ArrayBuffer, _name: string): void {}
+export function removeFamilyOverlay(_index: number): void {}
 export async function loadFamilyPack(): Promise<NativeFamilyPack | null> {
   const status = await invoke<FamilyPackStatus>("family_pack_status");
   return status.available ? status : null;
 }
 
+/** The base pack then the overlays, as the native side resolves them. Empty without a base pack. */
+export async function loadFamilyPacks(): Promise<NativeFamilyPack[]> {
+  const base = await loadFamilyPack();
+  if (!base) return [];
+  const overlays = await invoke<FamilyPackStatus[]>("family_overlays_status");
+  return [base, ...overlays.filter((o): o is NativeFamilyPack => o.available)];
+}
+
 export async function pickNativeFamilyPack(): Promise<NativeFamilyPack | null> {
   const status = await invoke<FamilyPackStatus | null>("select_family_pack");
   return status?.available ? status : null;
+}
+
+/** Opens the file dialog and layers the chosen pack over the others. False when cancelled. */
+export async function pickNativeFamilyOverlay(): Promise<boolean> {
+  const status = await invoke<FamilyPackStatus | null>("add_family_overlay");
+  return !!status?.available;
+}
+
+export async function removeNativeFamilyOverlay(index: number): Promise<void> {
+  await invoke("remove_family_overlay", { index });
 }

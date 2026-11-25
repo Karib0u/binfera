@@ -100,9 +100,13 @@ const mocksUrl = moduleUrl(`
   export class EngineError extends Error {}
   export const TOO_LARGE = 14;
   export const loadEngine = async () => ({});
-  export const loadFamilyPack = async () => null;
+  export const loadFamilyPacks = async () => [];
   export const pickNativeFamilyPack = async () => null;
+  export const pickNativeFamilyOverlay = async () => false;
+  export const removeNativeFamilyOverlay = async () => {};
   export const setCustomFamilyPack = () => {};
+  export const addFamilyOverlay = () => {};
+  export const removeFamilyOverlay = () => {};
   export const loadAssets = async () => ({ module: {}, data: () => ({}), rules: {} });
   export const extractStrings = () => ({ strings: [{ a: 10, s: "example", w: false }], total: 24567 });
   export const summarizeCapa = json => json;

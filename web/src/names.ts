@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { project } from "./project/client";
 import type { Annotation, Edit } from "./project/types";
+import { isAutoName, type TrustedName } from "./familyOrigin";
 
 type NoteEdit = { kind: Edit["kind"]; target: string; value?: string };
 /** An edit as undo remembers it: `value` is what it replaced, `after` what it wrote. */
@@ -29,6 +30,8 @@ export class Notes {
   private synced: { sha: string; revision: number } | null = null;
   /** Names the file itself gives its functions: the export table. */
   private exported = new Map<number, string>();
+  /** Names a BXFAM003 pack gives Trusted functions: the last resort before `FUN_`. */
+  private trusted = new Map<number, TrustedName>();
 
   /** `legacy` is the older file-name key: notes saved under it move to the hash the first time the sample is opened. */
   load(sample: string, legacy?: string) {
@@ -239,9 +242,20 @@ export class Notes {
   toggleStar(ad: number) { this.edit({ kind: "star", target: "0x" + ad.toString(16), value: this.stars.has(ad) ? undefined : "true" }); }
   setExportNames(m: Map<number, string>) { this.exported = m; }
   exportOf(ad: number) { return this.exported.get(ad); }
-  /** What to call a function, whichever names it has. */
+  setTrustedNames(m: Map<number, TrustedName>) { this.trusted = m; }
+  /** The pack's Trusted symbol for a function, whether or not it is the name shown. */
+  trustedOf(ad: number) { return this.trusted.get(ad); }
+  /**
+   * What to call a function, whichever names it has: the analyst's name, then the file's or a
+   * signature's symbol, then an export, then a Trusted pack symbol, then `FUN_<address>`.
+   */
   label(ad: number, name?: string | null) {
-    return this.renamed(ad) ?? name ?? this.exportOf(ad) ?? "FUN_" + ad.toString(16).padStart(8, "0");
+    return this.renamed(ad) ?? (isAutoName(name) ? undefined : name!) ?? this.exportOf(ad) ?? this.trusted.get(ad)?.name ?? name ?? "FUN_" + ad.toString(16).padStart(8, "0");
+  }
+  /** The pack symbol when {@link label} falls back to it, so views can mark the name as pack-derived. */
+  trustedLabel(ad: number, name?: string | null): TrustedName | undefined {
+    if (this.renamed(ad) !== undefined || !isAutoName(name) || this.exportOf(ad) !== undefined) return undefined;
+    return this.trusted.get(ad);
   }
 }
 

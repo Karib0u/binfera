@@ -24,7 +24,7 @@
     "test:compare": "node scripts/check-compare.mjs",
     "test:project": "node scripts/check-project.mjs && node scripts/check-recent.mjs",
     "test:analyze": "node scripts/check-analyze.mjs && node scripts/check-resolved.mjs",
-    "test:family": "node scripts/check-family.mjs && node --test scripts/family-native.test.mjs",
+    "test:family": "node scripts/check-family.mjs && node --test scripts/family-native.test.mjs && node scripts/check-family-wasm.mjs",
     "test:cache": "node scripts/check-result-cache.mjs",
     "test:shellcode": "node scripts/check-shellcode-input.mjs && node scripts/check-shellcode.mjs",
     "test:archive": "node scripts/check-archive.mjs",

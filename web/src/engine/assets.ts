@@ -141,41 +141,75 @@ export function loadEngineId(): Promise<string | null> {
 }
 
 export async function pickNativeFamilyPack(): Promise<null> { return null; }
+export async function pickNativeFamilyOverlay(): Promise<boolean> { return false; }
+export async function removeNativeFamilyOverlay(_index: number): Promise<void> {}
 
-const FAMILY_MAGIC = [0x42, 0x58, 0x46, 0x41, 0x4d, 0x30, 0x30, 0x32]; // "BXFAM002"
-function isBxfam002(bytes: Uint8Array): boolean {
-  if (bytes.byteLength < 40) return false;
-  for (let i = 0; i < FAMILY_MAGIC.length; i++) if (bytes[i] !== FAMILY_MAGIC[i]) return false;
-  return true;
+/** "BXFAM002" or "BXFAM003" when the bytes start like a family pack header, else null. */
+export function familyPackFormat(bytes: Uint8Array): string | null {
+  if (bytes.byteLength < 40) return null;
+  const magic = String.fromCharCode(...bytes.subarray(0, 8));
+  return magic === "BXFAM002" || magic === "BXFAM003" ? magic : null;
 }
 
-let defaultFamilyPack: Promise<Uint8Array<ArrayBuffer> | null> | null = null;
-let customFamilyPack: { bytes: Uint8Array<ArrayBuffer>; name: string } | null = null;
+export interface FamilyPackBytes {
+  name: string;
+  size: number;
+  format: string;
+  bytes: ArrayBuffer;
+}
 
-/** Registers a user-supplied `.bxfam` pack in memory for this tab (never uploaded). */
-export function setCustomFamilyPack(bytes: ArrayBuffer, name: string): void {
+interface HeldPack { bytes: Uint8Array<ArrayBuffer>; name: string; format: string }
+
+let defaultFamilyPack: Promise<HeldPack | null> | null = null;
+let customFamilyPack: HeldPack | null = null;
+let overlayFamilyPacks: HeldPack[] = [];
+
+function hold(bytes: ArrayBuffer, name: string): HeldPack {
   const view = new Uint8Array(bytes.slice(0));
-  if (!isBxfam002(view)) throw new Error(`${name} is not a valid BXFAM002 family pack`);
-  customFamilyPack = { bytes: view, name };
+  const format = familyPackFormat(view);
+  if (!format) throw new Error(`${name} is not a valid BXFAM002 or BXFAM003 family pack`);
+  return { bytes: view, name, format };
+}
+
+/** Registers a user-supplied `.bxfam` pack in memory for this tab (never uploaded). It replaces the base pack. */
+export function setCustomFamilyPack(bytes: ArrayBuffer, name: string): void {
+  customFamilyPack = hold(bytes, name);
 }
 
 export function getFamilyPackName(): string | null {
   return customFamilyPack?.name ?? null;
 }
 
+/** Layers a user-supplied `.bxfam` pack over the base pack for this tab (never uploaded). */
+export function addFamilyOverlay(bytes: ArrayBuffer, name: string): void {
+  overlayFamilyPacks = [...overlayFamilyPacks, hold(bytes, name)];
+}
+
+export function removeFamilyOverlay(index: number): void {
+  overlayFamilyPacks = overlayFamilyPacks.filter((_, i) => i !== index);
+}
+
+const copy = (p: HeldPack): FamilyPackBytes => ({ name: p.name, size: p.bytes.byteLength, format: p.format, bytes: p.bytes.slice().buffer });
+
 /**
- * Optionally fetches the hosted starter pack (`sigs/family.bxfam`) or returns the user-loaded pack.
- * Missing or non-pack responses return `null` cleanly so builds without a pack stay quiet.
+ * The packs to match against, base first: the user-loaded pack or the hosted starter pack
+ * (`sigs/family.bxfam`), then the overlays. Empty when there is no base pack, so builds without a
+ * pack stay quiet; missing or non-pack responses count as no pack.
  */
-export async function loadFamilyPack(): Promise<ArrayBuffer | null> {
-  if (customFamilyPack) return customFamilyPack.bytes.slice().buffer;
+export async function loadFamilyPacks(): Promise<FamilyPackBytes[]> {
   defaultFamilyPack ??= fetch(`${base}sigs/family.bxfam`)
     .then(async (res) => {
       if (!res.ok) return null;
       const buf = new Uint8Array(await res.arrayBuffer());
-      return isBxfam002(buf) ? buf : null;
+      const format = familyPackFormat(buf);
+      return format ? { bytes: buf, name: "Starter pack", format } : null;
     })
     .catch(() => null);
-  const bytes = await defaultFamilyPack;
-  return bytes ? bytes.slice().buffer : null;
+  const basePack = customFamilyPack ?? await defaultFamilyPack;
+  return basePack ? [basePack, ...overlayFamilyPacks].map(copy) : [];
+}
+
+/** The base pack alone, for callers that predate layering. */
+export async function loadFamilyPack(): Promise<ArrayBuffer | null> {
+  return (await loadFamilyPacks())[0]?.bytes ?? null;
 }

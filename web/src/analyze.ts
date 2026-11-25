@@ -1,7 +1,6 @@
-import type { NativeFamilyPack } from "./engine/assets.native";
 import type { Arch } from "./graph";
 import type { Analysis, DecompiledFunction, FamilyReport, Packing } from "./types";
-import { loadAssets, loadEngine, loadEngineId, loadFamilyPack, NATIVE, pickNativeFamilyPack, setCustomFamilyPack, winApiFor } from "./engine/assets";
+import { addFamilyOverlay, loadAssets, loadEngine, loadEngineId, loadFamilyPacks, NATIVE, pickNativeFamilyOverlay, pickNativeFamilyPack, removeFamilyOverlay, removeNativeFamilyOverlay, setCustomFamilyPack, winApiFor } from "./engine/assets";
 import { summarizeCapa } from "./engine/capa";
 import { EngineError, runEngine, TOO_LARGE } from "./engine/run";
 import { extractStrings } from "./engine/strings";
@@ -151,51 +150,95 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     functionsChanged = true;
     flush();
   };
-  const matchWithPack = async (
-    pack: ArrayBuffer | NativeFamilyPack,
+  /** Matches against the packs, base first. Browser packs carry their bytes; native ones are paths the desktop side holds. */
+  type PackHandle = { name: string; size: number; format?: string | null; bytes?: ArrayBuffer };
+  const matchWithPacks = async (
+    packs: PackHandle[],
     runSignal: AbortSignal,
     preloaded?: { module: WebAssembly.Module; data: Record<string, ArrayBuffer> },
   ) => {
+    if (!packs.length) return;
     const engine = preloaded ?? await (async () => {
       const loaded = await loadAssets(null, progress, a.image?.format === "pe", null);
       return { module: loaded.module, data: loaded.data("capa") };
     })();
     if (runSignal.aborted) return;
-    const packBytes = pack instanceof ArrayBuffer ? pack : undefined;
+    const buffers = packs.flatMap((p) => (p.bytes ? [p.bytes] : []));
     let json = "";
     await runEngine(
-      { kind: "family", module: engine.module, sample: bytes.slice(0), data: engine.data, pack: packBytes },
+      { kind: "family", module: engine.module, sample: bytes.slice(0), data: engine.data, packs: buffers.length ? buffers : undefined, packNames: buffers.length ? packs.map((p) => p.name) : undefined, overlays: packs.length - 1 },
       (line) => { json += line; },
       runSignal,
     );
     if (runSignal.aborted) return;
     a.family = JSON.parse(json) as FamilyReport;
-    if (!(pack instanceof ArrayBuffer)) a.familyPackName = pack.name;
+    a.familyPackName = packs[0].name;
+    a.familyPacks = packs.map((p, i) => ({ name: p.name, size: p.size, format: p.format ?? undefined, role: i === 0 ? "base" : "overlay" }));
     a.familyError = null;
     flush();
   };
-  const rematch = async (pack: ArrayBuffer | NativeFamilyPack) => {
+  /** Re-runs matching with the current packs; false when it failed (the error is shown). */
+  const rematch = async (): Promise<boolean> => {
     a.familyError = null;
     try {
-      await matchWithPack(pack, signal);
+      await matchWithPacks(await loadFamilyPacks(), signal);
+      return true;
     } catch (e) {
-      if (signal.aborted) return;
+      if (signal.aborted) return false;
       a.familyError = message(e);
       flush();
+      return false;
     }
   };
-  if (NATIVE) a.pickFamilyPack = async () => {
-    if (raw || signal.aborted) return;
-    const pack = await pickNativeFamilyPack();
-    if (pack && !signal.aborted) await rematch(pack);
-  };
-  else a.runFamilyPack = async (packFile: File) => {
-    if (raw) return;
-    const packBytes = await packFile.arrayBuffer();
-    if (signal.aborted) return;
-    setCustomFamilyPack(packBytes, packFile.name);
-    await rematch(packBytes.slice(0));
-  };
+  if (NATIVE) {
+    a.pickFamilyPack = async () => {
+      if (raw || signal.aborted) return;
+      const pack = await pickNativeFamilyPack();
+      if (pack && !signal.aborted) await rematch();
+    };
+    a.addFamilyOverlay = async () => {
+      if (raw || signal.aborted) return;
+      if (!(await pickNativeFamilyOverlay()) || signal.aborted) return;
+      // A pack the engine refuses is taken off again, so the next match still works.
+      if (!(await rematch())) {
+        const error = a.familyError;
+        await removeNativeFamilyOverlay((a.familyPacks?.length ?? 1) - 1);
+        a.familyError = error;
+        flush();
+      }
+    };
+    a.removeFamilyOverlay = async (index: number) => {
+      if (raw || signal.aborted) return;
+      await removeNativeFamilyOverlay(index);
+      await rematch();
+    };
+  } else {
+    a.runFamilyPack = async (packFile: File) => {
+      if (raw) return;
+      const packBytes = await packFile.arrayBuffer();
+      if (signal.aborted) return;
+      setCustomFamilyPack(packBytes, packFile.name);
+      await rematch();
+    };
+    a.addFamilyOverlay = async (packFile?: File) => {
+      if (raw || !packFile) return;
+      const packBytes = await packFile.arrayBuffer();
+      if (signal.aborted) return;
+      addFamilyOverlay(packBytes, packFile.name);
+      const index = (await loadFamilyPacks()).length - 2;
+      if (!(await rematch())) {
+        const error = a.familyError;
+        removeFamilyOverlay(index);
+        a.familyError = error;
+        flush();
+      }
+    };
+    a.removeFamilyOverlay = async (index: number) => {
+      if (raw) return;
+      removeFamilyOverlay(index);
+      await rematch();
+    };
+  }
   const cached = sha256 && engineId && !again ? await readResults(sha256, engineId) : null;
   if (cached) {
     try {
@@ -214,9 +257,9 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       a.done = true;
       publish();
       if (!raw) {
-        const pack = await loadFamilyPack();
-        if (pack && !signal.aborted) {
-          await matchWithPack(pack, signal).catch((e) => {
+        const packs = await loadFamilyPacks();
+        if (packs.length && !signal.aborted) {
+          await matchWithPacks(packs, signal).catch((e) => {
             if (!signal.aborted) { a.familyError = message(e); flush(); }
           });
         }
@@ -297,9 +340,9 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
 
   const familyMatch = () => (async () => {
     if (raw) return;
-    const pack = await loadFamilyPack();
-    if (!pack || stop.signal.aborted) return;
-    await matchWithPack(pack, stop.signal, { module: assets.module, data: assets.data("capa") });
+    const packs = await loadFamilyPacks();
+    if (!packs.length || stop.signal.aborted) return;
+    await matchWithPacks(packs, stop.signal, { module: assets.module, data: assets.data("capa") });
   })().catch((e) => failed(e, (m) => (a.familyError = m), false));
 
   // Decompiled functions are what the page shows first, so on a constrained device they go
