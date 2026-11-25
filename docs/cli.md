@@ -28,6 +28,23 @@ binfera sample.exe --decompile-function 0x140001000 --json
 binfera sample.exe --decompile-all --jobs 4
 ```
 
+## Code Origin
+
+```bash
+binfera family info --json
+binfera family match sample.exe --json
+binfera family match --pack /path/to/custom.bxfam sample.exe
+```
+
+Both commands look for a pack in this order:
+
+1. The path passed with `--pack`
+2. An existing file named by `BINFERA_FAMILY_PACK`
+3. `family.bxfam` in the [user data directory](mcp.md#what-is-stored)
+4. `family.bxfam` beside the executable
+
+`family info` reads the BXFAM002 header for counts and LSH configuration. This version of the format has no build metadata. `family match` loads the fingerprint tables and reports trusted, malware-family, shared and unique functions. The desktop app also checks these default locations and lets you select a local pack from the **Code origin** card.
+
 ## Input formats
 
 PE and ELF inputs use recovered code scopes with FLIRT library-function exclusion. Raw x86/x64 shellcode (`-f sc32` or `-f sc64`) uses no FLIRT signatures. Capability results place it at capa's [shellcode base address](https://github.com/Karib0u/binfera/blob/main/binfera/src/extract/loader/image.rs), `0x690000`, so addresses match Python capa; decompilation and emulation map it at zero, so their addresses are offsets in the file. Freeze files are also accepted.

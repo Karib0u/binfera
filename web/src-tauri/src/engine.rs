@@ -29,6 +29,7 @@ struct Inner {
     next: AtomicU64,
     /// Staged samples: a private snapshot and its SHA-256, which names the sample in the cache.
     samples: Mutex<HashMap<u64, (Arc<tempfile::NamedTempFile>, String)>>,
+    family_pack: Mutex<Option<PathBuf>>,
     /// Process id of each live run's `binfera` process (also its process group on Unix).
     running: Mutex<HashMap<u64, u32>>,
     /// Runs the frontend cancelled, so a cancel that races ahead of the spawn still takes effect.
@@ -45,6 +46,7 @@ impl Engine {
             scratch,
             next: AtomicU64::new(1),
             samples: Mutex::default(),
+            family_pack: Mutex::default(),
             running: Mutex::default(),
             cancelled: Mutex::default(),
         }))
@@ -226,20 +228,104 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
     Ok(())
 }
 
-fn family_pack_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("BINFERA_FAMILY_PACK") {
-        candidates.push(PathBuf::from(path));
+#[derive(Serialize)]
+pub struct FamilyPackStatus {
+    available: bool,
+    name: Option<String>,
+    size: Option<u64>,
+    path: Option<String>,
+}
+
+impl FamilyPackStatus {
+    fn from_path(path: Option<&Path>) -> Self {
+        let size = path
+            .and_then(|p| p.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len());
+        Self {
+            available: size.is_some(),
+            name: path
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned()),
+            size,
+            path: path.map(|p| p.to_string_lossy().into_owned()),
+        }
     }
-    candidates.push(binfera_project::data_dir().join("family.bxfam"));
-    if let Ok(resources) = app.path().resource_dir() {
-        candidates.push(resources.join("family.bxfam"));
+}
+
+fn family_pack_path(app: &AppHandle, engine: &Engine) -> Result<Option<PathBuf>, String> {
+    let selected = engine.0.family_pack.lock().map_err(|e| e.to_string())?;
+    let path = selected
+        .as_ref()
+        .filter(|p| p.is_file())
+        .cloned()
+        .or_else(|| binfera_project::resolve_family_pack(None))
+        .or_else(|| {
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|p| p.join("family.bxfam"))
+                .filter(|p| p.is_file())
+        })
+        .or_else(|| {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/family.bxfam");
+            path.is_file().then_some(path)
+        });
+    path.map(|p| {
+        p.canonicalize()
+            .map_err(|e| format!("reading {}: {e}", p.display()))
+    })
+    .transpose()
+}
+
+#[tauri::command]
+pub fn family_pack_status(
+    app: AppHandle,
+    state: State<'_, Engine>,
+) -> Result<FamilyPackStatus, String> {
+    let path = family_pack_path(&app, state.inner())?;
+    Ok(FamilyPackStatus::from_path(path.as_deref()))
+}
+
+fn selected_family_pack(path: &Path) -> Result<PathBuf, String> {
+    if !path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("bxfam"))
+        || !path.is_file()
+    {
+        return Err("Select an existing .bxfam fingerprint pack.".into());
     }
-    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/family.bxfam"));
-    candidates
-        .into_iter()
-        .find(|p| p.is_file())
-        .ok_or_else(|| "no family fingerprint pack installed".to_string())
+    path.canonicalize()
+        .map_err(|e| format!("reading {}: {e}", path.display()))
+}
+
+#[tauri::command]
+pub async fn select_family_pack(
+    app: AppHandle,
+    state: State<'_, Engine>,
+) -> Result<Option<FamilyPackStatus>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .add_filter("Binfera family pack", &["bxfam"])
+        .pick_file(move |file| {
+            let _ = tx.send(file);
+        });
+    let Some(file) = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten())
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    let path = selected_family_pack(&file.into_path().map_err(|e| e.to_string())?)?;
+    let status = FamilyPackStatus::from_path(Some(&path));
+    if !status.available {
+        return Err("The selected family pack is unavailable.".into());
+    }
+    *state.0.family_pack.lock().map_err(|e| e.to_string())? = Some(path);
+    Ok(Some(status))
 }
 
 #[tauri::command]
@@ -258,9 +344,9 @@ pub async fn run_engine(
     } else {
         None
     };
-    let uses_pack = request.args.iter().any(|a| a.contains("{family_pack}"));
+    let uses_pack = request.args.iter().any(|a| a == "{family_pack}");
     let family_pack = if uses_pack {
-        Some(family_pack_path(&app)?)
+        Some(family_pack_path(&app, &engine)?.ok_or("no family fingerprint pack installed")?)
     } else {
         None
     };
@@ -329,9 +415,10 @@ fn run_blocking(
             if let Some(rules) = &rules {
                 arg = arg.replace("{rules}", &rules.to_string_lossy());
             }
-            if let Some(pack) = &family_pack {
-                arg = arg.replace("{family_pack}", &pack.to_string_lossy());
-            }
+            let arg = match &family_pack {
+                Some(pack) if arg == "{family_pack}" => pack.as_os_str().to_owned(),
+                _ => arg.into(),
+            };
             args.push(arg);
         }
         let mut command = Command::new(&program);
@@ -471,6 +558,30 @@ pub(crate) fn kill_tree(pid: u32) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pack_selection_accepts_only_existing_bxfam_files() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let pack = dir.path().join("local pack.BXFAM");
+        let text = dir.path().join("pack.txt");
+        let folder = dir.path().join("folder.bxfam");
+        std::fs::write(&pack, b"BXFAM002")?;
+        std::fs::write(&text, [])?;
+        std::fs::create_dir(&folder)?;
+        assert_eq!(
+            selected_family_pack(&pack).map_err(std::io::Error::other)?,
+            pack.canonicalize()?
+        );
+        let status = FamilyPackStatus::from_path(Some(&pack));
+        assert!(status.available);
+        assert_eq!(status.name.as_deref(), Some("local pack.BXFAM"));
+        assert_eq!(status.size, Some(8));
+        assert!(selected_family_pack(&text).is_err());
+        assert!(selected_family_pack(&folder).is_err());
+        assert!(selected_family_pack(&dir.path().join("missing.bxfam")).is_err());
+        assert!(!FamilyPackStatus::from_path(None).available);
+        Ok(())
+    }
+
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
@@ -510,7 +621,14 @@ mod tests {
             &["fingerprint", "{sample}"],
             &["{sample}", "--decompile-function", "0x401000", "--json"],
             &["{sample}", "--decompile-all", "--jobs", "8"],
-            &["family", "match", "--pack", "{family_pack}", "{sample}", "--json"],
+            &[
+                "family",
+                "match",
+                "--pack",
+                "{family_pack}",
+                "{sample}",
+                "--json",
+            ],
         ] {
             assert!(validate_args(&args(list), &none).is_ok(), "{list:?}");
         }

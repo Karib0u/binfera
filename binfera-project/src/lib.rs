@@ -20,6 +20,9 @@ pub use cache::{
     cache_max_bytes, cache_tempfile, prune_cache, publish_cache_file, touch_cache_file,
 };
 
+mod family_pack;
+pub use family_pack::{find_family_pack, resolve_family_pack};
+
 pub const SCHEMA_VERSION: i64 = 3;
 pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_COMMENT_LEN: usize = 2000;

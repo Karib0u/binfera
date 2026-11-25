@@ -1,6 +1,7 @@
+import type { NativeFamilyPack } from "./engine/assets.native";
 import type { Arch } from "./graph";
 import type { Analysis, DecompiledFunction, FamilyReport, Packing } from "./types";
-import { loadAssets, loadEngine, loadEngineId, loadFamilyPack, NATIVE, setCustomFamilyPack, winApiFor } from "./engine/assets";
+import { loadAssets, loadEngine, loadEngineId, loadFamilyPack, NATIVE, pickNativeFamilyPack, setCustomFamilyPack, winApiFor } from "./engine/assets";
 import { summarizeCapa } from "./engine/capa";
 import { EngineError, runEngine, TOO_LARGE } from "./engine/run";
 import { extractStrings } from "./engine/strings";
@@ -40,9 +41,8 @@ function decompileWorkers(size: number) {
 }
 
 /**
- * Analyzes the binary entirely in the browser: binfera's capability engine and the native Ghidra
- * decompiler both run as WebAssembly in workers. The decompiler's functions are split round-robin
- * across several workers; every result is fed into `onUpdate` as it arrives.
+ * Runs Binfera in WebAssembly workers in the browser or as a native sidecar on desktop.
+ * Every result is fed into `onUpdate` as it arrives.
  */
 export async function analyze(file: File, onUpdate: (a: Analysis) => void, signal: AbortSignal, raw?: RawCodeOptions, again = false) {
   const a: Analysis = {
@@ -152,7 +152,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     flush();
   };
   const matchWithPack = async (
-    pack: ArrayBuffer,
+    pack: ArrayBuffer | NativeFamilyPack,
     runSignal: AbortSignal,
     preloaded?: { module: WebAssembly.Module; data: Record<string, ArrayBuffer> },
   ) => {
@@ -161,30 +161,40 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       return { module: loaded.module, data: loaded.data("capa") };
     })();
     if (runSignal.aborted) return;
+    const packBytes = pack instanceof ArrayBuffer ? pack : undefined;
     let json = "";
     await runEngine(
-      { kind: "family", module: engine.module, sample: bytes.slice(0), data: engine.data, pack },
+      { kind: "family", module: engine.module, sample: bytes.slice(0), data: engine.data, pack: packBytes },
       (line) => { json += line; },
       runSignal,
     );
     if (runSignal.aborted) return;
     a.family = JSON.parse(json) as FamilyReport;
+    if (!(pack instanceof ArrayBuffer)) a.familyPackName = pack.name;
     a.familyError = null;
     flush();
   };
-  if (!NATIVE) a.runFamilyPack = async (packFile: File) => {
-    if (raw) return;
-    const packBytes = await packFile.arrayBuffer();
-    if (signal.aborted) return;
-    setCustomFamilyPack(packBytes, packFile.name);
+  const rematch = async (pack: ArrayBuffer | NativeFamilyPack) => {
     a.familyError = null;
     try {
-      await matchWithPack(packBytes.slice(0), signal);
+      await matchWithPack(pack, signal);
     } catch (e) {
       if (signal.aborted) return;
       a.familyError = message(e);
       flush();
     }
+  };
+  if (NATIVE) a.pickFamilyPack = async () => {
+    if (raw || signal.aborted) return;
+    const pack = await pickNativeFamilyPack();
+    if (pack && !signal.aborted) await rematch(pack);
+  };
+  else a.runFamilyPack = async (packFile: File) => {
+    if (raw) return;
+    const packBytes = await packFile.arrayBuffer();
+    if (signal.aborted) return;
+    setCustomFamilyPack(packBytes, packFile.name);
+    await rematch(packBytes.slice(0));
   };
   const cached = sha256 && engineId && !again ? await readResults(sha256, engineId) : null;
   if (cached) {

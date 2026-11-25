@@ -99,6 +99,7 @@ const mocksUrl = moduleUrl(`
   export const TOO_LARGE = 14;
   export const loadEngine = async () => ({});
   export const loadFamilyPack = async () => new Uint8Array(48).buffer;
+  export const pickNativeFamilyPack = async () => null;
   export const setCustomFamilyPack = () => {};
   export const extractStrings = () => ({ strings: [], total: 0 });
   export const summarizeCapa = (json) => json;

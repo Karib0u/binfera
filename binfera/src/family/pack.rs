@@ -67,6 +67,45 @@ pub struct PackStats {
     pub band_records: usize,
 }
 
+/// Counts and LSH configuration from the fixed-size header, without decoding any tables.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackHeader {
+    pub format_version: u32,
+    pub lsh_enabled: bool,
+    pub stats: PackStats,
+}
+
+impl PackHeader {
+    pub fn read(mut reader: impl Read) -> Result<Self, FamilyError> {
+        let mut bytes = [0; HEADER_LEN];
+        reader.read_exact(&mut bytes)?;
+        Self::parse(&bytes)
+    }
+
+    fn parse(bytes: &[u8]) -> Result<Self, FamilyError> {
+        if bytes.len() < HEADER_LEN {
+            return Err(FamilyError::Pack("truncated header".into()));
+        }
+        if bytes.get(..8) != Some(&MAGIC[..]) {
+            return Err(FamilyError::Pack("bad magic".into()));
+        }
+        let flags = read_u32(bytes, 8)?;
+        Ok(Self {
+            format_version: 2,
+            lsh_enabled: flags & FLAG_HAS_BANDS != 0,
+            stats: PackStats {
+                families: read_u32(bytes, 12)? as usize,
+                trusted_sources: read_u32(bytes, 16)? as usize,
+                trusted_shapes: read_u32(bytes, 20)? as usize,
+                shared_shapes: read_u32(bytes, 24)? as usize,
+                content_records: read_u32(bytes, 28)? as usize,
+                shape_records: read_u32(bytes, 32)? as usize,
+                band_records: read_u32(bytes, 36)? as usize,
+            },
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FamilyPack {
     pub(crate) families: Vec<FamilyMeta>,
@@ -227,20 +266,16 @@ impl FamilyPack {
 
     /// Parses and validates a `BXFAM002` pack from raw bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, FamilyError> {
-        if bytes.len() < HEADER_LEN {
-            return Err(FamilyError::Pack("truncated header".into()));
-        }
-        if bytes.get(..8) != Some(&MAGIC[..]) {
-            return Err(FamilyError::Pack("bad magic".into()));
-        }
-        let _flags = read_u32(bytes, 8)?;
-        let family_count = read_u32(bytes, 12)? as usize;
-        let trusted_source_count = read_u32(bytes, 16)? as usize;
-        let trusted_count = read_u32(bytes, 20)? as usize;
-        let shared_count = read_u32(bytes, 24)? as usize;
-        let content_count = read_u32(bytes, 28)? as usize;
-        let shape_count = read_u32(bytes, 32)? as usize;
-        let band_count = read_u32(bytes, 36)? as usize;
+        let PackHeader { stats, .. } = PackHeader::parse(bytes)?;
+        let PackStats {
+            families: family_count,
+            trusted_sources: trusted_source_count,
+            trusted_shapes: trusted_count,
+            shared_shapes: shared_count,
+            content_records: content_count,
+            shape_records: shape_count,
+            band_records: band_count,
+        } = stats;
 
         let mut decoder = ZlibDecoder::new(
             bytes

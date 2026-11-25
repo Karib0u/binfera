@@ -31,12 +31,12 @@ export function CodeOriginCard({
 
   const report = a.family;
 
-  const onPickPack = async (file: File) => {
-    if (!a.runFamilyPack) return;
+  const canPickPack = a.pickFamilyPack || a.runFamilyPack;
+  const onPickPack = async (run: () => Promise<void>) => {
     setLoadingPack(true);
     setPackErr(null);
     try {
-      await a.runFamilyPack(file);
+      await run();
     } catch (e) {
       setPackErr(String((e as Error)?.message ?? e));
     } finally {
@@ -44,7 +44,8 @@ export function CodeOriginCard({
     }
   };
 
-  const packInput = a.runFamilyPack && (
+  const runFamilyPack = a.runFamilyPack;
+  const packInput = runFamilyPack && (
     <input
       ref={inputRef}
       className="sr-only"
@@ -52,19 +53,21 @@ export function CodeOriginCard({
       accept=".bxfam"
       onChange={(e) => {
         const f = e.target.files?.[0];
-        if (f) void onPickPack(f);
+        if (f) void onPickPack(() => runFamilyPack(f));
         e.target.value = "";
       }}
     />
   );
   const pickPack = (label: string) =>
-    a.runFamilyPack && (
+    canPickPack && (
       <button
         type="button"
         className="co-link"
         disabled={loadingPack}
-        onClick={() => inputRef.current?.click()}
-        title="Match against a local .bxfam fingerprint pack. It stays in this browser and is never uploaded."
+        onClick={() => a.pickFamilyPack ? void onPickPack(a.pickFamilyPack) : inputRef.current?.click()}
+        title={a.pickFamilyPack
+          ? "Match against a local .bxfam fingerprint pack"
+          : "Match against a local .bxfam fingerprint pack. It stays in this browser and is never uploaded."}
       >
         {loadingPack ? "Matching…" : label}
       </button>
@@ -73,7 +76,7 @@ export function CodeOriginCard({
   // Stay invisible until analysis has a report, or finishes with an option to load a custom pack.
   if (!report) {
     if (!a.done && !a.familyError) return null;
-    if (!a.runFamilyPack && !a.familyError) return null;
+    if (!canPickPack && !a.familyError) return null;
     return (
       <section className="ov-card co-card co-empty" aria-label="Code origin">
         <header>
@@ -170,8 +173,8 @@ export function CodeOriginCard({
           {num(elig)} of {num(total)} functions fingerprinted
         </span>
         <span aria-hidden>·</span>
-        <span>{getFamilyPackName() ?? "Starter pack"}</span>
-        {a.runFamilyPack && <span aria-hidden>·</span>}
+        <span>{a.familyPackName ?? getFamilyPackName() ?? "Starter pack"}</span>
+        {canPickPack && <span aria-hidden>·</span>}
         {pickPack("Use another pack…")}
       </footer>
     </section>

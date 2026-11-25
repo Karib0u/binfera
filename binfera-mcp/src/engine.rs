@@ -1,6 +1,7 @@
 //! Analysis access for the MCP server. The server has no parser or decompiler of its own: it runs
 //! the `binfera` executable as an isolated child process (so a decompiler crash cannot take the
 //! server down) and keeps the results in an on-disk cache keyed by file hash and engine version.
+use crate::code_origin::FamilyAnalysis;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -250,6 +251,7 @@ pub struct Engine {
     pub exe: PathBuf,
     pub cache_dir: PathBuf,
     pub version: String,
+    pub(crate) family: FamilyAnalysis,
     jobs: Arc<Mutex<HashMap<(String, Job), JobState>>>,
     indexes: HashMap<String, Arc<Index>>,
     images: HashMap<String, Arc<Image>>,
@@ -274,10 +276,12 @@ impl Engine {
         std::thread::spawn(move || {
             let _ = binfera_project::prune_cache(&prune_dir, binfera_project::cache_max_bytes());
         });
+        let family = FamilyAnalysis::new(&exe, &cache_dir, &version);
         Engine {
             exe,
             cache_dir,
             version,
+            family,
             jobs: Arc::default(),
             indexes: HashMap::new(),
             images: HashMap::new(),
@@ -678,8 +682,6 @@ fn build_index(file: &PathBuf) -> Result<Index, String> {
 }
 
 fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), String> {
-    let out = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
-    let mut err = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
     let mut command = Command::new(exe);
     // `BINFERA_RULES_DIR` is clap's environment fallback for `--rules`, which conflicts with the
     // decompile and image modes, so only the capability run may see it. The server may start from
@@ -707,13 +709,30 @@ fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), Strin
         Job::Decompile => command.args(["--decompile-all", "--json"]),
         Job::Capa => command.arg("--json"),
     };
+    run_cached(command, path, target, || Ok(()))
+}
+
+/// Run an engine command with a verified input and publish only completed output.
+pub(crate) fn run_cached(
+    mut command: Command,
+    path: &Path,
+    target: &Path,
+    validate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let out = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
+    let mut err = binfera_project::cache_tempfile(target).map_err(|e| e.to_string())?;
     let mut child = command
         .arg(path)
         .stdin(Stdio::null())
         .stdout(out.reopen().map_err(|e| e.to_string())?)
         .stderr(err.reopen().map_err(|e| e.to_string())?)
         .spawn()
-        .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+        .map_err(|e| {
+            format!(
+                "cannot run {}: {e}",
+                command.get_program().to_string_lossy()
+            )
+        })?;
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -741,6 +760,7 @@ fn run_job(exe: &Path, path: &Path, job: Job, target: &Path) -> Result<(), Strin
             tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
         ));
     }
+    validate()?;
     binfera_project::publish_cache_file(out, target).map_err(|e| e.to_string())
 }
 

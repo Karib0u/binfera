@@ -3,17 +3,34 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+fn cache_directory(target: &Path) -> &Path {
+    target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 /// Each writer owns a same-directory file that can be published atomically on success.
 pub fn cache_tempfile(target: &Path) -> std::io::Result<tempfile::NamedTempFile> {
     let name = target.file_name().unwrap_or_default();
+    let directory = cache_directory(target);
+    // tempfile publishes with Win32 APIs that need a verbatim prefix for long paths.
+    #[cfg(windows)]
+    let directory = directory.canonicalize()?;
     tempfile::Builder::new()
         .prefix(name)
         .suffix(".part")
-        .tempfile_in(target.parent().unwrap_or_else(|| Path::new(".")))
+        .tempfile_in(directory)
 }
 
 /// Publish the first completed result for this key and keep it available to readers.
 pub fn publish_cache_file(file: tempfile::NamedTempFile, target: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let absolute = cache_directory(target)
+        .canonicalize()?
+        .join(target.file_name().ok_or(std::io::ErrorKind::InvalidInput)?);
+    #[cfg(windows)]
+    let target = absolute.as_path();
     match file.persist_noclobber(target) {
         Ok(_) => Ok(()),
         Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists && target.is_file() => Ok(()),
@@ -84,6 +101,27 @@ pub fn prune_cache(dir: &Path, max_bytes: u64) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn publishes_cache_files_in_long_paths_without_clobbering() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let directory = dir
+            .path()
+            .join("nested".repeat(24))
+            .join("cache".repeat(12));
+        fs::create_dir_all(&directory)?;
+        let target = directory.join(format!("{}.family.json", "a".repeat(196)));
+        assert!(target.as_os_str().len() > 260);
+
+        for bytes in [b"first", b"other"] {
+            let mut file = cache_tempfile(&target)?;
+            file.write_all(bytes)?;
+            publish_cache_file(file, &target)?;
+        }
+        assert_eq!(fs::read(target)?, b"first");
+        Ok(())
+    }
 
     fn entry(dir: &Path, name: &str, age: u64) -> std::path::PathBuf {
         let path = dir.join(name);

@@ -1,8 +1,11 @@
 //! CLI subcommand for querying offline `.bxfam` family and trusted-software packs.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use binfera::family::{sketch_bytes, FamilyPack, MatchConfig};
+use binfera::family::{
+    sketch_bytes, FamilyPack, MatchConfig, PackHeader, LSH_BANDS, LSH_SLOTS_PER_BAND,
+};
 
 use crate::{CliError, E_CORRUPT_FILE, E_MISSING_FILE};
 
@@ -12,7 +15,7 @@ pub(crate) enum FamilyCommand {
     Match {
         /// Path to the `.bxfam` pack
         #[arg(long)]
-        pack: PathBuf,
+        pack: Option<PathBuf>,
         /// Binary file to classify
         input: PathBuf,
         #[arg(long, default_value_t = 20)]
@@ -25,6 +28,12 @@ pub(crate) enum FamilyCommand {
         min_coverage: f64,
         #[arg(long, default_value_t = 4)]
         min_band_hits: u8,
+    },
+    /// Show a pack's header without loading its fingerprint tables.
+    Info {
+        /// Path to the `.bxfam` pack
+        #[arg(long)]
+        pack: Option<PathBuf>,
     },
 }
 
@@ -43,7 +52,7 @@ pub(crate) fn run_family_command(
             min_coverage,
             min_band_hits,
         } => run_match(
-            pack,
+            &pack_path(pack.as_deref())?,
             input,
             MatchConfig {
                 min_instructions: *min_instructions,
@@ -56,7 +65,76 @@ pub(crate) fn run_family_command(
             json,
             apply_default_instruction_limit,
         ),
+        FamilyCommand::Info { pack } => run_info(&pack_path(pack.as_deref())?, json),
     }
+}
+
+fn pack_path(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        binfera_project::resolve_family_pack(explicit).ok_or_else(|| {
+            CliError::new(
+                E_MISSING_FILE,
+                format!(
+                    "no family pack found; use --pack <path>, set BINFERA_FAMILY_PACK, or place family.bxfam in {} or beside the binfera executable",
+                    binfera_project::data_dir().display()
+                ),
+            )
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        explicit.map(Path::to_path_buf).ok_or_else(|| {
+            CliError::new(E_MISSING_FILE, "no family pack supplied; use --pack <path>")
+        })
+    }
+}
+
+fn run_info(path: &Path, json: bool) -> Result<(), CliError> {
+    let reading = |e| CliError::new(E_MISSING_FILE, format!("reading {}: {e}", path.display()));
+    let file = File::open(path).map_err(reading)?;
+    let size = file.metadata().map_err(reading)?.len();
+    let header = PackHeader::read(file)
+        .map_err(|e| CliError::new(E_CORRUPT_FILE, format!("reading {}: {e}", path.display())))?;
+    let stats = header.stats;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "path": path.to_string_lossy(),
+                "size": size,
+                "format_version": header.format_version,
+                "family_count": stats.families,
+                "trusted_source_count": stats.trusted_sources,
+                "trusted_shape_count": stats.trusted_shapes,
+                "lsh": {
+                    "enabled": header.lsh_enabled,
+                    "bands": LSH_BANDS,
+                    "slots_per_band": LSH_SLOTS_PER_BAND,
+                    "band_records": stats.band_records,
+                },
+            })
+        );
+    } else {
+        println!(
+            "{} ({size} bytes, BXFAM{:03})",
+            path.display(),
+            header.format_version
+        );
+        println!(
+            "{} families, {} trusted sources, {} trusted shapes",
+            stats.families, stats.trusted_sources, stats.trusted_shapes
+        );
+        if header.lsh_enabled {
+            println!(
+                "LSH enabled: {LSH_BANDS} bands of {LSH_SLOTS_PER_BAND} slots, {} records",
+                stats.band_records
+            );
+        } else {
+            println!("LSH disabled");
+        }
+    }
+    Ok(())
 }
 
 fn run_match(

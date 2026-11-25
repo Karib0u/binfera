@@ -197,7 +197,10 @@ export interface Analysis {
   /** Offline family and trusted-software code-origin breakdown (BXFAM002 pack match). */
   family: FamilyReport | null;
   familyError: string | null;
-  /** Load a local `.bxfam` pack in memory and re-run code-origin matching on the current file. */
+  familyPackName?: string;
+  /** Select a local pack using the desktop file dialog and re-run matching. */
+  pickFamilyPack?: () => Promise<void>;
+  /** Load a local browser pack in memory and re-run matching. */
   runFamilyPack?: (file: File) => Promise<void>;
   decompileError: string | null;
   /** Set when the decompiler refused the file as too large for the browser's memory: nothing is shown. */

@@ -27,12 +27,13 @@ pub use matcher::{
     TrustedSourceHit,
 };
 pub use pack::{
-    BandRecord, FamilyMeta, FamilyPack, HashRecord, PackStats, SharedRecord, TrustedRecord,
+    BandRecord, FamilyMeta, FamilyPack, HashRecord, PackHeader, PackStats, SharedRecord,
+    TrustedRecord,
 };
 
 /// Number of LSH bands derived from the 32-slot MinHash vector (8 bands of 4 slots).
 pub const LSH_BANDS: usize = 8;
-const SLOTS_PER_BAND: usize = 4;
+pub const LSH_SLOTS_PER_BAND: usize = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FamilyError {
@@ -85,13 +86,13 @@ fn fnv1a_step(mut state: u64, bytes: &[u8]) -> u64 {
 
 /// Computes 8 domain-separated 64-bit LSH band hashes from a 32-slot MinHash vector.
 pub fn minhash_bands(minhash: &[u32]) -> Option<[u64; LSH_BANDS]> {
-    if minhash.len() < LSH_BANDS * SLOTS_PER_BAND {
+    if minhash.len() < LSH_BANDS * LSH_SLOTS_PER_BAND {
         return None;
     }
     let mut out = [0_u64; LSH_BANDS];
     for (band_idx, slot_out) in out.iter_mut().enumerate() {
-        let start = band_idx * SLOTS_PER_BAND;
-        let chunk = minhash.get(start..start + SLOTS_PER_BAND)?;
+        let start = band_idx * LSH_SLOTS_PER_BAND;
+        let chunk = minhash.get(start..start + LSH_SLOTS_PER_BAND)?;
         let mut h = fnv1a_step(FNV_OFFSET, &[band_idx as u8]);
         for &val in chunk {
             h = fnv1a_step(h, &val.to_le_bytes());
