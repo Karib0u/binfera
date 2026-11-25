@@ -247,7 +247,7 @@ fn mcp_code_origin_with_and_without_an_installed_pack() {
     mcp.call("open_binary", json!({"path":path}));
     let overview = mcp.call("get_overview", project.clone());
     let summary = &overview["code_origin"];
-    assert_eq!(summary["status"], "ready");
+    assert_eq!(summary["status"], "ready", "{summary:#}");
     assert_eq!(summary["top_family"]["name"], "synthetic-family");
     assert_eq!(
         summary["breakdown"]["trusted_pct"],
@@ -327,7 +327,7 @@ fn mcp_code_origin_with_and_without_an_installed_pack() {
     let empty = FamilyPack::from_tables(vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
     fs::write(&pack_path, empty.to_bytes().unwrap()).unwrap();
     let origin = mcp.call("get_code_origin", project.clone());
-    assert_eq!(origin["status"], "ready");
+    assert_eq!(origin["status"], "ready", "{origin:#}");
     assert_eq!(origin["pack"]["family_count"], 0);
     assert_eq!(origin["function_counts"]["malware"], 0);
     assert_eq!(mcp.call("list_functions", undocumented)["total"], 5);
