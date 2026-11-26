@@ -48,10 +48,10 @@ const image = createImage(new Uint8Array(0x2000), {
 Object.assign(window, { mountWorkbench: (sel: number | "capa" | "strings" | "file", layout = "c") => {
   const a: Analysis = {
     image, functions: new Map([[base, fn]]), order: [base], names: new Map(), strings: [],
-    entry: base, fileName: "work.bin", size: image.bytes.length, arch: "x86", packed: null, stringsTotal: 0,
+    entry: base, fileName: "a".repeat(64) + ".exe", size: image.bytes.length, arch: "x86", packed: null, stringsTotal: 0,
     capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: true, done: true,
   };
   const key = ++run;
   history.replaceState({ binfera: true, run: key, i: 0, ...locOf(sel), at: null }, "");
-  root.render(<Workspace key={key} a={a} onNew={noop} onFile={noop} run={key} active initial={{ sel, at: null, layout }} />);
+  root.render(<Workspace key={key} a={a} onNew={noop} onFile={noop} onCompare={noop} run={key} active initial={{ sel, at: null, layout }} />);
 } });
