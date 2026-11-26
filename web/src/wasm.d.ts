@@ -8,6 +8,8 @@ declare module "*/binfera.js" {
   export default function createBinfera(options: {
     print: (line: string) => void;
     printErr: (line: string) => void;
+    /** One byte of standard input per call; null at the end. */
+    stdin?: () => number | null;
     instantiateWasm: (
       imports: WebAssembly.Imports,
       success: (instance: WebAssembly.Instance, module?: WebAssembly.Module) => void,

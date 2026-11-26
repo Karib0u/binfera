@@ -2,6 +2,15 @@
 
 Run a single function with the arguments you choose and see what it returns, writes and calls. Emulation interprets the code in a private copy of the image: sample instructions never run on your CPU, and imports are stubs that return fixed values.
 
+## In the app
+
+Open a function, then **Emulate** in the function inspector (on a phone, the **Emulate** tab). Both the desktop app and the browser run the same engine.
+
+- **Run function**: give each argument as an integer (decimal, `0x` hex or negative) or as a buffer of hex bytes, UTF-8 or UTF-16 text. Arguments start from the decompiled prototype; pointers become buffers. A buffer is mapped outside the image and its address is passed. Leave its size blank for the input plus 256 bytes. The result shows the stop reason, return value, written memory with decoded text, import calls and registers. **Copy** copies text or bytes, and **Hex** opens bytes that lie in the file.
+- **Call sites**: runs the function at every recovered call site and lists what each call wrote, such as the strings a decryption helper produces. Click a site to open the call.
+
+The app uses 2,000,000 steps and a 5 s timeout per run (15 s for all call sites together), and stops a run after two minutes.
+
 ## Run a function
 
 ```sh
@@ -70,6 +79,7 @@ Floating-point arguments, structs and special ABIs (Go, Delphi, Borland) need ex
 | `registers` | Selected final registers |
 | `calls` | Import calls with their arguments |
 | `writes` | Memory ranges written, with final bytes |
+| `call_writes` | Call-site mode, on each site: ranges written by the call itself, not by the caller before it |
 | `memory` | Ranges you asked to `capture` |
 | `warnings` | Approximations made during the run |
 
@@ -84,7 +94,7 @@ Floating-point arguments, structs and special ABIs (Go, Delphi, Borland) need ex
 
 ## Call sites
 
-`--emulate-call-sites` runs each call to the function from its caller. Each site starts fresh, runs the caller from its entry with your `args`, then runs through the call. A site the caller never reaches reports `reached: false`. Supported on x86, x64 and AArch64.
+`--emulate-call-sites` runs each call to the function from its caller. Each site starts fresh, runs the caller from its entry with your `args`, then runs through the call. A site the caller never reaches reports `reached: false`. The site's `call_writes` holds only what the call wrote, while `result.writes` also includes what the caller wrote on the way. Supported on x86, x64 and AArch64.
 
 ## Limits
 

@@ -1,14 +1,19 @@
 // The desktop workspace in headless Chromium: File map clicks in Data mode, the Overview's Sections link, renaming any local,
-// the header's grouped actions, Data tabs, the search palette's home, scopes and commands, and keyboard access to menus and dialogs.
+// the header's grouped actions, Data tabs, the search palette's home, scopes and commands, keyboard access to menus and dialogs,
+// and the Emulate tab running a string decryption helper through the real engine worker and wasm build.
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { chromium } from "playwright";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const base = 0x401000;
+const wasm = new URL("../src/wasm/", import.meta.url);
+const hasWasm = existsSync(new URL("binfera.wasm", wasm));
+if (!hasWasm && process.env.CI) throw new Error("src/wasm/binfera.wasm is missing: run build:wasm first");
 const temp = await mkdtemp(join(tmpdir(), "binfera-workbench-"));
 const browser = await chromium.launch();
 try {
@@ -25,12 +30,20 @@ try {
       });
     } }],
   });
-  const page = await browser.newPage({ viewport: { width: 1300, height: 800 } });
+  // The page starts the engine worker at /engine.worker.ts, as Vite serves it; the worker imports the wasm glue beside it.
+  await build({ entryPoints: [fileURLToPath(new URL("../src/engine/engine.worker.ts", import.meta.url))], bundle: true, format: "esm",
+    outfile: join(temp, "engine.worker.js"), logLevel: "error", external: ["../wasm/binfera.js"] });
+  const context = await browser.newContext({ viewport: { width: 1300, height: 800 } });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "http://localhost" });
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.context().route("http://localhost/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/app.js" || path === "/app.css") return route.fulfill({ path: join(temp, path.slice(1)) });
+    if (path === "/engine.worker.ts") return route.fulfill({ path: join(temp, "engine.worker.js"), contentType: "text/javascript" });
+    if (path === "/wasm/binfera.js") return route.fulfill({ path: fileURLToPath(new URL("binfera.js", wasm)), contentType: "text/javascript" });
+    if (path === "/binfera.wasm") return route.fulfill({ path: fileURLToPath(new URL("binfera.wasm", wasm)), contentType: "application/wasm" });
     if (path === "/") return route.fulfill({ contentType: "text/html", body: '<!doctype html><link rel="stylesheet" href="app.css"><div id="root"></div><script src="app.js"></script>' });
     return route.fulfill({ status: 404 });
   });
@@ -300,6 +313,72 @@ try {
   await page.keyboard.press("Escape");
   await reportMenu.waitFor({ state: "detached" });
   assert.equal(await report.evaluate((el) => el === document.activeElement), true, "Escape returns focus to Report");
+
+  // Emulate: the inspector tab runs decrypt(buffer, length) on a typed buffer, then across its call sites.
+  if (hasWasm) {
+    await page.setViewportSize({ width: 1300, height: 800 });
+    await page.evaluate(() => localStorage.setItem("binfera-ui:rail-open", "true"));
+    await page.evaluate(() => window.mountEmulate(0x2f));
+    const rail = page.getByRole("complementary", { name: "Function inspector" });
+    await rail.getByRole("button", { name: "Emulate", exact: true }).click();
+    // A helper with callers opens on what each call decodes, with no input needed.
+    const sites = rail.getByRole("region", { name: "Call site results" });
+    await sites.waitFor({ timeout: 60_000 });
+    assert.deepEqual(await sites.locator(".emu-site .emu-text").allTextContents(), ["hello", "example"]);
+    assert.equal(await sites.locator(".emu-stop small").textContent(), "2 calls");
+    await sites.getByRole("button", { name: "Copy all" }).click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "hello\nexample");
+    if (process.env.EMULATE_SHOTS) await page.screenshot({ path: join(process.env.EMULATE_SHOTS, "sites.png") });
+
+    // Own arguments: one field each, read as bytes, text or numbers, named from the prototype.
+    await rail.getByRole("button", { name: "Try your own arguments" }).click();
+    assert.equal(await rail.locator(".emu-arg-name code").first().textContent(), "char *param_1");
+    await rail.getByLabel("Argument 1", { exact: true }).fill("32 3f 36 36 35");
+    assert.equal(await rail.locator(".emu-hint").first().textContent(), "5 bytes");
+    await rail.getByLabel("Argument 2", { exact: true }).fill("5");
+    await rail.getByRole("button", { name: "Run", exact: true }).click();
+    const result = rail.getByRole("region", { name: "Emulation result" });
+    await result.waitFor({ timeout: 60_000 });
+    assert.equal(await result.locator(".emu-out .emu-text").first().textContent(), "hello");
+    assert.match(await result.locator(".emu-out-foot small").first().textContent(), /^param_1 · ASCII$/);
+    assert.match(await result.locator(".emu-stop b").textContent(), /^Finished$/);
+    await result.locator(".emu-out").first().getByRole("button", { name: "Copy", exact: true }).click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "hello");
+    if (process.env.EMULATE_SHOTS) await page.screenshot({ path: join(process.env.EMULATE_SHOTS, "run.png") });
+
+    // Decrypting the string in the image in place offers its bytes in the Hex view.
+    await rail.getByLabel("Argument 1", { exact: true }).fill("0x44");
+    assert.equal(await rail.locator(".emu-hint").first().textContent(), "Number");
+    await rail.getByRole("button", { name: "Run", exact: true }).click();
+    await result.locator(".emu-out-foot small", { hasText: "0x44" }).waitFor({ timeout: 60_000 });
+    assert.equal(await result.locator(".emu-out .emu-text").first().textContent(), "hello");
+    await result.getByRole("button", { name: "Hex", exact: true }).click();
+    await page.getByRole("region", { name: "Hex pane" }).waitFor();
+    await page.waitForFunction(() => /at=0x44\b/.test(location.hash));
+
+    // Back to the call sites, kept from before; a click opens the call.
+    await page.evaluate(() => window.mountEmulate(0x2f));
+    await rail.getByRole("button", { name: "Emulate", exact: true }).click();
+    await rail.getByRole("button", { name: "‹ Call sites" }).click();
+    await sites.waitFor({ timeout: 60_000 });
+    await sites.locator('.emu-site[data-site="33"]').click();
+    await page.waitForFunction(() => /fn=0x0&/.test(location.hash) && /at=0x21\b/.test(location.hash));
+    assert.equal(await page.locator(".cp-title h1").textContent(), "main");
+    await page.locator('.insn.hl[data-addr="33"]').first().waitFor();
+    if (process.env.EMULATE_SHOTS) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.evaluate(() => window.mountEmulate(0x2f));
+      await page.getByRole("tab", { name: "Emulate" }).click();
+      await page.getByRole("region", { name: "Call site results" }).waitFor({ timeout: 60_000 });
+      await page.screenshot({ path: join(process.env.EMULATE_SHOTS, "mobile-sites.png") });
+      await page.getByRole("button", { name: "Try your own arguments" }).click();
+      await page.screenshot({ path: join(process.env.EMULATE_SHOTS, "mobile.png") });
+      await page.setViewportSize({ width: 1300, height: 800 });
+    }
+    console.log("Emulate tab: call sites on open, one-field arguments, decoded output, Copy, Hex and call-site jumps through the wasm engine passed");
+  } else {
+    console.log("Emulate tab: skipped (no src/wasm build; run build:wasm)");
+  }
 
   assert.deepEqual(errors, []);
   console.log("Workbench: file navigation, Data tabs, File map readout, local renaming, capability trigger, breadcrumbs, grouped header, palette home, scopes and commands, menu and dialog keys, desktop Agent layouts, and the Report menu passed");

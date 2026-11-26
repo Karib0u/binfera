@@ -33,6 +33,7 @@ fn kind(args: &[String]) -> Option<&'static str> {
         "--arch",
         "--guess-shellcode",
         "--decompile-function",
+        "--emulate",
     ]
     .iter()
     .any(|f| has(f))

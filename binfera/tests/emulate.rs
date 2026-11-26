@@ -256,6 +256,71 @@ fn direct_call_sites_report_reached_and_unreached_paths() -> anyhow::Result<()> 
     Ok(())
 }
 
+/// main decrypts two XOR-0x5a strings in place through `decrypt(buffer, length)` at 0x2f, which
+/// the web UI's Emulate tab runs (web/scripts/check-emulate.mjs uses the same bytes).
+pub const XOR_STRINGS: &[u8] = &[
+    0x48, 0x83, 0xec, 0x28, 0x48, 0x8d, 0x0d, 0x39, 0, 0, 0, 0xba, 5, 0, 0, 0, 0xe8, 0x1a, 0, 0, 0,
+    0x48, 0x8d, 0x0d, 0x2e, 0, 0, 0, 0xba, 7, 0, 0, 0, 0xe8, 9, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28,
+    0x31, 0xc0, 0xc3, 0xcc, 0xcc, 0x48, 0x89, 0xc8, 0x85, 0xd2, 0x74, 0x0a, 0x80, 0x31, 0x5a, 0x48,
+    0xff, 0xc1, 0xff, 0xca, 0x75, 0xf6, 0xc3, 0xcc, 0xcc, 0xcc, 0x32, 0x3f, 0x36, 0x36, 0x35, 0,
+    0x3f, 0x22, 0x3b, 0x37, 0x2a, 0x36, 0x3f, 0,
+];
+
+#[test]
+fn string_decryption_helper_runs_directly_and_at_each_call_site() -> anyhow::Result<()> {
+    let mut emu = raw(XOR_STRINGS, C::WindowsX64)?;
+    // Direct run: an input buffer the caller supplies.
+    let mut request = req(&[0x100000, 3]);
+    request.address = 0x2f;
+    request.memory.push(MemoryInput {
+        address: 0x100000,
+        data: vec![0x32, 0x3f, 0x36],
+    });
+    let out = emu.run(&request)?;
+    assert_eq!(out.stop.kind, "returned");
+    assert_eq!(out.return_value, 0x100000);
+    assert_eq!(out.writes.len(), 1);
+    assert_eq!(out.writes[0].data, b"hel");
+
+    // Call sites: each caller passes its own encrypted string. `call_writes` holds only what
+    // the call wrote, while `writes` still has what the caller wrote before the second site.
+    let mut request = req(&[]);
+    request.address = 0x2f;
+    let out = emu.call_sites(&request, 8)?;
+    assert_eq!(out.total_sites, 2);
+    let sites: Vec<_> = out.sites.iter().map(|s| (s.caller, s.site)).collect();
+    assert_eq!(sites, [(0, 0x10), (0, 0x21)]);
+    let decoded: Vec<_> = out
+        .sites
+        .iter()
+        .map(|s| {
+            assert!(s.reached);
+            assert_eq!(s.result.stop.kind, "returned");
+            // The call's own return address lands on the synthetic stack; the strings do not.
+            let sp = s.result.registers["RSP"];
+            assert!(s
+                .call_writes
+                .iter()
+                .any(|w| w.address.abs_diff(sp) < 0x100 && w.size == 8));
+            s.call_writes
+                .iter()
+                .filter(|w| w.address.abs_diff(sp) >= 1 << 20)
+                .map(|w| (w.address, w.data.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(decoded[0], [(0x44, b"hello".to_vec())]);
+    assert_eq!(decoded[1], [(0x4a, b"example".to_vec())]);
+    let second = &out.sites[1].result.writes;
+    assert!(second
+        .iter()
+        .any(|w| w.address == 0x44 && w.data == b"hello"));
+    assert!(second
+        .iter()
+        .any(|w| w.address == 0x4a && w.data == b"example"));
+    Ok(())
+}
+
 #[test]
 fn recursive_call_site_returns_from_its_own_frame() -> anyhow::Result<()> {
     // f: test ecx,ecx; jz done; sub rsp,0x28; dec ecx; call f; inc eax; add rsp,0x28; ret;

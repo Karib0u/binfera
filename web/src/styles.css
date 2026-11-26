@@ -820,6 +820,73 @@ button.cap { cursor: pointer; border: 0; }
 .inspector-tabs button { min-height: 30px; padding: 4px 8px; border-radius: 6px; color: var(--muted); }
 .inspector-tabs button:hover { color: var(--text); background: var(--hover); }
 .inspector-tabs button[aria-pressed="true"] { color: var(--text); background: var(--on); font-weight: 600; }
+/* The inspector's Emulate tab: inputs, then results, in the rail's quiet type. */
+.emu { display: flex; flex-direction: column; gap: 12px; padding: 6px 6px 0; font-size: 12.5px; }
+.rail .emu { padding-right: 22px; }
+.emu h3 { font-size: 11px; color: var(--muted); font-weight: 600; margin: 8px 0 2px; }
+.emu .fine { margin: 0 2px; }
+.emu-lede { margin: 0 2px; color: var(--muted); }
+.emu-link { align-self: flex-start; padding: 2px; border: 0; background: none; color: var(--muted); font-size: 12px; }
+.emu-link:hover:not(:disabled) { color: var(--text); }
+.emu-switch { margin-top: 2px; }
+.emu-back { margin-bottom: -4px; }
+.emu-args { display: flex; flex-direction: column; gap: 12px; }
+.emu-arg { display: flex; flex-direction: column; gap: 4px; }
+.emu-arg-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.emu-arg-name code { flex: 1; min-width: 0; color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emu input { min-width: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font: 12.5px var(--mono); }
+.emu input[aria-invalid] { border-color: var(--warn); }
+.emu-hint { color: var(--muted); font-size: 11px; margin-left: 2px; }
+.emu-hint.bad { color: var(--warn); }
+.emu-x { width: 20px; height: 20px; flex: none; border-radius: 5px; color: var(--muted); font-size: 14px; text-align: center; opacity: 0; }
+.emu-arg:hover .emu-x, .emu-x:focus-visible, .emu.m .emu-x { opacity: 1; }
+.emu-x:hover { color: var(--text); background: var(--hover); }
+.emu-actions { display: flex; align-items: center; gap: 6px; }
+.emu-actions button.primary { min-height: 30px; padding: 3px 16px; border: 1px solid var(--text); border-radius: 7px; background: var(--text); color: var(--bg); font-weight: 600; }
+.emu-busy { display: flex; align-items: center; gap: 8px; }
+.emu-busy .emu-link { margin-left: auto; }
+.emu-error { margin-top: 0; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.emu-result { display: flex; flex-direction: column; gap: 8px; }
+.emu-stop { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 2px; color: var(--muted); }
+.emu-stop b { font-weight: 600; color: var(--text); }
+.emu-stop.warn b { color: var(--warn); }
+.emu-ret { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.emu-ret code { color: var(--text); }
+.emu-kv { margin: 0 2px; display: grid; gap: 2px 10px; align-items: center; }
+.emu-kv dt { color: var(--muted); }
+.emu-kv dd { margin: 0; }
+.emu-regs { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.emu-regs > div { display: flex; gap: 8px; }
+.emu-regs dt { width: 36px; font: 11px var(--mono); }
+.emu-out { padding: 10px 12px; border-radius: 10px; background: var(--soft); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.emu-out .emu-text { font-size: 15px; line-height: 1.4; }
+.emu-out-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.emu-out-foot small { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emu-text { color: var(--c-str); font: 13px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.emu-bytes { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.emu-out-actions { display: flex; gap: 4px; }
+.emu-out-actions button, .emu-copy { padding: 1px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 11.5px; }
+.emu-out-actions button:hover, .emu-copy:hover { color: var(--text); }
+.emu-more summary { cursor: pointer; color: var(--muted); padding: 2px; }
+.emu-more[open] { display: flex; flex-direction: column; gap: 4px; }
+.emu-calls { margin: 0; padding: 0 2px; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.emu-calls li { overflow-wrap: anywhere; }
+.emu-calls small { color: var(--muted); margin-left: 4px; }
+.emu-calls .emu-bytes { display: block; }
+.emu-sites { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.emu-sites li { display: flex; align-items: center; gap: 6px; }
+.emu-site { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 9px; background: var(--soft); text-align: left; }
+.emu-site:hover:not(:disabled) { background: var(--hover); }
+.emu-site .emu-text { font-size: 14px; }
+.emu-site-where { color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emu-none { color: var(--muted); }
+.emu-note { font-size: 11px; opacity: .8; }
+.cp-pane.m-emu { padding: 12px 10px 40px; }
+.emu.m { font-size: 14px; gap: 12px; }
+.emu.m input { min-height: 42px; font-size: 16px; border-radius: 10px; }
+.emu.m .emu-actions button.primary { min-height: 42px; }
+.emu.m .emu-link { min-height: 36px; font-size: 14px; }
+.emu.m .emu-site { min-height: 44px; padding: 8px 10px; }
 .inspector-head .inspector-close { flex: none; margin-left: auto; width: 28px; color: var(--muted); font-size: 18px; text-align: center; }
 .cp-body.wide-rail { grid-template-columns: minmax(0, 1fr) minmax(360px, 44%); }
 .cg.compact .cg-bar { padding: 4px 6px; gap: 6px 10px; border-bottom: 0; }

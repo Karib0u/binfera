@@ -113,3 +113,78 @@ fn mcp_tools_emulate_a_project_in_child_processes() -> TestResult {
     assert_eq!(response["result"]["isError"], true);
     Ok(())
 }
+
+/// The web UI's call-site run: a string decryption helper, with the request on stdin as the
+/// browser worker and the desktop app send it.
+#[cfg(feature = "decompiler")]
+#[test]
+fn cli_call_sites_report_each_calls_own_writes() -> TestResult {
+    use std::io::Write;
+    use std::process::Stdio;
+    // main: decrypt(s1, 5); decrypt(s2, 7). decrypt at 0x2f XORs each byte with 0x5a.
+    const XOR_STRINGS: &[u8] = &[
+        0x48, 0x83, 0xec, 0x28, 0x48, 0x8d, 0x0d, 0x39, 0, 0, 0, 0xba, 5, 0, 0, 0, 0xe8, 0x1a, 0,
+        0, 0, 0x48, 0x8d, 0x0d, 0x2e, 0, 0, 0, 0xba, 7, 0, 0, 0, 0xe8, 9, 0, 0, 0, 0x48, 0x83,
+        0xc4, 0x28, 0x31, 0xc0, 0xc3, 0xcc, 0xcc, 0x48, 0x89, 0xc8, 0x85, 0xd2, 0x74, 0x0a, 0x80,
+        0x31, 0x5a, 0x48, 0xff, 0xc1, 0xff, 0xca, 0x75, 0xf6, 0xc3, 0xcc, 0xcc, 0xcc, 0x32, 0x3f,
+        0x36, 0x36, 0x35, 0, 0x3f, 0x22, 0x3b, 0x37, 0x2a, 0x36, 0x3f, 0,
+    ];
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("xor.bin");
+    std::fs::write(&path, XOR_STRINGS)?;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_binfera"))
+        .arg(&path)
+        .args([
+            "--emulate",
+            "0x2f",
+            "--emulate-request",
+            "--emulate-call-sites",
+            "--emulate-max-sites",
+            "64",
+            "--format",
+            "sc64",
+            "--os",
+            "windows",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or("missing stdin")?
+        .write_all(br#"{"address":47,"max_steps":2000000,"timeout_ms":15000}"#)?;
+    let output = child.wait_with_output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(result["total_sites"], 2);
+    let sites = result["sites"].as_array().ok_or("missing sites")?;
+    let mut decoded = Vec::new();
+    for site in sites {
+        assert_eq!(site["reached"], true);
+        assert_eq!(site["result"]["stop"]["kind"], "returned");
+        // The string is the call's only write off the synthetic stack.
+        let text = site["call_writes"]
+            .as_array()
+            .ok_or("missing call_writes")?
+            .iter()
+            .filter(|w| w["address"].as_u64().is_some_and(|a| a < 0x1000))
+            .map(|w| {
+                w["data"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|b| b.as_u64().map(|b| b as u8 as char))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        decoded.push(text);
+    }
+    assert_eq!(decoded, [vec!["hello"], vec!["example"]]);
+    Ok(())
+}

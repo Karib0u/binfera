@@ -251,6 +251,11 @@ export interface Analysis {
   resolved?: Map<number, string>;
   /** Retry one browser function with longer limits, retaining its listing and references. */
   retryFunction?: (address: number) => Promise<void>;
+  /**
+   * Runs one isolated emulation request (JSON, see engine/emulate.ts) of the function at `address`,
+   * or of its call sites when `callSites` is set, and returns the engine's JSON. Imports are stubs.
+   */
+  emulate?: (address: number, request: string, callSites: number | undefined, signal: AbortSignal) => Promise<string>;
   capa: CapaResult | null;
   capaError: string | null;
   /** Offline family and trusted-software code-origin breakdown (BXFAM002/BXFAM003 pack match). */
