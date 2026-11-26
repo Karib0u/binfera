@@ -73,7 +73,8 @@ const tauri = moduleUrl(`
 `);
 const ipc = (source) => source.replaceAll('"@tauri-apps/api/core"', JSON.stringify(tauri));
 const assets = await compile("../src/engine/assets.native.ts", ipc);
-const run = await compile("../src/engine/run.native.ts", ipc);
+const emulate = await compile("../src/engine/emulate.ts");
+const run = await compile("../src/engine/run.native.ts", (source) => ipc(source).replaceAll('"./emulate"', JSON.stringify(emulate)));
 const shellcode = await compile("../src/engine/shellcode.ts");
 const other = moduleUrl(`
   export const digest = async () => null;
