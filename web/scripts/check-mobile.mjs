@@ -33,6 +33,43 @@ try {
   });
   await page.goto("http://localhost/");
   await page.evaluate(() => window.mountMobile());
+
+  // Phone header shows only the puffin mark so the filename and status keep room; tabbar badges compact cleanly.
+  const brandBox = await page.locator(".m-head .brand").boundingBox();
+  assert.ok(brandBox.width <= 64, `mobile brand should be icon-only, got ${brandBox.width}px`);
+  assert.equal(await page.locator(".m-head .wordmark-name").evaluate((el) => getComputedStyle(el).display), "none");
+  assert.equal(await page.locator(".tabbar button", { hasText: "Data" }).locator("em").textContent(), "6k");
+  assert.equal(await page.locator(".tabbar button", { hasText: "Code" }).locator("em").textContent(), "3.5k");
+  for (const em of await page.locator(".tabbar em").all()) {
+    const b = await em.boundingBox();
+    assert.ok(b.x + b.width <= 390, `tabbar badge overflows viewport: ${b.x + b.width}`);
+  }
+
+  // Mobile Strings: uniform single-row filter pills, readable active text (never black-on-black), and origin bottom sheet.
+  await page.locator(".tabbar button", { hasText: "Data" }).tap();
+  await page.locator(".mstrings .chips button").first().waitFor();
+  const usedBtn = page.locator(".mstrings .chips button", { hasText: "Used" });
+  await usedBtn.tap();
+  const chipBoxes = await Promise.all((await page.locator(".mstrings .chips button").all()).map((b) => b.boundingBox()));
+  assert.equal(chipBoxes.length, 4, "All, Used, Indicators, and Origin pill");
+  for (const b of chipBoxes) {
+    assert.ok(Math.abs(b.y - chipBoxes[0].y) <= 2, "all mobile string filter pills stay on one row");
+    assert.ok(b.height >= 35 && b.height <= 40, `uniform pill height, got ${b.height}px`);
+  }
+  const activeStyle = await usedBtn.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { color: s.color, bg: s.backgroundColor, pressed: el.getAttribute("aria-pressed") };
+  });
+  assert.equal(activeStyle.pressed, "true");
+  assert.notEqual(activeStyle.color, activeStyle.bg, "active chip text must contrast with its background");
+  await page.locator(".mstrings .chips button", { hasText: "Origin" }).tap();
+  const originDialog = page.getByRole("dialog", { name: "String origin" });
+  await originDialog.waitFor();
+  await originDialog.getByText("Family (1)").tap();
+  await originDialog.waitFor({ state: "detached" });
+  const activeOrigin = page.locator(".mstrings .chips button", { hasText: "Family" });
+  assert.equal(await activeOrigin.getAttribute("aria-pressed"), "true");
+
   await page.locator(".tabbar button", { hasText: "Code" }).tap();
 
   // The list is windowed: thousands of functions, a few dozen rows in the DOM, and scrolling reaches the end.

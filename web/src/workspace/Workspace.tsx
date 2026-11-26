@@ -14,7 +14,7 @@ import { Notes, NotesProvider, sha256 } from "../names";
 import { project } from "../project/client";
 import AgentDock from "../views/AgentDock";
 import { agent } from "../agent/client";
-import { hex, bytes } from "./labels";
+import { hex, bytes, compactCount } from "./labels";
 import { useMobile } from "./useMobile";
 import { hashOf, locOf, pageUrl, panesOf, parseHash, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
 import { Splitter, useMedia, useStored } from "./panels";
@@ -943,7 +943,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       <div className="dtabs" role="tablist" aria-label="Data" onKeyDown={moveInTabs}>
         {dataTabs.map(([k, name, count, go]) => (
           <button key={k} role="tab" id={"dtab-" + k} aria-selected={chip === k} aria-controls="data-panel" tabIndex={chip === k ? 0 : -1} className={chip === k ? "on" : ""} onClick={go}>
-            {name}{count !== undefined && count !== null && <em>{count}</em>}
+            {name}{count !== undefined && count !== null && <em>{typeof count === "number" ? compactCount(count) : count}</em>}
           </button>
         ))}
       </div>
@@ -1317,15 +1317,15 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         <nav className="tabbar">
           <button className={shown === "capa" ? "on" : ""} onClick={() => showTab("capa")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6l8-3z" /></svg>
-            <span>Overview</span><em>{a.capa ? totalCaps : "…"}</em>
+            <span>Overview</span><em>{a.capa ? compactCount(totalCaps) : "…"}</em>
           </button>
           <button className={shown === "functions" ? "on" : ""} onClick={() => showTab("functions")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" /></svg>
-            <span>Code</span><em>{total || "…"}</em>
+            <span>Code</span><em>{total ? compactCount(total) : "…"}</em>
           </button>
           <button className={shown === "data" ? "on" : ""} onClick={() => showTab("data")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M4 7V5h16v2M12 5v14M9 19h6" /></svg>
-            <span>Data</span><em>{a.strings.length || (a.done ? 0 : "…")}</em>
+            <span>Data</span><em>{a.strings.length ? compactCount(a.strings.length) : a.done ? 0 : "…"}</em>
           </button>
           {agent && project && agentSha && (
             <button className={shown === "agent" ? "on" : ""} onClick={() => setAgentView(true)}>

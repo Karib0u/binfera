@@ -2,11 +2,12 @@ import type { Indicator } from "../indicators";
 import type { Analysis, StringMatch, StringOriginKind } from "../types";
 import { buildStringOriginIndex, ORIGIN_NAME, stringOriginBadge, stringOriginKey } from "../familyOrigin";
 import { useNotes } from "../names";
-import { hex } from "../workspace/labels";
+import { compactCount, hex } from "../workspace/labels";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { IndicatorGroups } from "./IndicatorGroups";
 import { FunctionReferences } from "./FunctionReferences";
 import { revealIn } from "../workspace/panels";
+import Sheet from "../Sheet";
 
 const PAGE = 300;
 /** A string row's identity: address plus encoding, as the list keys rows. */
@@ -37,6 +38,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
 }) {
   const [limit, setLimit] = useState(PAGE);
   const [open, setOpen] = useState<string | null>(null);
+  const [originSheet, setOriginSheet] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const [ownKind, setOwnKind] = useState<StringOriginKind | null>(null);
   const [ownHide, setOwnHide] = useState(false);
@@ -80,21 +82,30 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
   };
   // String origin, from the packs' String Reuse data: one control, as in the function list.
   const originChoice = kindFilter ?? (hideTrusted ? "nolib" : "all");
-  const originSelect = originIndex && !onlyIndicators && (
+  const originOptions: [string, string][] = originIndex ? [
+    ["all", "Any origin"],
+    ...(originCounts.trusted > 0 ? [["nolib", `Hide library (${originCounts.trusted})`] as [string, string]] : []),
+    ...ORIGIN_KINDS.filter((k) => originCounts[k] > 0 || kindFilter === k).map((k): [string, string] => [k, `${ORIGIN_NAME[k]} (${originCounts[k]})`]),
+  ] : [];
+  const chooseOrigin = (v: string) => {
+    if (v === "all" || v === "nolib") { origin.setKind(null); origin.setHideTrusted(v === "nolib"); return; }
+    origin.setHideTrusted(false);
+    origin.setKind(v as StringOriginKind);
+  };
+  const originLabel = originChoice === "all" ? "Origin" : originChoice === "nolib" ? "No library" : ORIGIN_NAME[originChoice as StringOriginKind];
+  const originSelect = originIndex && !onlyIndicators && (mobile ? (
+    <button type="button" className="chip-trigger" aria-pressed={originChoice !== "all"} aria-haspopup="dialog" onClick={() => setOriginSheet(true)}>
+      {originLabel}
+      <svg className="chip-caret" viewBox="0 0 12 12" aria-hidden><path d="M3 4.5 6 7.5 9 4.5" /></svg>
+    </button>
+  ) : (
     <label className={"chip-select" + (originChoice !== "all" ? " on" : "")} title="String origin from the loaded packs: supporting evidence, never the code verdict">
       <span className="sr-only">String origin</span>
-      <select value={originChoice} onChange={(e) => {
-        const v = e.target.value;
-        if (v === "all" || v === "nolib") { origin.setKind(null); origin.setHideTrusted(v === "nolib"); return; }
-        origin.setHideTrusted(false);
-        origin.setKind(v as StringOriginKind);
-      }}>
-        <option value="all">Any origin</option>
-        {originCounts.trusted > 0 && <option value="nolib">Hide library ({originCounts.trusted})</option>}
-        {ORIGIN_KINDS.filter((k) => originCounts[k] > 0 || kindFilter === k).map((k) => <option key={k} value={k}>{ORIGIN_NAME[k]} ({originCounts[k]})</option>)}
+      <select value={originChoice} onChange={(e) => chooseOrigin(e.target.value)}>
+        {originOptions.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
       </select>
     </label>
-  );
+  ));
   const dim = (key: StringEntryKey) => (originOf.get(key)?.kind === "trusted" ? " str-lib" : "");
   useEffect(() => {
     const i = rows.findIndex((x) => cursor != null && cursor >= x.a && cursor < x.a + Math.max(1, x.s.length * (x.w ? 2 : 1)));
@@ -117,9 +128,9 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
           <input placeholder="Search strings" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus={autoFocus && !mobile && matchMedia("(pointer: fine)").matches} />
         </div>
         <div className="chips" role="group" aria-label="Show strings">
-          <button aria-pressed={!onlyIndicators && !onlyRef} onClick={() => { setOnlyIndicators(false); setOnlyRef(false); }}>All <em>{a.strings.length}</em></button>
-          <button aria-pressed={!onlyIndicators && onlyRef} disabled={refs.size === 0} title={refs.size === 0 ? "References appear once decompilation finishes" : "Only strings the code uses"} onClick={() => { setOnlyIndicators(false); setOnlyRef(true); }}>{mobile ? "Used" : "Referenced"} <em>{refs.size}</em></button>
-          <button aria-pressed={onlyIndicators} title="URLs, IP addresses, domains, commands, registry keys, paths and similar" onClick={() => setOnlyIndicators(true)}>Indicators <em>{indicators.length}</em></button>
+          <button aria-pressed={!onlyIndicators && !onlyRef} onClick={() => { setOnlyIndicators(false); setOnlyRef(false); }}>All <em>{mobile ? compactCount(a.strings.length) : a.strings.length}</em></button>
+          <button aria-pressed={!onlyIndicators && onlyRef} disabled={refs.size === 0} title={refs.size === 0 ? "References appear once decompilation finishes" : "Only strings the code uses"} onClick={() => { setOnlyIndicators(false); setOnlyRef(true); }}>{mobile ? "Used" : "Referenced"} <em>{mobile ? compactCount(refs.size) : refs.size}</em></button>
+          <button aria-pressed={onlyIndicators} title="URLs, IP addresses, domains, commands, registry keys, paths and similar" onClick={() => setOnlyIndicators(true)}>Indicators <em>{mobile ? compactCount(indicators.length) : indicators.length}</em></button>
           {originSelect}
         </div>
       </div>
@@ -164,6 +175,17 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
       })}
       {!onlyIndicators && rows.length > limit && <button className="ghost more" onClick={() => setLimit(limit + PAGE * 3)}>Show more ({rows.length - limit})</button>}
       {!onlyIndicators && !rows.length && <p className="empty">No strings match.</p>}
+      {mobile && originSheet && originIndex && (
+        <Sheet title="String origin" onClose={() => setOriginSheet(false)}>
+          <div className="sheet-form">
+            <fieldset className="sheet-radios">
+              {originOptions.map(([k, name]) => (
+                <label key={k}><input type="radio" name="str-origin" checked={originChoice === k} onChange={() => { chooseOrigin(k); setOriginSheet(false); }} /><span>{name}</span></label>
+              ))}
+            </fieldset>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }
