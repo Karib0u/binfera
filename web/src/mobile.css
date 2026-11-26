@@ -28,7 +28,20 @@
 .sheet-form input[type=checkbox] { accent-color: var(--text); flex: none; margin: 0; }
 .sheet .m-strip { border: 0; background: none; padding-bottom: 12px; }
 .sheet .nav.compact { height: 40px; }
-.dtabs button { white-space: nowrap; padding: 0 4px; }
+.dtabs { gap: 2px; padding: 0 4px; }
+.dtabs button { flex: 1 0 auto; white-space: nowrap; padding: 0 8px; }
+/* Phone header: show only the puffin mark so the filename and status have room. */
+.m-head { padding-left: 8px; }
+.m-head .brand { min-width: 44px; justify-content: center; margin-right: 4px; padding-right: 8px; }
+.m-head .brand .wordmark-name { display: none; }
+/* Mobile Strings: let the filter header scroll away and keep filter pills on one uniform, scrollable row. */
+.data.m .mstrings .tools.flat { position: static; }
+.data.m .tools.flat .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 6px; padding-top: 2px; align-items: center; }
+.data.m .tools.flat .chips::-webkit-scrollbar { display: none; }
+.data.m .tools.flat .chips button { flex: none; min-height: 36px; padding: 0 12px; font-size: 13.5px; line-height: 1; white-space: nowrap; background: var(--panel); }
+.data.m .tools.flat .chips button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.data.m .tools.flat .chips em { font-size: 12px; }
+.data.m .tools.flat .chips .chip-caret { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
 @keyframes sheet-rise { from { transform: translateY(100%); } }
 @keyframes sheet-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet-back { animation: none; } }

@@ -14,7 +14,7 @@ import { Notes, NotesProvider, sha256 } from "../names";
 import { project } from "../project/client";
 import AgentDock from "../views/AgentDock";
 import { agent } from "../agent/client";
-import { hex, bytes } from "./labels";
+import { hex, bytes, compactCount } from "./labels";
 import { useMobile } from "./useMobile";
 import { hashOf, locOf, pageUrl, panesOf, parseHash, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
 import { Splitter, useMedia, useStored } from "./panels";
@@ -913,10 +913,10 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const dataBody = (
     <div className={"data" + (mobile ? " m" : "")}>
       {mobile && <div className="dtabs" role="tablist">
-        <button className={chip === "file" ? "on" : ""} onClick={() => setSel("file")}>File {findings > 0 && <em>{findings}</em>}</button>
-        <button className={chip === "strings" ? "on" : ""} onClick={() => setSel("strings")}>Strings <em>{a.strings.length || (a.done ? 0 : "…")}</em></button>
-        <button className={chip === "imports" ? "on" : ""} onClick={() => setSel("imports")}>Imports <em>{image ? image.imports.length + image.exports.length : "…"}</em></button>
-        <button className={chip === "sections" ? "on" : ""} onClick={() => setSel("hex")}>Hex <em>{image?.sections.length ?? "…"}</em></button>
+        <button className={chip === "file" ? "on" : ""} onClick={() => setSel("file")}>File {findings > 0 && <em>{compactCount(findings)}</em>}</button>
+        <button className={chip === "strings" ? "on" : ""} onClick={() => setSel("strings")}>Strings <em>{a.strings.length ? compactCount(a.strings.length) : a.done ? 0 : "…"}</em></button>
+        <button className={chip === "imports" ? "on" : ""} onClick={() => setSel("imports")}>Imports <em>{image ? compactCount(image.imports.length + image.exports.length) : "…"}</em></button>
+        <button className={chip === "sections" ? "on" : ""} onClick={() => setSel("hex")}>Hex <em>{image ? compactCount(image.sections.length) : "…"}</em></button>
       </div>}
       {mobile && chip === "sections" ? <div className="data-hex">{hexFull}</div> : (
         <div className={mobile ? "data-single" : "data-split"}>
@@ -1237,15 +1237,15 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         <nav className="tabbar">
           <button className={shown === "capa" ? "on" : ""} onClick={() => showTab("capa")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6l8-3z" /></svg>
-            <span>Overview</span><em>{a.capa ? totalCaps : "…"}</em>
+            <span>Overview</span><em>{a.capa ? compactCount(totalCaps) : "…"}</em>
           </button>
           <button className={shown === "functions" ? "on" : ""} onClick={() => showTab("functions")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" /></svg>
-            <span>Code</span><em>{total || "…"}</em>
+            <span>Code</span><em>{total ? compactCount(total) : "…"}</em>
           </button>
           <button className={shown === "data" ? "on" : ""} onClick={() => showTab("data")}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M4 7V5h16v2M12 5v14M9 19h6" /></svg>
-            <span>Data</span><em>{a.strings.length || (a.done ? 0 : "…")}</em>
+            <span>Data</span><em>{a.strings.length ? compactCount(a.strings.length) : a.done ? 0 : "…"}</em>
           </button>
           {agent && project && agentSha && (
             <button className={shown === "agent" ? "on" : ""} onClick={() => setAgentView(true)}>
