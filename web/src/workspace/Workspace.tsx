@@ -8,7 +8,7 @@ import CallGraph from "../CallGraph";
 import Navigator from "../Navigator";
 import MoreMenu, { type MenuItem } from "../MoreMenu";
 import Sheet from "../Sheet";
-import Palette, { type PaletteItem } from "../Palette";
+import Palette, { type PaletteItem, type PaletteSection } from "../Palette";
 import Shortcuts, { isMac, searchKey } from "../Shortcuts";
 import { Notes, NotesProvider, sha256 } from "../names";
 import { project } from "../project/client";
@@ -22,14 +22,13 @@ import { useContainment, ownersOf, useFunctionRules } from "./ownership";
 import { useReferences } from "./references";
 import { Glance } from "../views/Glance";
 import { FindingsCard } from "../views/Dashboard";
-import ThemeToggle from "../ThemeToggle";
 import ReportMenu from "../ReportMenu";
 import VirtualList, { type VirtualListHandle } from "./VirtualList";
 import ContextMenu, { copyText, type MenuEntry } from "../ContextMenu";
 import { toast, ToastHost } from "../Toast";
 import type { Reverted } from "../names";
 import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../report";
-import { chooseTheme, storedTheme } from "../theme";
+import { useTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
 import { FirstLook, guessToolchains } from "../views/FirstLook";
 import { OriginBanner, PacksDialog, canManagePacks, packsLabel } from "../views/CodeOrigin";
@@ -295,6 +294,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     };
   }, []);
   const [help, setHelp] = useState(false);
+  const [theme, flipTheme] = useTheme();
   // Narrow layout only: the agent as a tab. The wide layout docks it beside the code instead.
   const [agentView, setAgentView] = useState(false);
   // The agent panel (desktop only): a chat with the analyst's own Claude Code or Codex beside the code.
@@ -462,6 +462,18 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const placed = typeof sel === "number" ? sel : null;
   // Opening a function counts as examining it; the list's progress follows.
   useEffect(() => { if (placed !== null && notes.markExamined(placed)) bump(); }, [placed, noteKey]);
+  // The functions opened most recently, newest first, for the empty search box. Kept per file, like stars.
+  const [recent, setRecent] = useState<number[]>([]);
+  const recentKey = noteKey ? "binfera.recent:" + noteKey : null;
+  useEffect(() => {
+    if (!recentKey) return;
+    let saved: number[] = [];
+    try { const v = JSON.parse(localStorage.getItem(recentKey) ?? "[]"); if (Array.isArray(v)) saved = v.filter((x) => typeof x === "number"); } catch { /* none saved */ }
+    // This session's visits stay on top of what an earlier one saved.
+    setRecent((r) => [...r, ...saved.filter((x) => !r.includes(x))].slice(0, 5));
+  }, [recentKey]);
+  useEffect(() => { if (placed !== null) setRecent((r) => [placed, ...r.filter((x) => x !== placed)].slice(0, 5)); }, [placed]);
+  useEffect(() => { if (recentKey && recent.length) try { localStorage.setItem(recentKey, JSON.stringify(recent)); } catch { /* storage full or blocked */ } }, [recent, recentKey]);
   useEffect(() => { embedded?.onPlace(placed); }, [placed]);
   useEffect(() => { if (embedded) bump(); }, [embedded?.tick]);
 
@@ -910,17 +922,34 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   // Strings, imports and sections are one explorer; the bytes of whatever is selected sit beside it.
   const hexFull = image ? <HexView image={image} cursor={cursor} tick={cursorTick} selection={hexSel} onCursor={(va) => { setCursor(va); setHexSel(null); }} onSelect={setHexSel} strAt={strAtVa} owner={ownerLabel} xrefCount={xrefCount} onXrefs={showRefs}
     onOpenCode={(va) => { const o = ownerLabel(va); if (o) { setCursor(va); setSel(o.address); } }} /> : <p className="empty">The file is not loaded.</p>;
+  /** Data's views as tabs, the same on a phone and a desktop; a phone adds Hex, which a desktop shows inside File. */
+  const dataTabs: [typeof chip, string, string | number | null | undefined, () => void][] = [
+    ["file", "File", findings || null, () => setSel("file")],
+    ["strings", "Strings", a.strings.length || (a.done ? 0 : "…"), () => setSel("strings")],
+    ["imports", mobile ? "Imports" : "Imports & exports", image ? image.imports.length + image.exports.length : "…", () => setSel("imports")],
+    ...(mobile ? [["sections", "Hex", image?.sections.length ?? "…", () => setSel("hex")] as [typeof chip, string, number | string, () => void]] : []),
+  ];
+  /** Left and right arrows, Home and End move between the tabs and open the one reached. */
+  const moveInTabs = (e: React.KeyboardEvent<HTMLElement>) => {
+    const at = dataTabs.findIndex(([k]) => k === chip);
+    const to = e.key === "ArrowRight" ? (at + 1) % dataTabs.length : e.key === "ArrowLeft" ? (at - 1 + dataTabs.length) % dataTabs.length : e.key === "Home" ? 0 : e.key === "End" ? dataTabs.length - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    dataTabs[to][3]();
+    requestAnimationFrame(() => document.getElementById("dtab-" + dataTabs[to][0])?.focus());
+  };
   const dataBody = (
     <div className={"data" + (mobile ? " m" : "")}>
-      {mobile && <div className="dtabs" role="tablist">
-        <button className={chip === "file" ? "on" : ""} onClick={() => setSel("file")}>File {findings > 0 && <em>{compactCount(findings)}</em>}</button>
-        <button className={chip === "strings" ? "on" : ""} onClick={() => setSel("strings")}>Strings <em>{a.strings.length ? compactCount(a.strings.length) : a.done ? 0 : "…"}</em></button>
-        <button className={chip === "imports" ? "on" : ""} onClick={() => setSel("imports")}>Imports <em>{image ? compactCount(image.imports.length + image.exports.length) : "…"}</em></button>
-        <button className={chip === "sections" ? "on" : ""} onClick={() => setSel("hex")}>Hex <em>{image ? compactCount(image.sections.length) : "…"}</em></button>
-      </div>}
+      <div className="dtabs" role="tablist" aria-label="Data" onKeyDown={moveInTabs}>
+        {dataTabs.map(([k, name, count, go]) => (
+          <button key={k} role="tab" id={"dtab-" + k} aria-selected={chip === k} aria-controls="data-panel" tabIndex={chip === k ? 0 : -1} className={chip === k ? "on" : ""} onClick={go}>
+            {name}{count !== undefined && count !== null && <em>{typeof count === "number" ? compactCount(count) : count}</em>}
+          </button>
+        ))}
+      </div>
       {mobile && chip === "sections" ? <div className="data-hex">{hexFull}</div> : (
         <div className={mobile ? "data-single" : "data-split"}>
-          <div className="data-list">
+          <div className="data-list" role="tabpanel" id="data-panel" aria-labelledby={"dtab-" + chip}>
             {chip === "strings" && <StringsView a={a} indicators={indicators} onlyIndicators={strIndicators} setOnlyIndicators={setStrIndicators} refs={strRefs} onGoto={openRef} query={strQuery} setQuery={setStrQuery} onHex={showHex} onlyRefPref={strOnlyRef} setOnlyRef={setStrOnlyRef} mobile={mobile} onPeek={showHex} origin={stringOrigin} />}
             {chip === "imports" && <ImportsView a={a} refs={importRefs} label={label} onFn={openRef} onAddr={jump} onSymbol={openSymbol} query={impQuery} setQuery={setImpQuery} mobile={mobile} />}
             {chip === "file" && image && <FileView image={image} fileName={a.fileName} cursor={cursor} onPick={(va) => showHex(va)} onAnalyze={embedded ? undefined : onFile} />}
@@ -1095,6 +1124,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   };
 
   const againMenu: MenuItem[] = onAnalyzeAgain ? [{ label: "Analyze again", onClick: onAnalyzeAgain }] : [];
+  const packsAvailable = !a.shellcode && (a.family || a.familyError || canManagePacks(a));
   const goMenu: MenuItem[] = [
     { label: "Undo", onClick: undo, disabled: !notes.canUndo() },
     { label: "Redo", onClick: redo, disabled: !notes.canRedo() },
@@ -1103,13 +1133,63 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
     { label: "Locate in file…", onClick: () => setLocateOpen(true), disabled: !image },
-    ...(!a.shellcode && (a.family || a.familyError || canManagePacks(a)) ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
+    ...(packsAvailable ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
     { label: "Report (Markdown)", onClick: () => saveReport("md"), disabled: !a.settled },
     { label: "Report (web page)", onClick: () => saveReport("html"), disabled: !a.settled },
     { label: "Functions (CSV)", onClick: () => saveCsv("functions"), disabled: !a.settled },
     { label: "Strings (CSV)", onClick: () => saveCsv("strings"), disabled: !a.settled },
     { label: "All data (JSON)", onClick: exportJson, disabled: !a.settled },
-    { label: document.documentElement.dataset.theme === "dark" || (!storedTheme() && matchMedia("(prefers-color-scheme: dark)").matches) ? "Light mode" : "Dark mode", onClick: () => chooseTheme(document.documentElement.dataset.theme === "dark" || (!storedTheme() && matchMedia("(prefers-color-scheme: dark)").matches) ? "light" : "dark") },
+    { label: theme === "dark" ? "Light mode" : "Dark mode", onClick: flipTheme },
+  ];
+  /** The empty search box: where the analyst was, what they starred, and the main views. */
+  const paletteHome = (): PaletteSection[] => {
+    const fn = (ad: number): PaletteItem => ({ kind: "function", title: label(ad), detail: hex(ad), run: () => setSel(ad) });
+    const view = (title: string, detail: string | undefined, run: () => void): PaletteItem => ({ kind: "view", title, detail, run });
+    return [
+      { title: "Recent", items: recent.filter((ad) => a.order.includes(ad)).map((ad) => (ad === placed ? { ...fn(ad), kind: "open" } : fn(ad))) },
+      { title: "Starred", items: a.order.filter((ad) => isStarred(ad)).slice(0, 10).map(fn) },
+      { title: "Go to", items: [
+        view("Overview", a.capa ? `${totalCaps} capabilities` : undefined, () => setSel("capa")),
+        view("Strings", a.strings.length ? `${a.strings.length}` : undefined, () => setSel("strings")),
+        view("Imports", image && image.imports.length + image.exports.length ? `${image.imports.length + image.exports.length}` : undefined, () => setSel("imports")),
+        ...(image ? [view("File", findings ? `${findings} findings` : undefined, () => setSel("file"))] : []),
+      ] },
+    ];
+  };
+  /** What `>` runs in the search box. Only what applies to this file and this screen is listed. */
+  const paletteCommands = (): PaletteItem[] => {
+    const cmd = (title: string, run: () => void, detail?: string): PaletteItem => ({ kind: "command", title, detail, run });
+    const desktop = !mobile;
+    const hasCode = a.order.length > 0;
+    return [
+      cmd("Toggle theme", flipTheme, theme === "dark" ? "to light" : "to dark"),
+      ...(desktop && !embedded && hasCode ? [cmd(focus ? "Leave focus mode" : "Focus mode", () => { if (!focus) openCode(); setFocus(!focus); }, "F")] : []),
+      ...(packsAvailable ? [cmd("Fingerprint packs…", () => setPacksOpen(true))] : []),
+      ...(a.settled ? [cmd("Export Markdown report", () => saveReport("md")), cmd("Export HTML report", () => saveReport("html"))] : []),
+      ...(onCompare && !embedded ? [cmd("Compare with…", onCompare)] : []),
+      ...(libraryCount ? [cmd(hideLibrary && originFilter !== "trusted" ? "Show library functions" : "Hide library functions", () => {
+        const hide = !(hideLibrary && originFilter !== "trusted");
+        if (originFilter === "trusted") setOriginFilter(null);
+        setHideLibrary(hide);
+        toast(hide ? `Hid ${libraryCount} library functions` : "Showing library functions");
+      }, `${libraryCount}`)] : []),
+      ...(desktop && hasCode ? [cmd("Split Asm", () => { openCode(); setLayout("c+asm" as Layout); }, "C and Asm side by side")] : []),
+      ...(desktop && hasCode ? [cmd("Reset pane layout", () => {
+        setLayout((compact ? "c" : "c+listing") as Layout);
+        setListPref(true); setListWidth(280); setRailPref(null);
+        toast("Pane layout reset");
+      })] : []),
+      cmd("Keyboard shortcuts", () => setHelp(true), "?"),
+      ...(!embedded ? [cmd("Analyze another file", onNew)] : []),
+    ];
+  };
+  /** The desktop header's less frequent actions, behind one ⋯ button. */
+  const topMenu: MenuItem[] = [
+    ...(!embedded && onCompare ? [{ label: "Compare with…", onClick: onCompare }] : []),
+    ...(!embedded ? [{ label: "Analyze another file", onClick: onNew }] : []),
+    ...(packsAvailable ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
+    ...(!compact ? [{ label: theme === "dark" ? "Light mode" : "Dark mode", onClick: flipTheme }] : []),
+    { label: "Keyboard shortcuts", onClick: () => setHelp(true) },
   ];
   const strip = (
     <div className="m-strip">
@@ -1284,7 +1364,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           </Sheet>
         )}
         {!embedded && <ToastHost />}
-        {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
+        {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} home={paletteHome} commands={paletteCommands} onClose={() => setPalette(null)} />}
         {packsOpen && <PacksDialog a={a} mobile onClose={() => setPacksOpen(false)} />}
         {commentBox}
         {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
@@ -1322,15 +1402,13 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           ...(onAnalyzeAgain ? [{ title: "Analysis", items: againMenu }] : []),
           { title: "Everything", items: [{ label: "All analysis data", note: "JSON", onClick: exportJson }] },
         ]} />}
-        {!compact && <ThemeToggle />}
-        {!embedded && onCompare && <button className="ghost" onClick={onCompare} title="Compare this file with another: choose the second file next">Compare…</button>}
-        {!embedded && <button className="ghost" onClick={onNew} title="Open another file; this one stays available">New</button>}
         {agent && project && agentSha && (
           <button className={"ghost agent-toggle" + (agentOpen ? " on" : "")} aria-pressed={agentOpen} onClick={() => setAgentOpen(!agentOpen)} title={`Work with your agent on this file (${isMac ? "⌘" : "Ctrl "}J)`}>
             <svg viewBox="0 0 24 24" aria-hidden><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3zM18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z" /></svg>
             Agent{agentBusy && <i className="agent-dot" role="status" aria-label="The agent is working" />}
           </button>
         )}
+        {topMenu.length > 0 && <MoreMenu items={topMenu} />}
         {progressBar}
       </header>
 
@@ -1352,22 +1430,9 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         </nav>
         <div className="main-col">
           {mode !== "overview" && image && image.sections.length > 0 && (
-            <div className="nav-row">
-              {!(focus && mode === "code") && <span className="nav-label" title="The whole file, left to right. Click to jump; the red mark is the cursor.">File map</span>}
-              {!(focus && mode === "code") && <Navigator a={a} position={navPos} range={navRange} onNavigate={navigate} />}
-              <details className="nav-key">
-                <summary>Legend</summary>
-                <div className="nav-legend">
-                  <span><i style={{ background: "var(--c-fn)" }} />code</span>
-                  <span><i style={{ background: "color-mix(in srgb, var(--c-fn) 22%, var(--panel))" }} />not disassembled</span>
-                  <span><i style={{ background: "var(--c-str)" }} />strings</span>
-                  <span><i style={{ background: "var(--c-num)" }} />imports</span>
-                  <span><i style={{ background: "var(--line)" }} />data</span>
-                </div>
-              </details>
-            </div>
+            !(focus && mode === "code") && <div className="nav-row"><Navigator a={a} position={navPos} range={navRange} onNavigate={navigate} /></div>
           )}
-          <div className={"body " + (mode === "code" ? "has-fns" : mode === "data" ? "has-cats" : "wide")}
+          <div className={"body " + (mode === "code" ? "has-fns" : "wide")}
             style={mode === "code" ? { gridTemplateColumns: listPref && !focus ? `${listShownWidth}px minmax(0, 1fr)` : "minmax(0, 1fr)" } : undefined}>
             {mode === "code" && listPref && !focus && (
               <aside aria-label="Functions">
@@ -1376,14 +1441,6 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
               </aside>
             )}
             {mode === "code" && listPref && !focus && <Splitter label="Resize the function list" value={listShownWidth} min={200} max={560} onChange={setListWidth} style={{ left: listShownWidth }} />}
-            {mode === "data" && (
-              <aside className="cats">
-                <h3>Data</h3>
-                <button aria-current={chip === "file" ? "true" : undefined} className={"item" + (chip === "file" ? " on" : "")} onClick={() => setSel("file")}><span>File</span>{findings > 0 && <em>{findings}</em>}</button>
-                <button aria-current={chip === "strings" ? "true" : undefined} className={"item" + (chip === "strings" ? " on" : "")} onClick={() => setSel("strings")}><span>Strings</span><em>{a.strings.length || (a.done ? 0 : "…")}</em></button>
-                <button aria-current={chip === "imports" ? "true" : undefined} className={"item" + (chip === "imports" ? " on" : "")} onClick={() => setSel("imports")}><span>Imports &amp; exports</span><em>{image ? image.imports.length + image.exports.length : "…"}</em></button>
-              </aside>
-            )}
             <main className="pane">{mode === "overview" ? overview : mode === "data" ? dataBody : fnView ? <>{fnNote}{fnView}</> : <p className="empty">No functions to show.</p>}</main>
           </div>
         </div>
@@ -1423,7 +1480,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       <div className="sr-only" role="status">{phase}</div>
       {dragging && <div className="file-drop-overlay">Drop to analyze a new binary</div>}
       {!embedded && <ToastHost />}
-      {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
+      {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} home={paletteHome} commands={paletteCommands} onClose={() => setPalette(null)} />}
       {packsOpen && <PacksDialog a={a} mobile={false} onClose={() => setPacksOpen(false)} />}
       {commentBox}
       {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}

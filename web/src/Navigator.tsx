@@ -14,7 +14,7 @@ export default function Navigator({ a, position, onNavigate, compact, range }: {
   const box = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(0);
   const [theme, setTheme] = useState(0);
-  const [hover, setHover] = useState<{ x: number; text: string } | null>(null);
+  const [hover, setHover] = useState<{ x: number; text: string; kind: number } | null>(null);
 
   const segs = useMemo<Seg[]>(() => {
     if (!image) return [];
@@ -98,18 +98,24 @@ export default function Navigator({ a, position, onNavigate, compact, range }: {
   };
   const pos = position === null ? null : unitOf(position);
   const r0 = range ? unitOf(range.from) : null, r1 = range ? unitOf(range.to) : null;
-  const kindName = (u: number) => ["empty", "data", "not disassembled", "code", "string", "import slot"][bins[Math.min(BINS - 1, Math.floor(u * BINS))]] ?? "";
+  const kindAt = (u: number) => bins[Math.min(BINS - 1, Math.floor(u * BINS))];
+  const KIND_NAME = ["empty", "data", "not disassembled", "code", "string", "import slot"];
+  /** The legend, in the readout: what the colour under the pointer means, where it is, and its file offset. */
+  const readout = (u: number) => {
+    const { s, va } = vaAt(u), kind = kindAt(u), off = image?.vaToOff(va);
+    return { x: u * 100, kind, text: [hex(va), s.name, KIND_NAME[kind] ?? "", off != null ? "file offset " + hex(off) : ""].filter(Boolean).join(" · ") };
+  };
 
   return (
-    <div className={"nav" + (compact ? " compact" : "")} ref={box} role="slider" tabIndex={0} aria-label="File navigator" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((pos ?? 0) * 100)} aria-valuetext={position === null ? "no position" : hex(position)}
+    <div className={"nav" + (compact ? " compact" : "")} ref={box} role="slider" tabIndex={0} aria-label="File map" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((pos ?? 0) * 100)} aria-valuetext={position === null ? "no position" : hex(position)}
       onClick={(e) => onNavigate(vaAt(at(e.clientX)).va)}
       onKeyDown={(e) => {
         if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
         e.preventDefault();
         onNavigate(vaAt(Math.min(1, Math.max(0, (pos ?? 0) + (e.key === "ArrowRight" ? 0.01 : -0.01)))).va);
       }}
-      onMouseMove={(e) => { const u = at(e.clientX), { s, va } = vaAt(u); setHover({ x: u * 100, text: `${hex(va)} · ${s.name} · ${kindName(u)}` }); }}
-      onMouseLeave={() => setHover(null)} title={a.done ? undefined : "Code coverage fills in as decompilation finishes"}>
+      onMouseMove={(e) => setHover(readout(at(e.clientX)))}
+      onMouseLeave={() => setHover(null)} title={a.done ? "File map: the whole file, left to right. Click to jump." : "File map. Code coverage fills in as decompilation finishes."}>
       <canvas ref={canvas} style={{ width: "100%", height: "100%" }} />
       {segs.map((s) => (
         <div className="nav-sec" key={s.name + s.va} style={{ left: `${s.from * 100}%`, width: `${(s.to - s.from) * 100}%` }}>
@@ -118,7 +124,7 @@ export default function Navigator({ a, position, onNavigate, compact, range }: {
       ))}
       {r0 !== null && r1 !== null && <i className="nav-range" style={{ left: `${r0 * 100}%`, width: `${Math.max(r1 - r0, 0) * 100}%` }} />}
       {pos !== null && <i className="nav-cur" style={{ left: `${pos * 100}%` }} />}
-      {hover && <div className="nav-tip" style={{ left: `${Math.min(hover.x, 78)}%` }}>{hover.text}</div>}
+      {hover && <div className="nav-tip" style={{ left: `${Math.min(hover.x, 72)}%` }}><i className={"nav-swatch k" + hover.kind} aria-hidden />{hover.text}</div>}
     </div>
   );
 }

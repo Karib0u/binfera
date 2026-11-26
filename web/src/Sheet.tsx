@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { createPortal } from "react-dom";
 import { useKeyboardInset } from "./keyboard";
+import { useDialog } from "./dialog";
 
 /**
  * A bottom sheet for phones: dim backdrop, grab handle, swipe down or tap outside to close.
@@ -11,12 +12,8 @@ export default function Sheet({ title, onClose, children }: { title?: string; on
   useKeyboardInset();
   const panel = useRef<HTMLDivElement>(null);
   const drag = useRef<{ y: number; dy: number } | null>(null);
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", esc);
-    const opener = document.activeElement as HTMLElement | null;
-    return () => { document.removeEventListener("keydown", esc); opener?.focus?.(); };
-  }, [onClose]);
+  // Escape closes, Tab stays inside the sheet, and focus returns to what opened it.
+  useDialog(panel, onClose);
   const move = (y: number) => {
     if (!drag.current) return;
     drag.current.dy = Math.max(0, y - drag.current.y);
@@ -30,7 +27,7 @@ export default function Sheet({ title, onClose, children }: { title?: string; on
   };
   return createPortal(
     <div className="sheet-back" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} ref={panel}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} ref={panel} tabIndex={-1}>
         {/* The handle and the title both drag: the title is a bigger target than the handle's 4px bar. */}
         <div className="sheet-head"
           onPointerDown={(e) => { drag.current = { y: e.clientY, dy: 0 }; e.currentTarget.setPointerCapture(e.pointerId); }}
