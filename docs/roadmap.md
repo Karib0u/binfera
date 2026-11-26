@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-23 (workbench and mobile polish shipped). Ranked by **analyst value for effort**. Every item has an effort estimate (`S`: ~1 day, `M`: a few days, `L`: weeks) and a concrete **Done when** check.
+Updated: 2026-11-26 (Code origin, phone rework, and calmer workbench shipped). Ranked by **analyst value for effort**. Every item has an effort estimate (`S`: ~1 day, `M`: a few days, `L`: weeks) and a concrete **Done when** check.
 
 **Goal:** Build the next-generation IDA/Ghidra — fast, responsive on desktop and mobile, and effortless to work in:
 - **Immediate:** 60fps navigation and search at scale, zero-friction triage, and native-feeling mobile + desktop UI.
@@ -51,7 +51,7 @@ Pulled opportunistically when real samples or analyst pain justify the effort; r
 |---|---|
 | **Decompiler output** | Own-function signature propagation (`L`, 53% incomplete share), x86 SEH3/4 & Delphi `try` frames (`M`, 6%), `unaff_`/`in_` register cleanup (`M`, 10%), switch-table & bad-instruction fixes (`M`, 4%), small CI review set (~30 functions). |
 | **Type knowledge** | COM vtable typing from IIDs; Windows syscall tables; API hash resolution; `GetProcAddress` in locals/structs; external PDB loading; mangled C++ import signatures (`msvcp*`/`mfc*`/`Qt`); static library FID packs (OpenSSL, zlib, libcurl, Boost). |
-| **Recovery & formats** | ELF `.plt` stubs & `.eh_frame` interior starts; PE Guard CF table, x64 C scope / FH4 tables, x86 gap validation; Mach-O ObjC/Swift metadata; ARM64/ARM32/MIPS recovery details; Go/Rust/C++ idioms. |
+| **Recovery & formats** | ELF `.plt` stubs & `.eh_frame` interior starts; PE x64 C scope / FH4 tables, x86 gap validation; Mach-O ObjC/Swift metadata; ARM64/ARM32/MIPS recovery details; Go/Rust/C++ idioms. |
 | **Packed & dumped** | Static UPX unpacking (keeping original + unpacked image); dumped/injected PE images with unaligned sections. |
 | **Ecosystem (P2)** | YARA-X scanning in the workbench (jump to hex/function); .NET C# decompilation (beyond IL); obfuscation folding; File Analysis Bus hand-off by SHA-256. |
 | **On demand (P3)** | PowerPC / RISC-V / MIPS64, bytecode viewers, custom hex templates, manual function start overrides. |
@@ -64,7 +64,9 @@ Pulled opportunistically when real samples or analyst pain justify the effort; r
 - **Recovery & types:** Go `pclntab`, DWARF, Delphi VMTs/RTTI, Nim, demangling, FLIRT & Function ID, Win32 metadata + phnt native API + CRT prototype packs (#57), `GetProcAddress` global resolution (#59, #64), single-function global calls (#64), symbolic Win32 enum/flag constants (#62), import-register call resolution (#61).
 - **Decompiler & engines:** Embedded Ghidra C++ core + SLEIGH (x86, x64, AArch64, ARM32/Thumb, MIPS32), native Rust capa, binary diffing (`binfera diff` + Compare workspace), isolated p-code function emulation (CLI & MCP), MCP server + shared SQLite project DB + desktop Agent dock.
 - **Viewers:** Tiling code panes, C (one line per statement, viewer-wrapped, `NULL`/`INVALID_HANDLE_VALUE` #65), Assembly, CFG, Call graph, virtualized IDA-style Listing (#51, #58), colored header Hex view, Entropy strip, Strings/Indicators, Imports/Exports, jumpable uncertain call-site warnings (#69), file-handle provenance (#70).
-- **Workbench & mobile polish (#72–#77):** triage sidebar with Importance / Bottom-up sorts, Hide library and Examined / Documented progress (#72); File map, Overview Sections jump and `n` on any local, with right-click Rename variable (#73); hex byte selection, Redo and action toasts (#74); windowed phone function list, 16px / 44px palette, comment sheet and keyboard-aware sheets (#75); tapped-word action bar, header Star and call-graph pinch / tap-to-open (#76); Analyze on embedded resources and overlays, Compare… from an open file, compare report export, theme toggle and persisted manual pairs (#77).
+- **Code origin (#94–#100, #102):** offline `BXFAM002`/`BXFAM003` family and library fingerprint matching across CLI, Desktop, MCP and WASM; trusted library symbols, string reuse and `string_only_hint`; layered overlay packs; calm header verdict, First look summary, Fingerprint packs dialog and single origin filter in Functions and Strings.
+- **Recovery & format fixes (#78–#89, #92):** preserved ELF hashes after repair (#78), universal `arm64e` ABI slice selection (#79), .NET CLR header routing and invalid GUID tolerance (#80, #85), PE Guard CF and mixed unwind table recovery (#86, #89), Go and ELF unwind recovery during capability scans (#87, #88), ELF copy-relocated data imports and phone workspace rework (#92), browser `window.opener` binary handoff (#93).
+- **Workbench & mobile polish (#72–#77, #101–#102):** triage sidebar with Importance / Bottom-up sorts, Hide library and Examined / Documented progress (#72); File map, Overview Sections jump and `n` on any local, with right-click Rename variable (#73); hex byte selection, Redo and action toasts (#74); windowed phone function list, 16px / 44px palette, comment sheet and keyboard-aware sheets (#75); tapped-word action bar, header Star and call-graph pinch / tap-to-open (#76); Analyze on embedded resources and overlays, Compare… from an open file, compare report export, theme toggle and persisted manual pairs (#77); steady single progress bar, layout-safe side peek panes with Undo and portal bottom sheets (#102).
 - **Benchmarks:** `scripts/bench/recovery.py` (#52), `scripts/decompiler_types/coverage.py` (#57), `scripts/bench/quality.py` (#64).
 
 ---
