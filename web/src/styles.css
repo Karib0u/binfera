@@ -1645,7 +1645,7 @@ button.fv-finding:hover { background: var(--hover); }
 .ov .glance .stat b { font: 550 13px var(--sans); font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .ov .glance .stat > span { color: var(--muted); font-size: 13px; }
 .ov-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; align-items: start; margin-top: 28px; }
-.ov-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 24px; min-width: 0; padding-top: 24px; border: 0; border-top: 1px solid var(--line); background: none; }
+.ov-context { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 24px; min-width: 0; padding-top: 24px; border: 0; border-top: 1px solid var(--line); background: none; }
 .ov-main { min-width: 0; }
 .ov-card { min-width: 0; }
 .ov .ov-card > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 14px; padding: 0; border: 0; background: none; }
@@ -1926,11 +1926,15 @@ button.fv-finding:hover { background: var(--hover); }
 
 /* One select in a chip row, for filters with more choices than chips should hold. */
 .chip-select { position: relative; display: inline-flex; align-items: center; }
-.chip-select select { appearance: none; -webkit-appearance: none; height: 100%; padding: 3px 24px 3px 10px; border: 1px solid var(--line); border-radius: 99px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.chip-select select { appearance: none; -webkit-appearance: none; height: auto; min-height: 0; box-sizing: border-box; padding: 3px 24px 3px 10px; border: 1px solid var(--line); border-radius: 99px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .chip-select::after { content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px; margin-top: -4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); color: var(--muted); pointer-events: none; }
 .chip-select select:hover { color: var(--text); border-color: var(--muted); }
 .chip-select.on select { border-color: var(--text); background: var(--text); color: var(--bg); }
 .chip-select.on::after { color: var(--bg); }
+.ov .ov-body.solo { grid-template-columns: minmax(0, 1fr); }
+/* Phones: 16px so iOS does not zoom on focus, and a comfortable tap height. */
+.app.mobile .chip-select select { padding: 3px 28px 3px 12px; font-size: 16px; line-height: 1.25; }
+.app.mobile .chip-select::after { right: 12px; }
 
 .tag.str-origin { font-weight: 550; }
 .tag.str-origin-malware { color: var(--o-family); background: color-mix(in srgb, var(--o-family) 12%, var(--panel)); }

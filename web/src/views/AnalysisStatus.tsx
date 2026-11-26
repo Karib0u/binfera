@@ -1,13 +1,6 @@
 import { NATIVE } from "../engine/assets";
+import { downloadProgress } from "../analysisProgress";
 import type { Analysis } from "../types";
-
-/** The engine module (about 30% of the bytes), then signatures, rules and packs: one bar across both. */
-function downloadShare(a: Analysis): number | null {
-  const f = a.loading?.fraction;
-  if (a.loading?.stage === "data") return 0.3 + 0.7 * (f ?? 0);
-  if (a.loading) return f == null ? null : 0.3 * f;
-  return a.image ? 0.3 : null;
-}
 
 /** Downloading happens first; capabilities and decompilation then run side by side, each with its own progress. */
 export function ProgressCard({ a }: { a: Analysis }) {
@@ -16,7 +9,7 @@ export function ProgressCard({ a }: { a: Analysis }) {
   const total = a.order.length, done = a.functions.size;
   const decompiled = total ? done / total : null;
   const steps = [
-    { name: "Download the analysis engine", note: downloading ? a.loading?.label ?? "Reading the file" : "First visit only, then cached by your browser", state: downloading ? "active" : "done", fraction: downloading ? downloadShare(a) : 1 },
+    { name: "Download the engine and rules", note: downloading ? a.loading?.label ?? "Reading the file" : "First visit only, then cached by your browser", state: downloading ? "active" : "done", fraction: downloading ? downloadProgress(a) : 1 },
     { name: "Match capabilities", note: "capa rules run on your device", state: downloading ? "todo" : "active", fraction: null },
     { name: "Decompile functions", note: total ? `${done} of ${total}` : "Recovering functions from the file", state: downloading ? "todo" : "active", fraction: decompiled },
   ] as const;

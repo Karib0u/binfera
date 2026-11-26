@@ -16,10 +16,7 @@ import AgentDock from "../views/AgentDock";
 import { agent } from "../agent/client";
 import { hex, bytes } from "./labels";
 import { useMobile } from "./useMobile";
-import { hashOf, locOf, pageUrl, panesOf, parseHash, VIEW_NAMES, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
-
-/** Views opened on demand to look something up: they give way first when another one is needed. */
-const PEEK_VIEWS: CodeView[] = ["hex", "strings", "imports"];
+import { hashOf, locOf, pageUrl, panesOf, parseHash, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
 import { Splitter, useMedia, useStored } from "./panels";
 import { useContainment, ownersOf, useFunctionRules } from "./ownership";
 import { useReferences } from "./references";
@@ -49,6 +46,7 @@ import Wordmark from "../Wordmark";
 import BuildVersion from "../BuildVersion";
 import { ShellcodeNotice } from "../views/ShellcodeNotice";
 import { NATIVE } from "../engine/assets";
+import { overallProgress } from "../analysisProgress";
 import { importThunk } from "../annotations";
 import { resolvedSlots } from "../resolved";
 import { callDepths, importance, progress as triageProgress, triageFunctions, type FnSort } from "../triage";
@@ -86,21 +84,6 @@ export interface Embedding {
   tick: number;
   /** Shortcuts the comparison adds. */
   keys: [string, string][];
-}
-
-/**
- * How far one analysis is, 0 to 1, across its stages: the engine download, reading the file, the
- * signature/rules/pack download, then decompiling with capability and code-origin matching beside it.
- * Each stage owns a fixed share, so finishing one never sends the bar back to the start.
- */
-function overallProgress(a: Analysis, decompiled: number): number {
-  if (!a.ready && !NATIVE) {
-    const f = a.loading?.fraction ?? 0;
-    if (a.loading?.stage === "data") return 0.22 + 0.43 * f;
-    if (a.loading) return 0.2 * f;
-    return a.image ? 0.22 : 0.02;
-  }
-  return 0.65 + 0.35 * (0.85 * decompiled + (a.capa || a.capaError || a.capaTooLarge ? 0.1 : 0) + (a.family || a.familyError ? 0.05 : 0));
 }
 
 export default function Workspace(props: WorkspaceProps) {
@@ -500,22 +483,12 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   };
   const image = a.image;
   /** Adds a pane of this kind beside the code unless one is showing; with three already open, it replaces the last. */
-  /**
-   * Shows a view beside the code without wrecking the analyst's layout: a pane already showing it is
-   * used as is; otherwise a Hex, Strings or Imports pane (a peek pane) switches to it; otherwise a pane
-   * is added while there are fewer than three; only then does the last pane other than C change.
-   * Any change can be undone from the toast.
-   */
+  /** Shows a view beside the code in a side pane the panes place themselves, never rearranging the analyst's (see CodePanes). */
+  const [peekReq, setPeekReq] = useState<{ view: CodeView; n: number } | null>(null);
+  const peekSeen = useRef(0);
   const ensurePane = (view: CodeView) => {
-    const panes = panesOf(layout);
-    if (panes.includes(view)) return;
-    const lastWhere = (ok: (v: CodeView) => boolean) => { for (let i = panes.length - 1; i >= 0; i--) if (ok(panes[i])) return i; return -1; };
-    const peek = lastWhere((v) => PEEK_VIEWS.includes(v));
-    const at = peek >= 0 ? peek : panes.length < 3 ? -1 : lastWhere((v) => v !== "c");
-    const next = at < 0 ? [...panes, view] : panes.map((v, i) => (i === at ? view : v));
-    const before = layout;
-    setLayout(next.join("+"));
-    toast(at < 0 ? `Opened ${VIEW_NAMES[view]} in a new pane` : `${VIEW_NAMES[view]} replaced ${VIEW_NAMES[panes[at]]}`, { label: "Undo", run: () => setLayout(before) });
+    if (panesOf(layout).includes(view)) return;
+    setPeekReq((r) => ({ view, n: (r?.n ?? 0) + 1 }));
   };
   /** A string clicked in the code: the Strings pane opens beside it, on that string. Phones and files with no functions go to the Strings page. */
   const openStringAt = (va: number, nav?: (va: number) => void) => {
@@ -811,7 +784,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     setOnlyStars(false);
     setOnlyChanged(false);
     setOriginFilter(kind);
-    if (kind === "trusted") setHideLibrary(false);
+    setHideLibrary(false);
     const targetSet = kind === "malware" ? originIndex.malwareSet : kind === "shared" ? originIndex.sharedSet : kind === "unique" ? originIndex.uniqueSet : originIndex.trustedSet;
     const first = a.order.find((ad) => targetSet.has(ad)) ?? a.order[0];
     if (first !== undefined) { setCursor(first); setSel(first, true); }
@@ -828,7 +801,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   ];
   const chooseOrigin = (v: string) => {
     if (v === "all" || v === "nolib") { setOriginFilter(null); setHideLibrary(v === "nolib"); return; }
-    setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false);
+    // One origin at a time: choosing one clears Hide library, so returning to All code shows all code.
+    setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setHideLibrary(false);
     setOriginFilter(v as FunctionOriginKind);
   };
   const originTitle = originFilter ? ORIGIN_HINT[originFilter] : a.family ? "Filter by code origin: family, unique or library code" : "Hide functions the signature matcher identified as library code";
@@ -853,7 +827,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       </select>
     </div>
     <div className="chips" role="group" aria-label="Show functions">
-      <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged && !originFilter} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>All <em>{total}</em></button>
+      <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged && originChoice === "all"} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); setHideLibrary(false); }}>All <em>{total}</em></button>
       <button aria-pressed={onlyCaps} disabled={!counts.caps && !onlyCaps} title={`${counts.caps} functions have capability matches`} onClick={() => { setOnlyCaps(true); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>Matched <em>{counts.caps}</em></button>
       <button aria-pressed={onlyStars} disabled={!counts.stars && !onlyStars} title="Functions you starred" onClick={() => { setOnlyStars(true); setOnlyCaps(false); setOnlyChanged(false); setOriginFilter(null); }}>★ Starred <em>{counts.stars}</em></button>
       {originSelect}
@@ -993,10 +967,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} onOrigin={filterByOrigin} onStrings={showStringsByOrigin} onPacks={canManagePacks(a) ? () => setPacksOpen(true) : undefined} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />
         </div>}
-        <div className="ov-body">
+        <div className={"ov-body" + (image && !mobile && !image.details?.anomalies.length ? " solo" : "")}>
           {mobile && image && <FindingsCard compact a={a} onPick={pickSection} onDetails={() => setSel("file")} />}
           <div className="ov-main"><CapabilityView a={a} fileLevel={fileLevel} onGoto={goto} owner={ownerLabel} /></div>
-          {image && !mobile && (
+          {/* The findings column only when there are findings: a clean file gives Capabilities the width. */}
+          {image && !mobile && !!image.details?.anomalies.length && (
             <aside className="ov-context" aria-label="File context">
               <FindingsCard a={a} onPick={pickSection} onDetails={() => setSel("file")} />
             </aside>)}
@@ -1127,7 +1102,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
     { label: "Locate in file…", onClick: () => setLocateOpen(true), disabled: !image },
-    ...(!a.shellcode && (a.family || canManagePacks(a)) ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
+    ...(!a.shellcode && (a.family || a.familyError || canManagePacks(a)) ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
     { label: "Report (Markdown)", onClick: () => saveReport("md"), disabled: !a.settled },
     { label: "Report (web page)", onClick: () => saveReport("html"), disabled: !a.settled },
     { label: "Functions (CSV)", onClick: () => saveCsv("functions"), disabled: !a.settled },
@@ -1169,7 +1144,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     callers: callers.get(at), callees: callees.get(at), callersOf: (ad) => callers.get(ad), calleesOf: (ad) => callees.get(ad), apisOf: (ad) => apisByFn.get(ad), xrefsReady: a.settled,
     strAt: strAtVa, textAt: textAtVa, onCursor: nav ?? setCursor, isData: dataAt, onData: (va) => openData(va, nav), slot,
     onImport: (n) => openImport(n, nav),
-    layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, listingSeen, strip, menuItems: goMenu, onSearch: () => setPalette(""),
+    layout, setLayout, listing: (marked) => listing(marked, here, nav), listingReq, listingSeen, peekReq, peekSeen, strip, menuItems: goMenu, onSearch: () => setPalette(""),
     callGraph: (onOpen) => <CallGraph order={a.order} callees={callees} callers={callers} center={at} setCenter={nav ?? setSel} label={label} caps={(ad) => (byFn.get(ad) ?? []).map((r) => r.name)} onOpen={onOpen} ready={a.settled} />,
     onCode: nav ?? navigate, capsOf: (ad) => (byFn.get(ad) ?? []).map((r) => r.name),
     onHex: (va) => { setCursor(va); setSel("hex"); }, onComment: () => editComment(here ?? at), onNotesChange: bump,
@@ -1211,7 +1186,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     return () => { document.removeEventListener("scroll", onScroll, true); setChromeHidden(false); };
   }, [mobile, detail, sel]);
   // One bar for the whole run that never moves backwards: downloads take the first part, then the analysis.
-  const fraction = monotonic(overallProgress(a, progress));
+  const fraction = monotonic(overallProgress(a, progress, NATIVE));
   const progressBar = !a.done && <div className="bar" role="progressbar" aria-label="Analysis progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}><i style={{ width: `${Math.max(3, fraction * 100)}%` }} /></div>;
 
   const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} mobile={mobile} text={notes.commentAt(commentEdit.address) ?? ""}
@@ -1437,7 +1412,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           ) : <span>No cursor yet</span>}
           {!a.shellcode && (a.family || a.familyError || (a.done && canManagePacks(a))) && (
             <button className={"sb-packs" + (a.familyError ? " err" : "")} onClick={() => setPacksOpen(true)} title={a.familyError ? `Code origin: ${a.familyError}` : "Fingerprint packs Code origin compares against"}>
-              {a.family ? packsLabel(a) : a.familyError ? "Pack error" : "No pack"}
+              {a.family ? `Pack: ${packsLabel(a)}` : a.familyError ? "Pack error" : "No pack"}
             </button>
           )}
           {!embedded && <BuildVersion />}

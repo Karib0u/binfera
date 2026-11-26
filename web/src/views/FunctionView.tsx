@@ -132,13 +132,16 @@ export interface FnViewProps {
   listingReq: number;
   /** The last Listing request a function page acted on. Kept by the workspace, so a request made from Data opens the Listing tab of the page it mounts. */
   listingSeen?: React.MutableRefObject<number>;
+  /** Desktop: a view to show in a side pane, and the last such request handled (see CodePanes). */
+  peekReq?: { view: CodeView; n: number } | null;
+  peekSeen?: React.MutableRefObject<number>;
   strip: React.ReactNode; menuItems: MenuItem[]; onSearch: () => void;
 }
 
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, origin, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, origin, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, peekReq, peekSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -588,7 +591,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
 
       <div className="cp-body" style={{ gridTemplateColumns: railOpen ? `minmax(0, 1fr) ${railSize}px` : "minmax(0, 1fr)" }}>
         {!railOpen && !mobile && <button className="edge-tab inspector-tab" onClick={onToggleRail} title="Open the function inspector (])"><span>Inspector</span></button>}
-        {renderPane && locate && onPaneNavigate && <CodePanes outside={outside} layout={layout} setLayout={setLayout} place={{ address, cursor }} onNavigate={onPaneNavigate} locate={locate} render={renderPane} fileName={a.demo?.name ?? a.fileName} fileTitle={a.fileName} label={(ad) => fnLabel(ad, a.functions.get(ad)?.name)} />}
+        {renderPane && locate && onPaneNavigate && <CodePanes outside={outside} layout={layout} setLayout={setLayout} place={{ address, cursor }} onNavigate={onPaneNavigate} locate={locate} render={renderPane} fileName={a.demo?.name ?? a.fileName} fileTitle={a.fileName} label={(ad) => fnLabel(ad, a.functions.get(ad)?.name)} peek={peekReq} peekSeen={peekSeen} />}
 
         {railOpen && (
           <aside className="rail" aria-label="Function inspector" {...peekEvents}>

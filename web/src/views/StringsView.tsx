@@ -12,7 +12,7 @@ const PAGE = 300;
 /** A string row's identity: address plus encoding, as the list keys rows. */
 type StringEntryKey = string;
 
-/** String Reuse filter state; the Workspace holds it so the Code origin card can set it. */
+/** String origin filter state; the Workspace holds it so Code origin links (the banner, First look) can set it. */
 export interface StringOriginFilter {
   kind: StringOriginKind | null; setKind: (k: StringOriginKind | null) => void;
   hideTrusted: boolean; setHideTrusted: (v: boolean) => void;
@@ -86,6 +86,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
       <select value={originChoice} onChange={(e) => {
         const v = e.target.value;
         if (v === "all" || v === "nolib") { origin.setKind(null); origin.setHideTrusted(v === "nolib"); return; }
+        origin.setHideTrusted(false);
         origin.setKind(v as StringOriginKind);
       }}>
         <option value="all">Any origin</option>

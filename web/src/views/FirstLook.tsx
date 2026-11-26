@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { entropyOf, entropyWord, HIGH_ENTROPY } from "../engine/entropy";
 import type { Indicator } from "../indicators";
-import type { FunctionOriginKind } from "../familyOrigin";
+import { formatSourceName, matchStrength, STRENGTH_LABEL, type FunctionOriginKind } from "../familyOrigin";
 import type { Analysis, StringOriginKind } from "../types";
 import { bytes as size } from "../workspace/labels";
 
@@ -70,7 +70,23 @@ function originRow(a: Analysis, onOrigin?: (kind: FunctionOriginKind) => void, o
     if (!a.familyError && !(a.done && onPacks)) return [];
     return [{ label: "Code origin", value: a.familyError ? `Not checked: ${a.familyError}` : "Not checked: no fingerprint pack loaded", go: onPacks }];
   }
-  if (r.families.length) return [];
+  // Libraries and look-alike families, as rows: a tooltip would be out of reach on a touch screen.
+  const libs = r.trusted_sources.length > 0 ? [{
+    label: "Libraries",
+    value: <>{r.trusted_sources.slice(0, 4).map((s) => formatSourceName(s.source)).join(", ")}{r.trusted_sources.length > 4 && <small> +{r.trusted_sources.length - 4} more</small>}<small> · {fns(r.trusted_functions)}</small></>,
+    go: () => onOrigin?.("trusted"),
+  }] : [];
+  if (r.families.length) {
+    const others = r.families.slice(1, 4);
+    return [
+      ...(others.length ? [{
+        label: "Also resembles",
+        value: <>{others.map((f, i) => <span key={f.family}>{i > 0 && ", "}<code>{f.family}</code></span>)}<small> · {STRENGTH_LABEL[matchStrength(others[0])].toLowerCase()} at best</small></>,
+        go: () => onOrigin?.("malware"),
+      }] : []),
+      ...libs,
+    ];
+  }
   const total = a.order.length || r.total_functions;
   const small = Math.max(0, total - r.eligible_functions);
   const parts = [r.trusted_functions > 0 && `${n(r.trusted_functions)} library`, r.shared_malware_functions > 0 && `${n(r.shared_malware_functions)} common malware`, small > 0 && `${n(small)} too small to check`].filter(Boolean);
@@ -81,6 +97,7 @@ function originRow(a: Analysis, onOrigin?: (kind: FunctionOriginKind) => void, o
       : <>No known family · every checked function is already known{parts.length > 0 && <small> · {parts.join(", ")}</small>}</>,
     go: r.eligible_functions > 0 ? () => onOrigin?.(r.unique_functions > 0 ? "unique" : "trusted") : onPacks,
   }];
+  out.push(...libs);
   const hint = r.strings?.string_only_hint;
   if (hint) out.push({
     label: "String hint",

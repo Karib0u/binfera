@@ -134,7 +134,7 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
           <span><i className="co-trusted" />Library</span>
         </div>
       )}
-      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Dark tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
+      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Solid grey tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
     </section>
   );
 }

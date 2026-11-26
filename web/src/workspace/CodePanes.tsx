@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { panesOf, VIEW_NAMES, type CodeView } from "./location";
 import { Splitter } from "./panels";
-import { dropSideAt, movePane, panesIn, splitPane, treeOf, updatePane, withoutPane, type Axis, type DropSide, type Pane, type PanePlace, type PaneTree } from "./paneTree";
+import { toast } from "../Toast";
+import { applyLayout, dropSideAt, movePane, panesIn, peekTree, splitPane, treeOf, updatePane, withoutPane, type Axis, type DropSide, type Pane, type PanePlace, type PaneTree } from "./paneTree";
 
 export type { PanePlace } from "./paneTree";
 export interface PaneRenderer {
@@ -66,11 +67,15 @@ function savedTree(layout: string): PaneTree | null {
 }
 
 /** Linked panes share a location; independent panes keep their own location when moved. */
-export default function CodePanes({ layout, setLayout, place, onNavigate, locate, render, fileName, fileTitle = fileName, label, outside }: {
+export default function CodePanes({ layout, setLayout, place, onNavigate, locate, render, fileName, fileTitle = fileName, label, outside, peek, peekSeen }: {
   layout: string; setLayout: (v: string) => void; place: PanePlace; onNavigate: (va: number, fn?: number) => void;
   locate: (va: number, current: PanePlace) => PanePlace; render: PaneRenderer; fileName: string; fileTitle?: string; label: (va: number) => string;
   /** Where the cursor is when it is not inside the function a pane shows (a header, data, another function); null when it is inside. */
   outside?: (fn: number, va: number) => string | null;
+  /** Show a view the analyst did not open (bytes, a string, an import): bumped by the workspace. */
+  peek?: { view: CodeView; n: number } | null;
+  /** The last peek request handled, kept by the workspace so a request made before these panes mounted still lands. */
+  peekSeen?: React.MutableRefObject<number>;
 }) {
   const [tree, setTree] = useState<PaneTree>(() => savedTree(layout) ?? treeOf(panesOf(layout).map((view, id) => ({ id, view, place: null }))));
   const nextId = useRef(Math.max(...panesIn(tree).map((p) => p.id)) + 1);
@@ -86,32 +91,27 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
   const panes = panesIn(tree), activeId = panes.some((p) => p.id === active) ? active : panes[0].id;
   // A layout set from outside (a link, a toolbar toggle, a view revealed beside the code) changes as
   // little as it can: panes that stay keep their place and size, a dropped pane's slot takes a new
-  // view in place, and only views beyond that are split in, stacked under the last pane so no pane
-  // loses width (Hex needs its 16 columns). Rebuilding the tree would throw away the arrangement.
-  useEffect(() => {
-    setTree((old) => {
-      const want = panesOf(layout), have = panesIn(old);
-      if (have.map((p) => p.view).join("+") === want.join("+")) return old;
-      const added = [...want], dropped: Pane[] = [];
-      for (const p of have) { const i = added.indexOf(p.view); if (i >= 0) added.splice(i, 1); else dropped.push(p); }
-      let next: PaneTree = old;
-      while (dropped.length && added.length) {
-        const p = dropped.shift()!, view = added.shift()!;
-        next = updatePane(next, p.id, (pane) => ({ ...pane, view, place: null }));
-      }
-      for (const p of dropped) next = withoutPane(next, p.id) ?? next;
-      for (const view of added) {
-        const last = panesIn(next).at(-1)!;
-        next = splitPane(next, last.id, { id: nextId.current++, view, place: null }, "horizontal");
-      }
-      return next;
-    });
-  }, [layout]);
+  // view in place, and only views beyond that are added as a column at the right edge, around the
+  // existing arrangement. Rebuilding the tree would throw that arrangement away.
+  useEffect(() => { setTree((old) => applyLayout(old, panesOf(layout), () => nextId.current++)); }, [layout]);
   useEffect(() => {
     const clean = panesIn(tree).reduce((t, p) => updatePane(t, p.id, (pane) => ({ ...pane, place: null })), tree);
     try { localStorage.setItem("binfera-ui:pane-tree", JSON.stringify(clean)); } catch { /* session only */ }
   }, [tree]);
   const update = (next: PaneTree) => { setTree(next); setLayout(panesIn(next).map((p) => p.view).join("+")); };
+  // A peek never rearranges the analyst's panes. A pane already showing the view is used as is; an
+  // earlier peek pane switches view; otherwise one column opens at the right edge of the whole
+  // workspace, outside the arrangement, so closing it gives back exactly the layout there was.
+  const ownSeen = useRef(0), seen = peekSeen ?? ownSeen;
+  useEffect(() => {
+    if (!peek || peek.n === seen.current) return;
+    seen.current = peek.n;
+    const now = treeRef.current, peeked = peekTree(now, peek.view, () => nextId.current++);
+    if (!peeked) return;
+    update(peeked.tree);
+    const reuse = peeked.reused;
+    toast(reuse ? `${VIEW_NAMES[peek.view]} in the side pane` : `Opened ${VIEW_NAMES[peek.view]} at the side · close it to restore your layout`, { label: "Undo", run: () => update(now) });
+  }, [peek?.n]);
   const split = (pane: Pane, axis: Axis) => {
     const added: Pane = { id: nextId.current++, view: pane.view, place: null };
     setActive(added.id);
@@ -187,7 +187,7 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
         <div className="editor-group-head" onPointerDown={(e) => startDrag(e, pane)}>
           <span className="pane-grip" title="Drag to rearrange" aria-hidden><svg viewBox="0 0 12 16"><path d="M4 4h.01M8 4h.01M4 8h.01M8 8h.01M4 12h.01M8 12h.01" /></svg></span>
           <ViewIcon view={pane.view} />
-          <div className="pane-view-picker"><select className="pane-view" aria-label="Pane view" title="Change pane view" value={pane.view} onChange={(e) => update(updatePane(tree, pane.id, (p) => ({ ...p, view: e.target.value as CodeView })))}>
+          <div className="pane-view-picker"><select className="pane-view" aria-label="Pane view" title="Change pane view" value={pane.view} onChange={(e) => update(updatePane(tree, pane.id, (p) => ({ ...p, view: e.target.value as CodeView, peek: false })))}>
             {(Object.keys(VIEW_NAMES) as CodeView[]).map((v) => <option key={v} value={v}>{VIEW_NAMES[v]}</option>)}
           </select><svg viewBox="0 0 12 12" aria-hidden><path d="M3 4.5l3 3 3-3" /></svg></div>
           <div className="pane-actions">
