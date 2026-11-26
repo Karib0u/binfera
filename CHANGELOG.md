@@ -6,36 +6,10 @@ Notable changes to binfera. Format follows [Keep a Changelog](https://keepachang
 
 ## [1.1.0] - 2026-11-26
 
-### Added
-
-- **Offline Code Origin:** the CLI, MCP server, web app and desktop app can match functions against fingerprint packs to identify library code, shared code and known malware families. The workbench highlights unique functions for review. See the [CLI guide](docs/cli.md).
-- **`BXFAM003` family packs:** optional Trusted function symbols and String Reuse sections. Matches report `trusted_symbols` and a separate `strings` breakdown (malware, shared, unique, trusted). Strings never change code attribution; when code abstains, three or more exclusive strings agreeing on one family give a labeled `string_only_hint`. `BXFAM002` packs still load unchanged.
-- **Layered family packs:** `binfera family match` takes `--pack` more than once, and `BINFERA_FAMILY_PACK` or `BINFERA_FAMILY_PACKS` takes a path list. A function or string trusted by any pack is Trusted, and malware matches record their `pack_name`. `family info` reports the format and the `BXFAM003` counts. The MCP server shows trusted symbols as `pack_trusted` names and adds `string_origin`.
-- **`BXFAM003` in the web and desktop apps:**
-  - Overlay packs layer over the default one, and matching runs again when a pack is added or removed. Desktop passes overlays to the engine by index, so the webview never sees their paths.
-  - Trusted functions without another name show their pack symbol. Names are chosen in this order: analyst rename, file or signature symbol, export, pack symbol, `FUN_` address.
-  - String origin filters and family badges in the Strings view. A `string_only_hint` is labeled as a low-confidence hint.
-  - Reports and the JSON export include the string summary and pack symbols.
-  - `BXFAM002` packs show none of the string or symbol UI.
-- **Calmer Code origin in the web and desktop apps:** the Code origin card is gone. A family match is a one-line banner under the file header; no match is a First look row that names the unique functions to reverse first. Pack management moved to **Fingerprint packs…** (status bar and menu). The function list and the Strings view have one origin filter each instead of chip rows, the app says **Library** where it said Trusted or Known libraries, unique code is a neutral colour instead of violet, and the Overview's Sections card (a repeat of the file map) is gone. The code pane breadcrumb shows only when a pane is unlinked or the cursor is outside the function.
-- **Resolved API names in the viewer:** the assembly, the graph and the listing show the API a global holds when the program loads it with `GetProcAddress` and a literal name (`call dword ptr ds:[ReadFile]`, `dd ReadFile ; resolved with GetProcAddress`), with argument comments on the call. The batch `start` record carries them as `resolved`.
-- **Calls through a global that holds one function:** a global the program only ever sets to the same function of its own, or never sets and starts as that function, prints calls as `FUN_00401234(a, b)` with the callee's prototype instead of `(*DAT_x)(a, b)`. A global with another value, a reset, a taken address or an unknown writer is left alone.
-- **Quality report:** `scripts/bench/quality.py` compares two binaries on untyped imports, unresolved indirect calls and numeric arguments at enum parameters, and a small subset runs in CI against a checked-in baseline.
-- **Analysis and comparison:** Analyze can run in stages, Compare can start from an open file, and comparisons can be exported. The workbench can jump to uncertain call sites, follow file handles back to their opening calls and jump to the instruction behind a capability match.
-- **Workbench controls:** sort functions by triage importance, hide library functions, select hex bytes, redo edits and star functions from the header.
-- **Agent integration:** the desktop app and MCP setup support Mistral Vibe.
-
-### Changed
-
-- **System DLL prototypes:** imports of `pdh`, `msi`, `credui`, `fwpkclnt`, `xinput1_4` and 48 other system DLLs (53 in all) now get their prototypes from the Windows packs.
-- **Mobile workbench:** the function list renders only visible rows, inputs stay above the keyboard, and the call graph supports touch gestures.
-
-### Fixed
-
-- **Function recovery:** improved discovery in PE Guard CF and mixed x64 unwind tables, ELF unwind tables and Go binaries during capability scans.
-- **Binary loading:** improved CLR header handling and Mach-O arm64e slice selection. Repaired ELF headers preserve the original file hash, and copy-relocated ELF variables are treated as data imports.
-- **Decompilation:** improved Windows x64 call arguments and returns, ARM64 scalar floating-point returns, and calls through registers loaded from import slots. Windows API enum arguments use their metadata names where known.
-- **Web and desktop:** analysis progress moves forward through each stage, automatic views preserve pane layouts, and the desktop Agent panel responds to input.
+- **Code Origin.** Recognize known malware families and library code offline, then focus on unfamiliar functions.
+- **A simpler workbench.** Analyze in stages, compare from an open file, and navigate more easily on a phone.
+- **Clearer decompilation.** More Windows APIs show up by name, and function recovery improves across PE, ELF, and Go binaries.
+- **Mistral Vibe.** Use it with the desktop Agent panel or the MCP server.
 
 ## [1.0.1]
 
