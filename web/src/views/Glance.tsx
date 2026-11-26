@@ -26,8 +26,10 @@ function Hash({ name, value }: { name: string; value: string }) {
 }
 
 /** Identity first, followed by direct routes into the analysis. */
-export function Glance({ a, functions, caps, indicators, onCode, onData, onIndicators }: {
+export function Glance({ a, functions, caps, indicators, onCode, onData, onIndicators, children }: {
   a: Analysis; functions: number; caps: number; indicators: number;
+  /** A verdict such as a family match: above the counts on a wide page, below them on a phone. */
+  children?: React.ReactNode;
   onCode: () => void; onData: (k: "strings" | "imports" | "hex") => void; onIndicators: () => void;
 }) {
   const count = (n: number | undefined | null, known = false) => (n || known || a.done ? n ?? 0 : "…");
@@ -49,6 +51,7 @@ export function Glance({ a, functions, caps, indicators, onCode, onData, onIndic
       </div>
       {sha256 && <div className="ov-hash"><Hash key={sha256} name="SHA-256" value={sha256} /></div>}
       <PackedNotice a={a} />
+      {children}
       <div className="stats" aria-label="Analysis summary">
         {stat(capaCount, "Capabilities", toCaps)}
         {stat(count(functions), "Functions", onCode)}

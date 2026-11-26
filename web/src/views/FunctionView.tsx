@@ -1,5 +1,6 @@
 import type { Analysis, CapaRule, StringEntry } from "../types";
 import type { FunctionOrigin } from "../familyOrigin";
+import { OriginBadge } from "./CodeOrigin";
 import { hex } from "../workspace/labels";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import GraphView from "../GraphView";
@@ -472,11 +473,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
     // Capability chips scroll away with the code instead of pinning a row to the screen.
     const capChips = (rules.length > 0 || (origin && origin.kind !== "unique")) && (
       <div className="m-caps">
-        {origin && origin.kind !== "unique" && (
-          <span className={"cap co-badge co-badge-" + origin.kind} title={origin.detail}>
-            {origin.kind === "malware" ? origin.label : origin.kind === "trusted" ? `Trusted · ${origin.label}` : "Shared malware"}
-          </span>
-        )}
+        <OriginBadge origin={origin} />
         {rules.map(capButton)}
       </div>
     );
@@ -563,11 +560,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
           <code className="addr">{copied ? "Copied" : hex(address)}</code>
         </div>
         <div className="cp-caps-inline">
-          {origin && origin.kind !== "unique" && (
-            <span className={"cap co-badge co-badge-" + origin.kind} title={origin.detail}>
-              {origin.kind === "malware" ? origin.label : origin.kind === "trusted" ? `Trusted · ${origin.label}` : "Shared malware"}
-            </span>
-          )}
+          <OriginBadge origin={origin} />
           {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
           {!capsExpanded && rules.slice(0, INLINE_CAPABILITIES).map(capButton)}
         </div>

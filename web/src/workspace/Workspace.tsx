@@ -16,12 +16,15 @@ import AgentDock from "../views/AgentDock";
 import { agent } from "../agent/client";
 import { hex, bytes } from "./labels";
 import { useMobile } from "./useMobile";
-import { hashOf, locOf, pageUrl, panesOf, parseHash, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
+import { hashOf, locOf, pageUrl, panesOf, parseHash, VIEW_NAMES, writeEntry, type CodeView, type Entry, type Loc, type Sel, type Tab } from "./location";
+
+/** Views opened on demand to look something up: they give way first when another one is needed. */
+const PEEK_VIEWS: CodeView[] = ["hex", "strings", "imports"];
 import { Splitter, useMedia, useStored } from "./panels";
 import { useContainment, ownersOf, useFunctionRules } from "./ownership";
 import { useReferences } from "./references";
 import { Glance } from "../views/Glance";
-import { LayoutCard, FindingsCard } from "../views/Dashboard";
+import { FindingsCard } from "../views/Dashboard";
 import ThemeToggle from "../ThemeToggle";
 import ReportMenu from "../ReportMenu";
 import VirtualList, { type VirtualListHandle } from "./VirtualList";
@@ -32,9 +35,8 @@ import { csv, download, reportHtml, reportMarkdown, type ReportInput } from "../
 import { chooseTheme, storedTheme } from "../theme";
 import { FeatureMap } from "../views/FeatureMap";
 import { FirstLook, guessToolchains } from "../views/FirstLook";
-import { CodeOriginCard } from "../views/CodeOriginCard";
-import { buildOriginIndex, formatSourceName, trustedNames, type FunctionOriginKind } from "../familyOrigin";
-import { PackNameTag } from "../views/PackNameTag";
+import { OriginBanner, PacksDialog, canManagePacks, packsLabel } from "../views/CodeOrigin";
+import { buildOriginIndex, formatSourceName, ORIGIN_HINT, ORIGIN_NAME, trustedNames, type FunctionOriginKind } from "../familyOrigin";
 import { FileView } from "../views/FileView";
 import { CapabilityView } from "../views/CapabilityView";
 import { FunctionView, type FnViewProps, type Layout } from "../views/FunctionView";
@@ -84,6 +86,21 @@ export interface Embedding {
   tick: number;
   /** Shortcuts the comparison adds. */
   keys: [string, string][];
+}
+
+/**
+ * How far one analysis is, 0 to 1, across its stages: the engine download, reading the file, the
+ * signature/rules/pack download, then decompiling with capability and code-origin matching beside it.
+ * Each stage owns a fixed share, so finishing one never sends the bar back to the start.
+ */
+function overallProgress(a: Analysis, decompiled: number): number {
+  if (!a.ready && !NATIVE) {
+    const f = a.loading?.fraction ?? 0;
+    if (a.loading?.stage === "data") return 0.22 + 0.43 * f;
+    if (a.loading) return 0.2 * f;
+    return a.image ? 0.22 : 0.02;
+  }
+  return 0.65 + 0.35 * (0.85 * decompiled + (a.capa || a.capaError || a.capaTooLarge ? 0.1 : 0) + (a.family || a.familyError ? 0.05 : 0));
 }
 
 export default function Workspace(props: WorkspaceProps) {
@@ -180,6 +197,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const agentSha = noteKey && notes.isAttached(noteKey) ? noteKey : null;
   const [onlyStars, setOnlyStars] = useState(false);
   const [originFilter, setOriginFilter] = useState<FunctionOriginKind | null>(null);
+  const [packsOpen, setPacksOpen] = useState(false);
   const [fnSort, setFnSort] = useState<FnSort>("address");
   const [hideLibrary, setHideLibrary] = useStored("hide-library", false);
   const [listingReq, setListingReq] = useState(0);
@@ -264,7 +282,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const [strOrigin, setStrOrigin] = useState<StringOriginKind | null>(null);
   const [strHideTrusted, setStrHideTrusted] = useState(false);
   const stringOrigin = { kind: strOrigin, setKind: setStrOrigin, hideTrusted: strHideTrusted, setHideTrusted: setStrHideTrusted };
-  /** From the Code origin card: open Strings on one String Reuse class, or on one value. */
+  /** From Code origin: open Strings on one String Reuse class, or on one value. */
   const showStringsByOrigin = (kind: StringOriginKind | null, query?: string) => {
     setStrIndicators(false);
     setStrOnlyRef(false);
@@ -467,6 +485,14 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const done = a.functions.size;
   const totalCaps = (a.capa?.rules ?? []).filter((r) => !r.lib).length;
   const progress = total ? done / total : 0;
+  // The bar's high-water mark for this analysis; a new file starts again from zero.
+  const barMax = useRef<{ of: string; v: number }>({ of: "", v: 0 });
+  const monotonic = (v: number) => {
+    const of = `${run}:${a.fileName}:${a.size}`;
+    if (barMax.current.of !== of) barMax.current = { of, v: 0 };
+    barMax.current.v = Math.max(barMax.current.v, v);
+    return barMax.current.v;
+  };
   const goto = (ad: number) => {
     const o = ownersOf(a, containment, ad)[0];
     setCursor(ad);
@@ -474,9 +500,22 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   };
   const image = a.image;
   /** Adds a pane of this kind beside the code unless one is showing; with three already open, it replaces the last. */
-  const ensurePane = (view: string) => {
+  /**
+   * Shows a view beside the code without wrecking the analyst's layout: a pane already showing it is
+   * used as is; otherwise a Hex, Strings or Imports pane (a peek pane) switches to it; otherwise a pane
+   * is added while there are fewer than three; only then does the last pane other than C change.
+   * Any change can be undone from the toast.
+   */
+  const ensurePane = (view: CodeView) => {
     const panes = panesOf(layout);
-    if (!panes.includes(view as CodeView)) setLayout((panes.length < 3 ? [...panes, view] : [...panes.slice(0, -1), view]).join("+"));
+    if (panes.includes(view)) return;
+    const lastWhere = (ok: (v: CodeView) => boolean) => { for (let i = panes.length - 1; i >= 0; i--) if (ok(panes[i])) return i; return -1; };
+    const peek = lastWhere((v) => PEEK_VIEWS.includes(v));
+    const at = peek >= 0 ? peek : panes.length < 3 ? -1 : lastWhere((v) => v !== "c");
+    const next = at < 0 ? [...panes, view] : panes.map((v, i) => (i === at ? view : v));
+    const before = layout;
+    setLayout(next.join("+"));
+    toast(at < 0 ? `Opened ${VIEW_NAMES[view]} in a new pane` : `${VIEW_NAMES[view]} replaced ${VIEW_NAMES[panes[at]]}`, { label: "Undo", run: () => setLayout(before) });
   };
   /** A string clicked in the code: the Strings pane opens beside it, on that string. Phones and files with no functions go to the Strings page. */
   const openStringAt = (va: number, nav?: (va: number) => void) => {
@@ -777,6 +816,30 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     const first = a.order.find((ad) => targetSet.has(ad)) ?? a.order[0];
     if (first !== undefined) { setCursor(first); setSel(first, true); }
   };
+  /** One control for code origin: which origin to show, or everything but library code. State stays visible in it. */
+  const originChoice = originFilter ?? (hideLibrary && libraryCount ? "nolib" : "all");
+  const originOptions: [string, string][] = [
+    ["all", "All code"],
+    ...(libraryCount ? [["nolib", `Hide library (${libraryCount})`] as [string, string]] : []),
+    ...(counts.malware ? [["malware", `${ORIGIN_NAME.malware} (${counts.malware})`] as [string, string]] : []),
+    ...(a.family && counts.unique ? [["unique", `${ORIGIN_NAME.unique} (${counts.unique})`] as [string, string]] : []),
+    ...(counts.shared ? [["shared", `${ORIGIN_NAME.shared} (${counts.shared})`] as [string, string]] : []),
+    ...(libraryCount ? [["trusted", `${ORIGIN_NAME.trusted} only (${libraryCount})`] as [string, string]] : []),
+  ];
+  const chooseOrigin = (v: string) => {
+    if (v === "all" || v === "nolib") { setOriginFilter(null); setHideLibrary(v === "nolib"); return; }
+    setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false);
+    setOriginFilter(v as FunctionOriginKind);
+  };
+  const originTitle = originFilter ? ORIGIN_HINT[originFilter] : a.family ? "Filter by code origin: family, unique or library code" : "Hide functions the signature matcher identified as library code";
+  const originSelect = originOptions.length > 1 && (
+    <label className={"chip-select" + (originChoice !== "all" ? " on" : "")} title={originTitle}>
+      <span className="sr-only">Code origin</span>
+      <select value={originChoice} onChange={(e) => chooseOrigin(e.target.value)}>
+        {originOptions.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
+      </select>
+    </label>
+  );
   const fnTools = (
   <div className="tools fn-tools">
     <div className="tool-row">
@@ -793,13 +856,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       <button aria-pressed={!onlyCaps && !onlyStars && !onlyChanged && !originFilter} onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>All <em>{total}</em></button>
       <button aria-pressed={onlyCaps} disabled={!counts.caps && !onlyCaps} title={`${counts.caps} functions have capability matches`} onClick={() => { setOnlyCaps(true); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(null); }}>Matched <em>{counts.caps}</em></button>
       <button aria-pressed={onlyStars} disabled={!counts.stars && !onlyStars} title="Functions you starred" onClick={() => { setOnlyStars(true); setOnlyCaps(false); setOnlyChanged(false); setOriginFilter(null); }}>★ Starred <em>{counts.stars}</em></button>
-      {counts.malware > 0 && <button aria-pressed={originFilter === "malware"} title="Functions attributed to a malware family" onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(originFilter === "malware" ? null : "malware"); }}>Family <em>{counts.malware}</em></button>}
-      {a.family && counts.unique > 0 && <button aria-pressed={originFilter === "unique"} title="Unique functions unseen in trusted runtimes or known families" onClick={() => { setOnlyCaps(false); setOnlyStars(false); setOnlyChanged(false); setOriginFilter(originFilter === "unique" ? null : "unique"); }}>Unique <em>{counts.unique}</em></button>}
-      {libraryCount > 0 && <button aria-pressed={hideLibrary && originFilter !== "trusted"} title={a.family ? "Hide trusted runtime, FLIRT, and benign library functions" : "Hide functions the signature matcher identified as library code"} onClick={() => { if (originFilter === "trusted") setOriginFilter(null); setHideLibrary(!hideLibrary); }}>{a.family ? "Hide trusted" : "Hide library"} <em>{libraryCount}</em></button>}
+      {originSelect}
       {embedded && <button aria-pressed={onlyChanged} title="Functions that differ from the other file" onClick={() => { setOnlyChanged(true); setOnlyCaps(false); setOnlyStars(false); setOriginFilter(null); }}>Changed <em>{counts.changed}</em></button>}
     </div>
     {triage.total > 0 && (
-      <div className="fn-progress" title={`${triage.examined} of ${triage.total} functions opened, ${triage.documented} named or commented${libraryCount ? (a.family ? " (trusted functions not counted)" : " (library functions not counted)") : ""}`}>
+      <div className="fn-progress" title={`${triage.examined} of ${triage.total} functions opened, ${triage.documented} named or commented${libraryCount ? " (library functions not counted)" : ""}`}>
         <span>Examined <b>{triage.examined}</b>/{triage.total}</span>
         <span>Documented <b>{triage.documented}</b>/{triage.total}</span>
       </div>
@@ -817,7 +878,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         const detail = [hex(ad), ...(why ? [`importance ${why.score}: ${why.capabilities} capabilities · ${why.imports} imports · ${why.strings} strings · ${why.callers} callers`] : []), fnOrigin?.detail ?? (library.has(ad) ? "library function" : ""), `called by ${callers.get(ad)?.length ?? 0} · calls ${callees.get(ad)?.length ?? 0}`, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n");
         return (
           <button aria-current={sel === ad ? "true" : undefined} title={detail} className={"item compact" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
-            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}<PackNameTag at={ad} name={f?.name ?? a.names.get(ad)} /></code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
+            <span className="fn"><code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>{rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}</span>
             {rules && <em className="pill">{rules.length}</em>}
             {!f && <span className="dot" title="pending" />}
             {f?.error && <span className="dot err" title="failed" />}
@@ -846,7 +907,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           <button aria-current={sel === ad ? "true" : undefined} title={[fnOrigin?.detail, ...(rules?.map((r) => r.name) ?? [])].filter(Boolean).join("\n")} className={"item" + (sel === ad ? " on" : "") + (rules ? " cap-item" : "")} data-ctx-fn={ad} onClick={() => { setCursor(ad); setSel(ad, true); }}>
             <span className="fn">
               <span className="m-fnline">
-                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}<PackNameTag at={ad} name={f?.name ?? a.names.get(ad)} /></code>
+                <code>{mark && <i className={"cmp-dot d-" + mark} title={MARK_TITLE[mark]} />}{!mark && fnOrigin && fnOrigin.kind !== "unique" && <i className={"co-dot co-" + fnOrigin.kind} title={fnOrigin.detail} />}{isStarred(ad) && <span className="star">★ </span>}{notes.aiName(ad) && <span className={"ai-mark " + notes.aiName(ad)} title={`Named by AI (${notes.aiName(ad)})`}>✦ </span>}{name}{exportOf(ad) && <span className="exp-tag">export</span>}</code>
                 {!name.endsWith(ad.toString(16).padStart(8, "0")) && <small className="m-fnaddr">{hex(ad)}</small>}
               </span>
               {rules && <small className="fn-caps">{rules.map((r) => r.name).join(" · ")}</small>}
@@ -925,10 +986,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const overview = (
     <div className="ov-container">
       <div className="ov">
-        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} />
-        <CodeOriginCard a={a} onFilterOrigin={filterByOrigin} onOpenFunction={(ad) => { setCursor(ad); setSel(ad, true); }} onShowStrings={showStringsByOrigin} />
+        <Glance a={a} functions={total} caps={totalCaps} indicators={indicators.length} onCode={openCode} onData={(k) => (k === "hex" ? showSections() : setSel(k))} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }}>
+          <OriginBanner a={a} onFilterOrigin={filterByOrigin} />
+        </Glance>
         {image && <div className="ov-wide">
-          <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} onOrigin={() => filterByOrigin(a.family?.families.length ? "malware" : "unique")} />
+          <FirstLook a={a} image={image} indicators={indicators} caps={totalCaps} onPick={pickSection} onFile={() => setSel("file")} onIndicators={() => { setStrQuery(""); setStrIndicators(true); setSel("strings"); }} onCaps={() => document.querySelector(".ov .caps")?.scrollIntoView({ behavior: "smooth", block: "start" })} onOrigin={filterByOrigin} onStrings={showStringsByOrigin} onPacks={canManagePacks(a) ? () => setPacksOpen(true) : undefined} />
           <FeatureMap a={a} image={image} onPick={pickSection} onFn={(ad) => setSel(ad)} />
         </div>}
         <div className="ov-body">
@@ -937,7 +999,6 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
           {image && !mobile && (
             <aside className="ov-context" aria-label="File context">
               <FindingsCard a={a} onPick={pickSection} onDetails={() => setSel("file")} />
-              <LayoutCard image={image} onPick={pickSection} onSections={showSections} />
             </aside>)}
         </div>
       </div>
@@ -956,7 +1017,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     // Data mode has no code pane for the cursor to land in: show the bytes, as a click on a section does.
     if (mode === "data") { showHex(va); return; }
     const t = listingTarget(va);
-    if (t !== undefined) { const panes = panesOf(layout); if (!panes.includes("listing")) setLayout([...panes.slice(0, -1), "listing"].join("+")); setListingReq((n) => n + 1); setSel(t, true); } else setSel(lastData.current);
+    if (t !== undefined) { ensurePane("listing"); setListingReq((n) => n + 1); setSel(t, true); } else setSel(lastData.current);
   };
   /** Following a string or data label out of the code: to the Listing, which has its neighbours and references. Back returns from it. */
   const showData = (va: number) => {
@@ -1066,6 +1127,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     { label: "Back", onClick: back, disabled: !canBack },
     { label: "Forward", onClick: forward, disabled: !canForward },
     { label: "Locate in file…", onClick: () => setLocateOpen(true), disabled: !image },
+    ...(!a.shellcode && (a.family || canManagePacks(a)) ? [{ label: "Fingerprint packs…", onClick: () => setPacksOpen(true) }] : []),
     { label: "Report (Markdown)", onClick: () => saveReport("md"), disabled: !a.settled },
     { label: "Report (web page)", onClick: () => saveReport("html"), disabled: !a.settled },
     { label: "Functions (CSV)", onClick: () => saveCsv("functions"), disabled: !a.settled },
@@ -1125,9 +1187,9 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
   const fnView = typeof sel === "number" && <FunctionView {...functionProps(sel, cursor)} renderPane={renderPane} locate={locatePane} outside={outsideOf} onPaneNavigate={navigatePanes} />;
 
   const retryCount = [...a.functions.values()].filter((f) => f.retry_pending).length;
-  const status = a.tooLarge ? "Too large to analyze in the browser" : a.decompileError ? "Decompiler unavailable for this file" : a.done ? `${total} functions · ${totalCaps} capabilities in ${counts.caps} of them` : a.settled ? `${total.toLocaleString()} functions${NATIVE && retryCount ? ` · retrying ${retryCount} large functions` : " · matching capabilities"}` : a.loading ? a.loading.label : [!a.capa && !a.capaError && !a.capaTooLarge && "Matching capabilities", total ? `Decompiling ${done}/${total}` : "Recovering functions"].filter(Boolean).join(" · ");
+  const status = a.tooLarge ? "Too large to analyze in the browser" : a.decompileError ? "Decompiler unavailable for this file" : a.done ? `${total} functions · ${totalCaps} capabilities in ${counts.caps} of them` : a.settled ? `${total.toLocaleString()} functions${NATIVE && retryCount ? ` · retrying ${retryCount} large functions` : " · matching capabilities"}` : a.loading ? a.loading.label : !a.ready && !NATIVE ? (a.image ? "Reading the file" : "Getting ready") : [!a.capa && !a.capaError && !a.capaTooLarge && "Matching capabilities", total ? `Decompiling ${done}/${total}` : "Recovering functions"].filter(Boolean).join(" · ");
   // Announced to screen readers only when the phase changes, not for every function.
-  const phase = a.tooLarge || a.decompileError || a.done ? status : a.loading ? "Getting ready" : "Analyzing";
+  const phase = a.tooLarge || a.decompileError || a.done ? status : a.loading || (!a.ready && !NATIVE) ? "Getting ready" : "Analyzing";
   useEffect(() => {
     if (embedded) return;
     if (active) document.title = (typeof sel === "number" ? label(sel) + " · " : "") + displayName + " · binfera";
@@ -1148,7 +1210,9 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     document.addEventListener("scroll", onScroll, { capture: true, passive: true });
     return () => { document.removeEventListener("scroll", onScroll, true); setChromeHidden(false); };
   }, [mobile, detail, sel]);
-  const progressBar = !a.done && <div className="bar"><i style={{ width: `${Math.max(4, (a.loading ? a.loading.fraction ?? 0.04 : progress) * 100)}%` }} /></div>;
+  // One bar for the whole run that never moves backwards: downloads take the first part, then the analysis.
+  const fraction = monotonic(overallProgress(a, progress));
+  const progressBar = !a.done && <div className="bar" role="progressbar" aria-label="Analysis progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}><i style={{ width: `${Math.max(3, fraction * 100)}%` }} /></div>;
 
   const commentBox = commentEdit && <CommentEditor key={commentEdit.address} {...commentEdit} mobile={mobile} text={notes.commentAt(commentEdit.address) ?? ""}
     onSave={(text) => { notes.setComment(commentEdit.address, text); bump(); setCommentEdit(null); }} onClose={() => setCommentEdit(null)} />;
@@ -1224,9 +1288,14 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
             <div className="sheet-form">
               <label><input type="checkbox" checked={onlyCaps} onChange={(e) => setOnlyCaps(e.target.checked)} /> Only functions with capabilities</label>
               <label><input type="checkbox" checked={onlyStars} onChange={(e) => setOnlyStars(e.target.checked)} /> Only starred functions</label>
-              {counts.malware > 0 && <label><input type="checkbox" checked={originFilter === "malware"} onChange={(e) => setOriginFilter(e.target.checked ? "malware" : null)} /> Only malware family functions ({counts.malware})</label>}
-              {a.family && counts.unique > 0 && <label><input type="checkbox" checked={originFilter === "unique"} onChange={(e) => setOriginFilter(e.target.checked ? "unique" : null)} /> Only unique functions ({counts.unique})</label>}
-              {libraryCount > 0 && <label><input type="checkbox" checked={hideLibrary} onChange={(e) => setHideLibrary(e.target.checked)} /> {a.family ? `Hide trusted functions (${libraryCount})` : `Hide library functions (${libraryCount})`}</label>}
+              {originOptions.length > 1 && (
+                <fieldset className="sheet-radios">
+                  <legend>Code origin</legend>
+                  {originOptions.map(([k, name]) => (
+                    <label key={k}><input type="radio" name="fn-origin" checked={originChoice === k} onChange={() => chooseOrigin(k)} /><span>{name}</span></label>
+                  ))}
+                </fieldset>
+              )}
               {embedded && <label><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only changed functions</label>}
               <fieldset className="sheet-radios">
                 <legend>Sort by</legend>
@@ -1240,6 +1309,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
         )}
         {!embedded && <ToastHost />}
         {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
+        {packsOpen && <PacksDialog a={a} mobile onClose={() => setPacksOpen(false)} />}
         {commentBox}
         {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
         <div className="sr-only" role="status">{phase}</div>
@@ -1365,6 +1435,11 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
               {here.off != null && <span>file offset {hex(here.off)}</span>}
             </>
           ) : <span>No cursor yet</span>}
+          {!a.shellcode && (a.family || a.familyError || (a.done && canManagePacks(a))) && (
+            <button className={"sb-packs" + (a.familyError ? " err" : "")} onClick={() => setPacksOpen(true)} title={a.familyError ? `Code origin: ${a.familyError}` : "Fingerprint packs Code origin compares against"}>
+              {a.family ? packsLabel(a) : a.familyError ? "Pack error" : "No pack"}
+            </button>
+          )}
           {!embedded && <BuildVersion />}
           <button className="sb-help" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
         </span>
@@ -1373,6 +1448,7 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
       {dragging && <div className="file-drop-overlay">Drop to analyze a new binary</div>}
       {!embedded && <ToastHost />}
       {palette !== null && <Palette initial={palette} search={embedded?.search ?? search} onClose={() => setPalette(null)} />}
+      {packsOpen && <PacksDialog a={a} mobile={false} onClose={() => setPacksOpen(false)} />}
       {commentBox}
       {help && <Shortcuts extra={embedded?.keys} onClose={() => setHelp(false)} />}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}

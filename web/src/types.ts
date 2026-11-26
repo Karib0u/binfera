@@ -273,7 +273,9 @@ export interface Analysis {
   /** Set when only the capability analysis refused it (its limit is lower); functions still show. */
   capaTooLarge: string | null;
   /** Set while the engine, signatures and rules are downloading; null otherwise. */
-  loading: { label: string; fraction: number | null } | null;
+  loading: { label: string; fraction: number | null; stage?: "engine" | "data" } | null;
+  /** True once every download is done and the engine can run: the analysis proper has started. */
+  ready?: boolean;
   settled: boolean;
   done: boolean;
 }

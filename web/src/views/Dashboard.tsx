@@ -1,34 +1,5 @@
 import type { Analysis } from "../types";
-import { bytes, hex } from "../workspace/labels";
-import { sectionKind, SectionLegend } from "./SectionLegend";
-
-type Image = NonNullable<Analysis["image"]>;
-
-/** Section names and sizes lead into the full section inspector. */
-export function LayoutCard({ image, onPick, onSections }: { image: Image; onPick: (va: number) => void; onSections: () => void }) {
-  const sections = image.sections.filter((s) => Math.max(s.size, s.vsize) > 0);
-  const total = sections.reduce((n, s) => n + Math.max(s.size, s.vsize), 0);
-  if (!sections.length) return null;
-  return (
-    <section className="ov-card">
-      <header><h2>Sections</h2><span>{sections.length}</span></header>
-      <div className="ov-section-map" aria-hidden="true">
-        {sections.map((s) => <i key={s.name + s.off} className={"section-" + sectionKind(s)} style={{ flexGrow: Math.max(s.size, s.vsize) / total }} />)}
-      </div>
-      <SectionLegend sections={sections} />
-      <ul className="ov-sections">
-        {sections.slice(0, 5).map((s) => (
-          <li key={s.name + s.off} className={"section-" + sectionKind(s)}>
-            <button onClick={() => onPick(s.va)} disabled={image.vaToOff(s.va) === null} title={`${s.name || "Unnamed"} · ${s.perms} · entropy ${s.entropy.toFixed(2)} · ${hex(s.va)}`}>
-              <i className="section-dot" aria-hidden /><code>{s.name || "Unnamed"}</code><small>{bytes(Math.max(s.size, s.vsize))}</small>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <button className="ov-card-link" onClick={onSections}>View {sections.length > 5 ? `all ${sections.length} sections` : "sections"}<span aria-hidden>›</span></button>
-    </section>
-  );
-}
+import { hex } from "../workspace/labels";
 
 export function FindingsCard({ a, onPick, onDetails, compact = false }: { a: Analysis; onPick: (va: number) => void; onDetails: () => void; compact?: boolean }) {
   if (!a.image) return null;

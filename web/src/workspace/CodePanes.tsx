@@ -84,14 +84,27 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
   const stopDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => stopDrag.current?.(), []);
   const panes = panesIn(tree), activeId = panes.some((p) => p.id === active) ? active : panes[0].id;
+  // A layout set from outside (a link, a toolbar toggle, a view revealed beside the code) changes as
+  // little as it can: panes that stay keep their place and size, a dropped pane's slot takes a new
+  // view in place, and only views beyond that are split in, stacked under the last pane so no pane
+  // loses width (Hex needs its 16 columns). Rebuilding the tree would throw away the arrangement.
   useEffect(() => {
     setTree((old) => {
-      const views = panesOf(layout), available = panesIn(old);
-      if (available.map((p) => p.view).join("+") === views.join("+")) return old;
-      return treeOf(views.map((view) => {
-        const i = available.findIndex((p) => p.view === view);
-        return i < 0 ? { id: nextId.current++, view, place: null } : available.splice(i, 1)[0];
-      }));
+      const want = panesOf(layout), have = panesIn(old);
+      if (have.map((p) => p.view).join("+") === want.join("+")) return old;
+      const added = [...want], dropped: Pane[] = [];
+      for (const p of have) { const i = added.indexOf(p.view); if (i >= 0) added.splice(i, 1); else dropped.push(p); }
+      let next: PaneTree = old;
+      while (dropped.length && added.length) {
+        const p = dropped.shift()!, view = added.shift()!;
+        next = updatePane(next, p.id, (pane) => ({ ...pane, view, place: null }));
+      }
+      for (const p of dropped) next = withoutPane(next, p.id) ?? next;
+      for (const view of added) {
+        const last = panesIn(next).at(-1)!;
+        next = splitPane(next, last.id, { id: nextId.current++, view, place: null }, "horizontal");
+      }
+      return next;
     });
   }, [layout]);
   useEffect(() => {
@@ -189,7 +202,7 @@ export default function CodePanes({ layout, setLayout, place, onNavigate, locate
         </div>
         {away !== null && here.cursor != null
           ? <div className="pane-breadcrumb outside" title={`The cursor is at 0x${here.cursor.toString(16)}, ${away}, not in ${label(here.address)}`}><span title={fileTitle}>{fileName}</span><i aria-hidden>›</i><code>0x{here.cursor.toString(16)}</code><em>{away}</em><button onClick={() => go(here.address)}>Back to {label(here.address)}</button></div>
-          : <div className="pane-breadcrumb" title={`${fileTitle} / ${label(here.address)} / 0x${(here.cursor ?? here.address).toString(16)}`}><span title={fileTitle}>{fileName}</span><i aria-hidden>›</i><span>{label(here.address)}</span><i aria-hidden>›</i><code>0x{(here.cursor ?? here.address).toString(16)}</code></div>}
+          : pane.place && <div className="pane-breadcrumb" title={`${fileTitle} / ${label(here.address)} / 0x${(here.cursor ?? here.address).toString(16)}`}><span title={fileTitle}>{fileName}</span><i aria-hidden>›</i><span>{label(here.address)}</span><i aria-hidden>›</i><code>0x{(here.cursor ?? here.address).toString(16)}</code></div>}
         <div className="pane-content">{render(pane.view, here, go, activeId === pane.id, { onShowAsm, asmJump: asmJump?.id === pane.id ? asmJump : undefined })}</div>
         {over && <div className={"pane-drop-zone drop-" + over.side}><span>{over.side === "center" ? "Swap places" : `Dock ${over.side}`}</span></div>}
       </section>;

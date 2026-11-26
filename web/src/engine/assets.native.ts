@@ -17,7 +17,7 @@ type FamilyPackStatus = NativeFamilyPack | { available: false };
 export type Arch = "x64" | "x86" | null;
 export type WinApi = "32" | "64" | null;
 export function winApiFor(_arch: string | null | undefined, _format: string | null | undefined): WinApi { return null; }
-export interface Progress { label: string; fraction: number | null }
+export interface Progress { label: string; fraction: number | null; stage?: "engine" | "data" }
 
 /** True in the desktop build: the engine is native, multi-process and not memory-limited. */
 export const NATIVE = true;
@@ -31,7 +31,7 @@ export interface Assets {
 
 const assets: Assets = { module: null as unknown as WebAssembly.Module, data: () => ({}), rules: {} };
 
-export async function loadAssets(_arch: Arch, _onProgress: (p: Progress | null) => void, _signatures = true, _winApi: WinApi = null): Promise<Assets> {
+export async function loadAssets(_arch: Arch, _onProgress: (p: Progress | null) => void, _signatures = true, _winApi: WinApi = null, _familyPack = false): Promise<Assets> {
   return assets;
 }
 
