@@ -16,19 +16,23 @@ export function winApiFor(arch: string | null | undefined, format: string | null
 
 /** False in the browser build: the engine is WebAssembly in workers (assets.native.ts says true). */
 export const NATIVE = false;
-export interface Progress { label: string; fraction: number | null }
+/** Download progress. `stage` tells the engine module (first) from the signatures, rules and packs (second). */
+export interface Progress { label: string; fraction: number | null; stage?: "engine" | "data" }
 
 const base = import.meta.env.BASE_URL;
+const FAMILY_PACK = `${base}sigs/family.bxfam`;
 const SIGNATURES = ["1_flare_msvc_rtf_32_64.sig", "2_flare_msvc_atlmfc_32_64.sig", "3_flare_common_libs.sig"];
 
 interface Download { loaded: number; total: number | null }
 const downloads = new Map<string, Download>();
 const cache = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 let listener: ((p: Progress) => void) | null = null;
+let stage: "engine" | "data" = "engine";
 
 function report() {
   if (!listener) return;
-  if (!downloads.size) return listener({ label: "Starting analysis engine", fraction: null });
+  const what = stage === "engine" ? "Downloading the analysis engine" : "Downloading signatures and rules";
+  if (!downloads.size) return listener({ label: stage === "engine" ? "Starting the analysis engine" : "Loading signatures and rules", fraction: null, stage });
   let loaded = 0, total = 0, known = true;
   for (const d of downloads.values()) {
     loaded += d.loaded;
@@ -36,8 +40,9 @@ function report() {
   }
   const mb = (n: number) => (n / 1048576).toFixed(0);
   listener({
-    label: known && total ? `Downloading analysis engine · ${mb(loaded)} / ${mb(total)} MB` : `Downloading analysis engine · ${mb(loaded)} MB`,
+    label: known && total ? `${what} · ${mb(loaded)} / ${mb(total)} MB` : `${what} · ${mb(loaded)} MB`,
     fraction: known && total ? Math.min(1, loaded / total) : null,
+    stage,
   });
 }
 
@@ -84,8 +89,10 @@ export interface Assets {
   rules: Record<string, string>;
 }
 
-export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) => void, signatures = true, winApi: WinApi = null): Promise<Assets> {
+/** `familyPack` also fetches the hosted family pack here, so its download is counted with the rest instead of running silently afterwards. */
+export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) => void, signatures = true, winApi: WinApi = null, familyPack = false): Promise<Assets> {
   downloads.clear();
+  stage = "data";
   listener = onProgress;
   report();
   try {
@@ -101,6 +108,7 @@ export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) =>
       // CDN compresses in transit, and the engine copies it out of the file system anyway.
       winapi ? download(`${base}sigs/${winapi}`) : Promise.resolve(null),
       download(`${base}rules.json`).then((b) => JSON.parse(new TextDecoder().decode(b)) as Record<string, string>),
+      familyPack ? download(FAMILY_PACK).catch(() => null) : null,
     ]);
     const copy = (b: Uint8Array<ArrayBuffer>) => b.slice().buffer;
     return {
@@ -123,6 +131,7 @@ export async function loadAssets(arch: Arch, onProgress: (p: Progress | null) =>
 /** Load just the module so header inspection can choose the signature assets. */
 export async function loadEngine(onProgress: (p: Progress | null) => void): Promise<WebAssembly.Module> {
   downloads.clear();
+  stage = "engine";
   listener = onProgress;
   report();
   try { return await loadModule(); }
@@ -197,10 +206,9 @@ const copy = (p: HeldPack): FamilyPackBytes => ({ name: p.name, size: p.bytes.by
  * pack stay quiet; missing or non-pack responses count as no pack.
  */
 export async function loadFamilyPacks(): Promise<FamilyPackBytes[]> {
-  defaultFamilyPack ??= fetch(`${base}sigs/family.bxfam`)
-    .then(async (res) => {
-      if (!res.ok) return null;
-      const buf = new Uint8Array(await res.arrayBuffer());
+  // Shares `download`'s cache: the analysis usually fetched it already, with progress, in loadAssets.
+  defaultFamilyPack ??= download(FAMILY_PACK)
+    .then((buf) => {
       const format = familyPackFormat(buf);
       return format ? { bytes: buf, name: "Starter pack", format } : null;
     })

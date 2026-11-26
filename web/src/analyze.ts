@@ -244,6 +244,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     try {
       const info = JSON.parse(await cached.image.text()) as ImageMetadata;
       const capa = summarizeCapa(JSON.parse(await cached.capa.text()));
+      a.ready = true;
       applyImage(info);
       const lines = (await cached.decomp.text()).split("\n");
       for (let i = 0; i < lines.length; i += 200) {
@@ -273,6 +274,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
       a.names.clear();
       functionsChanged = namesChanged = true;
       a.settled = false;
+      a.ready = false;
       settledShards.clear();
       functionAddresses.clear();
       a.order = [];
@@ -295,8 +297,10 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
   const info = JSON.parse(metadata) as ImageMetadata;
   applyImage(info);
 
-  const assets = await loadAssets(info.fidArch, progress, info.format === "pe", winApiFor(info.arch, info.format));
+  const assets = await loadAssets(info.fidArch, progress, info.format === "pe", winApiFor(info.arch, info.format), !raw);
   if (signal.aborted) return;
+  a.ready = true;
+  flush();
 
   // A file too large for the engine's memory limit is refused. The capability worker has the lower
   // limit, so its refusal leaves the decompiler running; once a decompiler worker refuses, every

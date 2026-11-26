@@ -15,7 +15,7 @@
   <a href="https://github.com/Karib0u/binfera/releases">Releases</a>
 </p>
 
-**See what a binary does.** Decompiled C, capabilities mapped onto the code, and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
+**See what a binary does.** Decompiled C, capabilities mapped onto the code, offline code origin (malware family and library matching), and diffs for Windows, Linux and macOS executables. Use it in a browser, as a desktop app, or from your AI agent and the command line. Analysis runs on your machine.
 
 ![Opening the WannaCry demo: the overview, a capability, the function behind it, search and the function list](docs/images/tour.gif)
 
@@ -32,12 +32,13 @@ binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 
 ## What it does
 
-- **Decompiled C for every function.** x86, x86-64 and AArch64 in PE, ELF and supported Mach-O images, plus ARM32/Thumb (PE, ELF) and classic MIPS32 (ELF). See the [supported scope](docs/decompiler.md).
+- **Decompiled C for every function.** x86, x86-64 and AArch64 in PE, ELF and supported Mach-O images, plus ARM32/Thumb (PE, ELF), classic MIPS32 (ELF) and .NET IL. Includes Windows API prototypes, symbolic flag constants and resolved `GetProcAddress` calls. See the [supported scope](docs/decompiler.md).
 - **Capabilities on the code.** capa rule matches, with ATT&CK ids, mapped onto the functions that triggered them.
+- **Code origin and libraries.** Offline fingerprint packs (`BXFAM002`/`BXFAM003`), FLIRT signatures and Function ID packs spot known malware families, name library functions and strings, and let you layer your own organization's packs locally. See [Code Origin](docs/cli.md#code-origin).
 - **Compare two binaries.** Which capabilities, functions and file contents changed, down to the instruction. See [comparing binaries](docs/comparison.md).
-- **Read it your way.** Control-flow graph, assembly, strings, imports and sections; FLIRT signatures and Function ID packs name library code.
-- **Keep your work.** The desktop app saves your renames and comments and remembers the files you opened.
-- **Bring your own AI agent.** The [MCP server](docs/mcp.md) lets agents name functions, comment code and save reports with evidence. Every agent run can be undone.
+- **Read it your way.** Triage-sorted function list, IDA-style listing, control-flow graph, call graph, assembly, strings, imports and hex, plus one-click analysis of embedded executables and overlays.
+- **Keep your work.** The desktop app saves your renames, comments and stars and remembers the files you opened.
+- **Bring your own AI agent.** The [MCP server](docs/mcp.md) connects Claude Code, Codex, Mistral Vibe or any MCP client to name functions, comment code and save reports with evidence. Every agent run can be undone.
 - **Local analysis.** The browser and desktop analyze files on your machine. Connected agents use their own model providers.
 
 ## A closer look
@@ -46,7 +47,7 @@ Every picture is the WannaCry demo from [binfera.io](https://binfera.io), so you
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/images/overview.webp"><img src="docs/images/overview.webp" alt="The overview: first look, file map and capabilities"></a><br><b>Overview.</b> What the file is, how it was built and packed, and its capabilities by ATT&CK tactic.</td>
+    <td width="50%"><a href="docs/images/overview.webp"><img src="docs/images/overview.webp" alt="The overview: code origin, first look, file map and capabilities"></a><br><b>Overview.</b> Code origin (malware family and libraries), first look, file map, and capabilities by ATT&CK tactic.</td>
     <td width="50%"><a href="docs/images/capabilities.webp"><img src="docs/images/capabilities.webp" alt="A capability with its ATT&CK and MBC ids and the functions that match it"></a><br><b>Capabilities on the code.</b> ATT&CK and MBC ids, and the functions behind each match.</td>
   </tr>
   <tr>
@@ -78,7 +79,7 @@ Asked for a report, it saves one with evidence, next to every run's names and co
 binfera is built for the first hours with an unknown file (what is it, what does it do, what changed), not as a replacement for a full reverse-engineering suite. Next to Ghidra and radare2:
 
 - **Fast discovery.** It is written in Rust, and lists a file's functions a median of 23 times sooner than Ghidra's headless analyzer, across PE, ELF and Mach-O on x86, x64, ARM and MIPS ([measurements and caveats](docs/benchmarks.md)). The decompiler core is Ghidra's own, so decompiled output is the same kind of work; the gain is in discovery.
-- **Capabilities on the code.** Every function carries the behaviours it implements, with ATT&CK ids.
+- **Capabilities and code origin.** Every function carries the behaviours it implements (with ATT&CK ids) and whether it matches a known family, a library, or unique code to reverse first.
 - **Nothing to install, nothing uploaded.** It runs in a browser tab, and the command-line tool is one file.
 - **Built for AI agents.** An MCP server with saved notes, undoable runs and reports whose evidence is checked.
 - **Compare built in.** Two builds, down to the instruction.
@@ -131,6 +132,7 @@ Everything the agent saves is kept in a local project database, and the desktop 
 
 ```sh
 binfera sample.exe -j -q | jq -r '.rules | keys[]'   # capabilities, one per line
+binfera family match sample.exe                      # offline code origin (family and libraries)
 binfera diff old.exe new.exe                         # exits 1 when the builds differ
 ```
 

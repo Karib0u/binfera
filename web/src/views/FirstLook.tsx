@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { entropyOf, entropyWord, HIGH_ENTROPY } from "../engine/entropy";
 import type { Indicator } from "../indicators";
-import { matchStrength, STRENGTH_LABEL } from "../familyOrigin";
-import type { Analysis } from "../types";
+import { formatSourceName, matchStrength, STRENGTH_LABEL, type FunctionOriginKind } from "../familyOrigin";
+import type { Analysis, StringOriginKind } from "../types";
 import { bytes as size } from "../workspace/labels";
 
 type Image = NonNullable<Analysis["image"]>;
@@ -56,31 +56,66 @@ const clip = (v: string, n = 56) => (v.length > n ? v.slice(0, n - 1) + "…" : 
 interface Item { label: string; value: React.ReactNode; tone?: "warn" | "ok"; go?: () => void; note?: string }
 
 /** Where to start with an unknown file: what built it, whether it hides, what it does and what it talks to. */
-export function FirstLook({ a, image, indicators, caps, onPick, onFile, onIndicators, onCaps, onOrigin }: {
+const n = (v: number) => v.toLocaleString("en-US");
+const fns = (v: number, word = "function") => `${n(v)} ${word}${v === 1 ? "" : "s"}`;
+
+/**
+ * Code origin when no family matched, or why there is none. A family match is the banner above the
+ * page instead, so this row stays quiet: it says where to start and nothing more.
+ */
+function originRow(a: Analysis, onOrigin?: (kind: FunctionOriginKind) => void, onStrings?: (kind: StringOriginKind | null, query?: string) => void, onPacks?: () => void): Item[] {
+  if (a.shellcode) return [];
+  const r = a.family;
+  if (!r) {
+    if (!a.familyError && !(a.done && onPacks)) return [];
+    return [{ label: "Code origin", value: a.familyError ? `Not checked: ${a.familyError}` : "Not checked: no fingerprint pack loaded", go: onPacks }];
+  }
+  // Libraries and look-alike families, as rows: a tooltip would be out of reach on a touch screen.
+  const libs = r.trusted_sources.length > 0 ? [{
+    label: "Libraries",
+    value: <>{r.trusted_sources.slice(0, 4).map((s) => formatSourceName(s.source)).join(", ")}{r.trusted_sources.length > 4 && <small> +{r.trusted_sources.length - 4} more</small>}<small> · {fns(r.trusted_functions)}</small></>,
+    go: () => onOrigin?.("trusted"),
+  }] : [];
+  if (r.families.length) {
+    const others = r.families.slice(1, 4);
+    return [
+      ...(others.length ? [{
+        label: "Also resembles",
+        value: <>{others.map((f, i) => <span key={f.family}>{i > 0 && ", "}<code>{f.family}</code></span>)}<small> · {STRENGTH_LABEL[matchStrength(others[0])].toLowerCase()} at best</small></>,
+        go: () => onOrigin?.("malware"),
+      }] : []),
+      ...libs,
+    ];
+  }
+  const total = a.order.length || r.total_functions;
+  const small = Math.max(0, total - r.eligible_functions);
+  const parts = [r.trusted_functions > 0 && `${n(r.trusted_functions)} library`, r.shared_malware_functions > 0 && `${n(r.shared_malware_functions)} common malware`, small > 0 && `${n(small)} too small to check`].filter(Boolean);
+  const out: Item[] = [{
+    label: "Code origin",
+    value: r.eligible_functions === 0 ? <>No known family<small> · no function large enough to check</small></>
+      : r.unique_functions > 0 ? <>No known family · <b>{fns(r.unique_functions, "unique function")}</b> to reverse first{parts.length > 0 && <small> · {parts.join(", ")}</small>}</>
+      : <>No known family · every checked function is already known{parts.length > 0 && <small> · {parts.join(", ")}</small>}</>,
+    go: r.eligible_functions > 0 ? () => onOrigin?.(r.unique_functions > 0 ? "unique" : "trusted") : onPacks,
+  }];
+  out.push(...libs);
+  const hint = r.strings?.string_only_hint;
+  if (hint) out.push({
+    label: "String hint",
+    tone: "warn",
+    value: <><code>{hint.family}</code> · {n(hint.exclusive_strings)} exclusive string{hint.exclusive_strings === 1 ? "" : "s"}<small> · low confidence, no code matched</small></>,
+    go: onStrings && (() => onStrings("malware", hint.family)),
+  });
+  return out;
+}
+
+export function FirstLook({ a, image, indicators, caps, onPick, onFile, onIndicators, onCaps, onOrigin, onStrings, onPacks }: {
   a: Analysis; image: Image; indicators: Indicator[]; caps: number;
-  onPick: (va: number) => void; onFile: () => void; onIndicators: () => void; onCaps: () => void; onOrigin?: () => void;
+  onPick: (va: number) => void; onFile: () => void; onIndicators: () => void; onCaps: () => void;
+  onOrigin?: (kind: FunctionOriginKind) => void; onStrings?: (kind: StringOriginKind | null, query?: string) => void; onPacks?: () => void;
 }) {
   const items = useMemo(() => {
-    const out: Item[] = [];
+    const out: Item[] = originRow(a, onOrigin, onStrings, onPacks);
     const d = image.details;
-    if (a.family && a.family.eligible_functions > 0) {
-      const top = a.family.families[0];
-      if (top) {
-        out.push({
-          label: "Code origin",
-          tone: "warn",
-          value: <>{STRENGTH_LABEL[matchStrength(top)]}: <code>{top.family}</code> · {top.exclusive_functions} functions found only in this family</>,
-          go: onOrigin,
-        });
-      } else {
-        out.push({
-          label: "Code origin",
-          tone: a.family.trusted_functions > 0 ? "ok" : undefined,
-          value: `No known malware family · ${a.family.unique_functions} unique function${a.family.unique_functions === 1 ? "" : "s"} to reverse`,
-          go: onOrigin,
-        });
-      }
-    }
     const toolchains = guessToolchains(a, image);
     const compiled = d?.facts.find((f) => f.label === "PDB path")?.value;
     out.push({ label: "Built with", value: toolchains.length ? toolchains.join(", ") : "No toolchain marks found" });

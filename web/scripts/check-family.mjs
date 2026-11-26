@@ -267,7 +267,7 @@ assert.ok(!isAutoName("memcpy") && !isAutoName("FUN_handler"));
 const names = trustedNames(v3Report);
 assert.equal(names.get(0x1000).name, "EVP_DecryptUpdate");
 assert.equal(names.get(0x1000).source, "openssl");
-assert.match(names.get(0x1000).detail, /Trusted symbol from pack · openssl · EVP_DecryptUpdate \(my-org-trusted\.bxfam\)/);
+assert.match(names.get(0x1000).detail, /Library name from pack · openssl · EVP_DecryptUpdate \(my-org-trusted\.bxfam\)/);
 assert.equal(trustedNames(sampleReport).size, 0, "BXFAM002 reports carry no Trusted symbols");
 assert.equal(buildIndex(v3Report).byAddress.get(0x1000).symbol, "EVP_DecryptUpdate");
 
@@ -307,6 +307,6 @@ assert.equal(stringOriginOf(strIndex, "never seen anywhere"), "unique");
 assert.equal(buildStringOriginIndex(sampleReport), null, "BXFAM002 reports hide all string-origin UI");
 assert.equal(stringOriginOf(null, "anything"), null);
 assert.deepEqual(stringOriginBadge(v3Report.strings.entries[0]).text, "win.lumma");
-assert.deepEqual(stringOriginBadge(v3Report.strings.entries[1]).text, "Shared");
-assert.deepEqual(stringOriginBadge(v3Report.strings.entries[2]).text, "Trusted");
+assert.deepEqual(stringOriginBadge(v3Report.strings.entries[1]).text, "Common malware");
+assert.deepEqual(stringOriginBadge(v3Report.strings.entries[2]).text, "Library");
 console.log("String Reuse lookup: passed");

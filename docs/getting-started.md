@@ -6,8 +6,8 @@ A first analysis in each interface. They share one engine, so results agree; the
 
 1. Open [binfera.io](https://binfera.io).
 2. Pick one of the samples, or drop a file on the page. The file is read by the page and is never uploaded.
-3. The overview lists the file's capabilities grouped by ATT&CK tactic. Select a capability to jump to the functions that implement it.
-4. In a function, switch between decompiled C, assembly and the control-flow graph.
+3. The overview shows any offline code-origin match (malware family and libraries), a first look at packing and signatures, and capabilities grouped by ATT&CK tactic. Select a capability or origin verdict to jump straight to the functions behind it.
+4. In a function, switch between typed C, assembly, the IDA-style listing, and the control-flow graph, or sort the function list by importance to triage from the top.
 
 ![The overview of the WannaCry demo: first look, file map and capabilities](images/overview.webp)
 
@@ -30,6 +30,7 @@ After [installing `binfera`](installation.md#command-line-tool):
 binfera sample.exe                                   # capabilities, as a readable report
 binfera sample.exe -j -q | jq -r '.rules | keys[]'   # capabilities, one per line
 binfera sample.exe --decompile-all                   # every function as C, one JSON object per line
+binfera family match sample.exe                      # offline code origin (family and libraries)
 binfera diff old.exe new.exe                         # exits 1 when the builds differ
 ```
 

@@ -45,7 +45,7 @@ const CHANGES_KEYS: [string, string][] = [
   ["?", "This list"],
 ];
 
-const blank = (file: File): Analysis => ({ fileName: file.name, size: file.size, order: [], strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, functions: new Map(), names: new Map(), settled: false, capa: null, capaError: null, family: null, familyError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: { label: "Preparing…", fraction: null }, done: false });
+const blank = (file: File): Analysis => ({ fileName: file.name, size: file.size, order: [], strings: [], stringsTotal: 0, image: null, entry: null, arch: null, packed: null, functions: new Map(), names: new Map(), settled: false, capa: null, capaError: null, family: null, familyError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: { label: "Getting ready", fraction: null }, done: false });
 
 /** Two files in one place: what changed between them, and each file to explore on its own. */
 export default function CompareWorkspace({ c, onReset }: { c: Comparison; onReset: () => void }) {

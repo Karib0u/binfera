@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useKeyboardInset } from "./keyboard";
 
 /**
  * A bottom sheet for phones: dim backdrop, grab handle, swipe down or tap outside to close.
- * It stays inside thumb reach, unlike a popover anchored to a corner button.
+ * It stays inside thumb reach, unlike a popover anchored to a corner button. Rendered into <body>, so an
+ * ancestor with a transform (the phone header has one) cannot become its containing block and trap it.
  */
 export default function Sheet({ title, onClose, children }: { title?: string; onClose: () => void; children: React.ReactNode }) {
   useKeyboardInset();
@@ -26,7 +28,7 @@ export default function Sheet({ title, onClose, children }: { title?: string; on
     panel.current.style.transition = "";
     if (d.dy > 90) onClose(); else panel.current.style.transform = "";
   };
-  return (
+  return createPortal(
     <div className="sheet-back" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="sheet" role="dialog" aria-modal="true" aria-label={title} ref={panel}>
         {/* The handle and the title both drag: the title is a bigger target than the handle's 4px bar. */}
@@ -38,6 +40,7 @@ export default function Sheet({ title, onClose, children }: { title?: string; on
         </div>
         <div className="sheet-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

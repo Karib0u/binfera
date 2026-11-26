@@ -1,6 +1,6 @@
 import type { Indicator } from "../indicators";
 import type { Analysis, StringMatch, StringOriginKind } from "../types";
-import { buildStringOriginIndex, stringOriginBadge, stringOriginKey } from "../familyOrigin";
+import { buildStringOriginIndex, ORIGIN_NAME, stringOriginBadge, stringOriginKey } from "../familyOrigin";
 import { useNotes } from "../names";
 import { hex } from "../workspace/labels";
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -12,18 +12,13 @@ const PAGE = 300;
 /** A string row's identity: address plus encoding, as the list keys rows. */
 type StringEntryKey = string;
 
-/** String Reuse filter state; the Workspace holds it so the Code origin card can set it. */
+/** String origin filter state; the Workspace holds it so Code origin links (the banner, First look) can set it. */
 export interface StringOriginFilter {
   kind: StringOriginKind | null; setKind: (k: StringOriginKind | null) => void;
   hideTrusted: boolean; setHideTrusted: (v: boolean) => void;
 }
 
-const ORIGIN_CHIPS: { kind: StringOriginKind; label: string; title: string }[] = [
-  { kind: "malware", label: "Malware", title: "Strings found in one malware family's samples only" },
-  { kind: "shared", label: "Shared", title: "Strings seen in two or three malware families" },
-  { kind: "unique", label: "Unique", title: "Strings no loaded pack knows" },
-  { kind: "trusted", label: "Trusted", title: "Strings common in benign software, from the packs' Trusted string filters" },
-];
+const ORIGIN_KINDS: StringOriginKind[] = ["malware", "unique", "shared", "trusted"];
 
 export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, refs, onGoto, query, setQuery, onHex, onBytes, onlyRefPref, setOnlyRef, mobile, onPeek, cursor, autoFocus = true, origin: originProp }: {
   cursor?: number | null; autoFocus?: boolean;
@@ -76,12 +71,31 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
     if (originIndex) for (const x of a.strings) c[kindOf(x.a + (x.w ? "w" : "a"))]++;
     return c;
   }, [originIndex, originOf, a.strings]);
+  // Only malware evidence earns a badge; library strings are dimmed instead, and unique is the default.
   const badge = (key: StringEntryKey) => {
     const m = originOf.get(key);
-    if (!m) return null;
+    if (!m || (m.kind !== "malware" && m.kind !== "shared")) return null;
     const b = stringOriginBadge(m);
     return <span className={"tag str-origin str-origin-" + m.kind} title={b.title}>{b.text}</span>;
   };
+  // String origin, from the packs' String Reuse data: one control, as in the function list.
+  const originChoice = kindFilter ?? (hideTrusted ? "nolib" : "all");
+  const originSelect = originIndex && !onlyIndicators && (
+    <label className={"chip-select" + (originChoice !== "all" ? " on" : "")} title="String origin from the loaded packs: supporting evidence, never the code verdict">
+      <span className="sr-only">String origin</span>
+      <select value={originChoice} onChange={(e) => {
+        const v = e.target.value;
+        if (v === "all" || v === "nolib") { origin.setKind(null); origin.setHideTrusted(v === "nolib"); return; }
+        origin.setHideTrusted(false);
+        origin.setKind(v as StringOriginKind);
+      }}>
+        <option value="all">Any origin</option>
+        {originCounts.trusted > 0 && <option value="nolib">Hide library ({originCounts.trusted})</option>}
+        {ORIGIN_KINDS.filter((k) => originCounts[k] > 0 || kindFilter === k).map((k) => <option key={k} value={k}>{ORIGIN_NAME[k]} ({originCounts[k]})</option>)}
+      </select>
+    </label>
+  );
+  const dim = (key: StringEntryKey) => (originOf.get(key)?.kind === "trusted" ? " str-lib" : "");
   useEffect(() => {
     const i = rows.findIndex((x) => cursor != null && cursor >= x.a && cursor < x.a + Math.max(1, x.s.length * (x.w ? 2 : 1)));
     if (i >= 0) setLimit((n) => Math.max(n, i + PAGE));
@@ -106,20 +120,8 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
           <button aria-pressed={!onlyIndicators && !onlyRef} onClick={() => { setOnlyIndicators(false); setOnlyRef(false); }}>All <em>{a.strings.length}</em></button>
           <button aria-pressed={!onlyIndicators && onlyRef} disabled={refs.size === 0} title={refs.size === 0 ? "References appear once decompilation finishes" : "Only strings the code uses"} onClick={() => { setOnlyIndicators(false); setOnlyRef(true); }}>{mobile ? "Used" : "Referenced"} <em>{refs.size}</em></button>
           <button aria-pressed={onlyIndicators} title="URLs, IP addresses, domains, commands, registry keys, paths and similar" onClick={() => setOnlyIndicators(true)}>Indicators <em>{indicators.length}</em></button>
+          {originSelect}
         </div>
-        {originIndex && !onlyIndicators && (
-          <div className="chips" role="group" aria-label="Show strings by origin" title="String Reuse from the loaded packs: supporting evidence, never the code verdict">
-            <button aria-pressed={!kindFilter} onClick={() => origin.setKind(null)}>All</button>
-            {ORIGIN_CHIPS.map((c) => (
-              <button key={c.kind} aria-pressed={kindFilter === c.kind} disabled={!originCounts[c.kind] && kindFilter !== c.kind} title={c.title}
-                onClick={() => { origin.setKind(kindFilter === c.kind ? null : c.kind); if (c.kind === "trusted") origin.setHideTrusted(false); }}>
-                <span className={"co-dot co-" + c.kind} aria-hidden />{c.label} <em>{originCounts[c.kind]}</em>
-              </button>
-            ))}
-            <button aria-pressed={hideTrusted} disabled={!originCounts.trusted && !hideTrusted} title="Hide strings common in benign software"
-              onClick={() => { if (kindFilter === "trusted") origin.setKind(null); origin.setHideTrusted(!origin.hideTrusted); }}>Hide trusted <em>{originCounts.trusted}</em></button>
-          </div>
-        )}
       </div>
       {onlyIndicators && <IndicatorGroups items={indicators} query={query} refs={refs} label={fnName} onFn={onGoto} ready={a.done} onHex={(va, len) => (mobile ? onPeek : onBytes ?? onHex)?.(va, len)} />}
       {!onlyIndicators && rows.slice(0, limit).map((x) => {
@@ -128,7 +130,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
         if (mobile) {
           const key = x.a + (x.w ? "w" : "a"), isOpen = open === key, sec = a.image?.sectionAt(x.a);
           return (
-            <div className={"str m" + (isOpen ? " open" : "")} key={key} onClick={() => setOpen(isOpen ? null : key)}>
+            <div className={"str m" + (isOpen ? " open" : "") + dim(key)} key={key} onClick={() => setOpen(isOpen ? null : key)}>
               <div className="str-text">{x.s}</div>
               <div className="str-meta">
                 <code>{hex(x.a)}</code>{sec && <span>{sec.name}</span>}{x.w && <span>utf-16</span>}{badge(key)}
@@ -144,7 +146,7 @@ export function StringsView({ a, indicators, onlyIndicators, setOnlyIndicators, 
           );
         }
         return (
-          <div className={"str" + (selected ? " selected" : "")} data-ctx-str={x.a} data-ctx-len={x.w ? x.s.length * 2 : x.s.length} data-ctx-text={x.s} data-current={selected || undefined} key={x.a + (x.w ? "w" : "a")} onClick={() => onHex(x.a, x.w ? x.s.length * 2 : x.s.length)}>
+          <div className={"str" + (selected ? " selected" : "") + dim(x.a + (x.w ? "w" : "a"))} data-ctx-str={x.a} data-ctx-len={x.w ? x.s.length * 2 : x.s.length} data-ctx-text={x.s} data-current={selected || undefined} key={x.a + (x.w ? "w" : "a")} onClick={() => onHex(x.a, x.w ? x.s.length * 2 : x.s.length)}>
             <div className="str-head">
               <code>{hex(x.a)}</code>
               {a.image?.sectionAt(x.a) && <span className="tag">{a.image.sectionAt(x.a)!.name}</span>}

@@ -161,7 +161,7 @@ export default function LandingSamples({ samples, loading, onSample, onHarmless 
           </div>
           <button type="button" className="lp-tile lp-random" onClick={random} aria-disabled={busy}>
             <span className="lp-sp"><MysterySprite /></span>
-            <span className="lp-nm">Random</span>
+            <span className="lp-nm">Random sample</span>
           </button>
         </div>
 

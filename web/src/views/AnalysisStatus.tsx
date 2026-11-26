@@ -1,12 +1,15 @@
+import { NATIVE } from "../engine/assets";
+import { downloadProgress } from "../analysisProgress";
 import type { Analysis } from "../types";
 
 /** Downloading happens first; capabilities and decompilation then run side by side, each with its own progress. */
 export function ProgressCard({ a }: { a: Analysis }) {
-  const downloading = !!a.loading;
+  // Downloads come in two parts with the file read between them; the step stays active for all of it.
+  const downloading = !!a.loading || (!a.ready && !NATIVE);
   const total = a.order.length, done = a.functions.size;
   const decompiled = total ? done / total : null;
   const steps = [
-    { name: "Download the analysis engine", note: downloading ? a.loading!.label : "First visit only, then cached by your browser", state: downloading ? "active" : "done", fraction: downloading ? a.loading!.fraction : 1 },
+    { name: "Download the engine and rules", note: downloading ? a.loading?.label ?? "Reading the file" : "First visit only, then cached by your browser", state: downloading ? "active" : "done", fraction: downloading ? downloadProgress(a) : 1 },
     { name: "Match capabilities", note: "capa rules run on your device", state: downloading ? "todo" : "active", fraction: null },
     { name: "Decompile functions", note: total ? `${done} of ${total}` : "Recovering functions from the file", state: downloading ? "todo" : "active", fraction: decompiled },
   ] as const;

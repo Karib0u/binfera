@@ -2,6 +2,24 @@ import type { FamilyMatch, FamilyMatchKind, FamilyReport, StringMatch, StringOri
 
 export type FunctionOriginKind = "malware" | "shared" | "trusted" | "unique";
 
+/**
+ * The words the UI uses for each class, everywhere: lists, filters, badges, the file map. The engine
+ * and CLI say "trusted"; the app says "library", which is what an analyst calls it.
+ */
+export const ORIGIN_NAME: Record<FunctionOriginKind, string> = {
+  malware: "Family",
+  shared: "Common malware",
+  unique: "Unique",
+  trusted: "Library",
+};
+
+export const ORIGIN_HINT: Record<FunctionOriginKind, string> = {
+  malware: "Code found in one malware family's samples",
+  shared: "Code seen across many unrelated malware families: says nothing about which family this is",
+  unique: "Not found in any loaded pack: the code to reverse first",
+  trusted: "Compiler runtimes, FLIRT signatures and known benign libraries",
+};
+
 export interface FunctionOrigin {
   kind: FunctionOriginKind;
   /** Top malware family name or trusted source name, when applicable. */
@@ -103,7 +121,7 @@ export function buildOriginIndex(
           kind: "trusted",
           label,
           symbol,
-          detail: `Trusted · ${label}${symbol ? ` · ${symbol}` : ""}`,
+          detail: `Library · ${label}${symbol ? ` · ${symbol}` : ""}`,
         });
       }
     }
@@ -112,8 +130,8 @@ export function buildOriginIndex(
       if (!byAddress.has(ad)) {
         byAddress.set(ad, {
           kind: "shared",
-          label: "Shared",
-          detail: "Shared across multiple malware families",
+          label: "Common malware",
+          detail: "Common malware code: seen across many unrelated families",
         });
       }
     }
@@ -123,7 +141,7 @@ export function buildOriginIndex(
         byAddress.set(ad, {
           kind: "unique",
           label: "Unique",
-          detail: "Unique code (unseen in pack)",
+          detail: "Unique: not in any loaded pack",
         });
       }
     }
@@ -175,7 +193,7 @@ export function trustedNames(report: FamilyReport | null | undefined): Map<numbe
       name,
       source,
       pack: hit.pack_name,
-      detail: ["Trusted symbol from pack", source, name].filter(Boolean).join(" · ") + (hit.pack_name ? ` (${hit.pack_name})` : ""),
+      detail: ["Library name from pack", source, name].filter(Boolean).join(" · ") + (hit.pack_name ? ` (${hit.pack_name})` : ""),
     });
   }
   return out;
@@ -214,7 +232,7 @@ export function stringOriginOf(index: Map<string, StringMatch> | null, raw: stri
 export function stringOriginBadge(m: StringMatch): { text: string; title: string } {
   const fams = m.families ?? [];
   if (m.kind === "malware") return { text: fams[0] ?? "Malware", title: `Seen only in ${fams[0] ?? "one malware family"}'s samples` };
-  if (m.kind === "shared") return { text: "Shared", title: fams.length ? `Seen in ${fams.join(", ")}` : "Seen in several malware families" };
-  if (m.kind === "trusted") return { text: "Trusted", title: "In a Trusted string filter of a loaded pack: common in benign software" };
+  if (m.kind === "shared") return { text: "Common malware", title: fams.length ? `Seen in ${fams.join(", ")}` : "Seen in several malware families" };
+  if (m.kind === "trusted") return { text: "Library", title: "Common in benign software, per a loaded pack" };
   return { text: "Unique", title: "Not in any loaded pack" };
 }

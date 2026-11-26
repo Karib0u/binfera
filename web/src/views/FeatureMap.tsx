@@ -103,7 +103,7 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
     `${hex(c.off)} to ${hex(c.end)}`, c.section ? `section ${c.section}` : c.kind === "none" ? "outside any section" : "",
     `entropy ${c.entropy.toFixed(2)} (${entropyWord(c.entropy)})`,
     c.functions.length ? `${c.functions.length} function${c.functions.length === 1 ? "" : "s"}` : "",
-    c.origin.malware ? `${c.origin.malware} malware` : "",
+    c.origin.malware ? `${c.origin.malware} family` : "",
     c.origin.shared ? `${c.origin.shared} common malware` : "",
     c.origin.unique ? `${c.origin.unique} unique` : "",
     c.origin.trusted ? `${c.origin.trusted} library` : "",
@@ -128,13 +128,13 @@ export function FeatureMap({ a, image, onPick, onFn }: { a: Analysis; image: Ima
       {layer === "sections" && <SectionLegend sections={image.sections} />}
       {layer === "origin" && (
         <div className="fm-sections" aria-label="Code origin legend">
-          <span><i className="co-malware" />Family code</span>
-          <span><i className="co-shared" />Common malware code</span>
+          <span><i className="co-malware" />Family</span>
+          <span><i className="co-shared" />Common malware</span>
           <span><i className="co-unique" />Unique</span>
-          <span><i className="co-trusted" />Known libraries</span>
+          <span><i className="co-trusted" />Library</span>
         </div>
       )}
-      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Violet tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
+      <p className="fm-readout" role="status" aria-live="polite">{h ? describe(h) : layer === "origin" ? "Where each kind of code sits in the file. Solid grey tiles hold unique code: reverse those first." : layer === "entropy" ? "Warm tiles are compressed or encrypted bytes. Left to right is file order." : "File order, left to right; tile area is scaled by log size so small sections stay visible. Hover a tile; click to open it."}</p>
     </section>
   );
 }

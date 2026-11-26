@@ -1,6 +1,6 @@
 # Binfera
 
-**See what a binary does.** Binfera shows decompiled C, the capabilities a file implements mapped onto its code, and what changed between two builds, for Windows, Linux and macOS executables. Analysis runs on your machine: in a browser tab, a desktop app, the command line, or through your AI agent.
+**See what a binary does.** Binfera shows decompiled C, the capabilities a file implements mapped onto its code, offline code origin (malware family and library matching), and what changed between two builds, for Windows, Linux and macOS executables. Analysis runs on your machine: in a browser tab, a desktop app, the command line, or through your AI agent.
 
 <video src="images/tour.mp4" poster="images/code.webp" autoplay loop muted playsinline controls style="width:100%"></video>
 
@@ -19,11 +19,12 @@ Binfera pairs a Rust analysis engine with an embedded native decompiler (Ghidra'
 
 ## What it does
 
-- **Decompiled C for every function.** x86, x86-64 and AArch64 in PE, ELF and supported Mach-O images, plus ARM32/Thumb and classic MIPS32. See the [decompiler scope](decompiler.md).
+- **Decompiled C for every function.** x86, x86-64 and AArch64 in PE, ELF and supported Mach-O images, plus ARM32/Thumb, classic MIPS32 and .NET IL, with Windows API prototypes, symbolic flag names and resolved `GetProcAddress` calls. See the [decompiler scope](decompiler.md).
 - **Capabilities on the code.** capa rule matches, with ATT&CK ids, on the functions that triggered them.
+- **Code origin and libraries.** Offline fingerprint packs (`BXFAM002`/`BXFAM003`), FLIRT signatures and Function ID packs spot known malware families, name library functions and strings, and let you layer your own organization's packs locally. See [Code Origin](cli.md#code-origin).
 - **Compare two binaries.** Which capabilities, functions and file contents changed, down to the instruction. See [comparing binaries](comparison.md).
-- **Read it your way.** Control-flow graph, assembly, strings, imports and sections; FLIRT signatures and Function ID packs name library code.
-- **Bring your own AI agent.** An [MCP server](mcp.md) lets any MCP client name functions, comment code and save reports with evidence. Binfera runs no model.
+- **Read it your way.** Triage-sorted function list, IDA-style listing, control-flow graph, call graph, assembly, strings, imports and hex, plus one-click analysis of embedded executables and overlays.
+- **Bring your own AI agent.** An [MCP server](mcp.md) lets Claude Code, Codex, Mistral Vibe or any MCP client name functions, comment code and save reports with evidence. Binfera runs no model.
 - **Local by design.** Nothing is uploaded. The browser build runs the engine as WebAssembly, with no backend.
 
 ## What it is not

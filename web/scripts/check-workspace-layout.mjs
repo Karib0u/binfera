@@ -22,7 +22,7 @@ console.log("Multiple panes, duplicate views, shared links, and legacy layouts: 
 
 const treeSource = await readFile(new URL("../src/workspace/paneTree.ts", import.meta.url), "utf8");
 const treeJs = stripTypes(treeSource);
-const { treeOf, panesIn, splitPane, movePane, withoutPane, dropSideAt } = await import(`data:text/javascript;base64,${Buffer.from(treeJs).toString("base64")}`);
+const { treeOf, panesIn, splitPane, movePane, withoutPane, dropSideAt, applyLayout, peekTree } = await import(`data:text/javascript;base64,${Buffer.from(treeJs).toString("base64")}`);
 const leaves = ["c", "asm", "graph", "hex", "strings"].map((view, id) => ({ id, view, place: id === 1 ? { address: 0x401000, cursor: 0x401004 } : null }));
 const tree = treeOf(leaves);
 for (const source of leaves) for (const target of leaves) for (const side of ["left", "right", "top", "bottom", "center"]) {
@@ -48,3 +48,35 @@ assert.equal(dropSideAt(.5, .05), "top");
 assert.equal(dropSideAt(.4, .95), "bottom");
 assert.equal(dropSideAt(.1, .2), "left");
 console.log("Drop zones: passed");
+
+// Panes the app opens never rearrange the analyst's: a peek is a column around the whole tree, a
+// later peek reuses it, and closing it gives back the same tree, ratios included.
+{
+  let id = 100;
+  const newId = () => id++;
+  const arranged = { axis: "vertical", ratio: .37, first: { axis: "horizontal", ratio: .62, first: { id: 1, view: "c", place: null }, second: { id: 2, view: "asm", place: null } }, second: { id: 3, view: "listing", place: null } };
+  assert.equal(peekTree(arranged, "listing", newId), null, "a view already open needs no pane");
+  const hexed = peekTree(arranged, "hex", newId);
+  assert.equal(hexed.reused, false);
+  assert.deepEqual(hexed.tree.first, arranged, "the arrangement is kept whole inside the new split");
+  assert.equal(hexed.tree.second.view, "hex");
+  assert.equal(hexed.tree.second.peek, true);
+  const stringed = peekTree(hexed.tree, "strings", newId);
+  assert.equal(stringed.reused, true, "a second lookup reuses the peek pane");
+  assert.deepEqual(panesIn(stringed.tree).map((p) => p.view), ["c", "asm", "listing", "strings"]);
+  assert.deepEqual(withoutPane(stringed.tree, stringed.tree.second.id), arranged, "closing the peek pane restores the tree exactly");
+  // The analyst's own Strings pane is never taken over: with no peek pane, a new one is added.
+  const own = { axis: "vertical", ratio: .5, first: { id: 1, view: "c", place: null }, second: { id: 2, view: "strings", place: null } };
+  assert.deepEqual(panesIn(peekTree(own, "hex", newId).tree).map((p) => p.view), ["c", "strings", "hex"]);
+  // A layout from outside changes only what differs.
+  assert.equal(applyLayout(arranged, ["c", "asm", "listing"], newId), arranged);
+  const swapped = applyLayout(arranged, ["c", "asm", "graph"], newId);
+  assert.equal(swapped.ratio, .37);
+  assert.equal(swapped.first.ratio, .62);
+  assert.deepEqual(panesIn(swapped).map((p) => p.view), ["c", "asm", "graph"]);
+  const added = applyLayout({ id: 1, view: "c", place: null }, ["c", "asm"], newId);
+  assert.deepEqual(panesIn(added).map((p) => p.view), ["c", "asm"]);
+  assert.equal(added.axis, "vertical");
+  assert.deepEqual(applyLayout(added, ["c"], newId), { id: 1, view: "c", place: null });
+}
+console.log("Peek panes and minimal layout changes: passed");

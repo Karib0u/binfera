@@ -82,8 +82,9 @@
 /* the sample select: roster on the left, the selected sample on the right */
 .lp-cabinet { padding: 20px; border-radius: var(--lp-card); background: var(--cab); color: var(--cab-text); }
 .lp-select { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
-.lp-roster-panel { --roster-columns: 5; --roster-gap: 8px; align-self: start; min-width: 0; }
-.lp-roster { display: grid; grid-template-columns: repeat(var(--roster-columns), minmax(0, 1fr)); gap: var(--roster-gap); align-content: start; }
+/* The roster fills the panel's height, so its top and bottom line up with the stage beside it. */
+.lp-roster-panel { --roster-columns: 5; --roster-gap: 8px; display: flex; flex-direction: column; min-width: 0; }
+.lp-roster { flex: 1; display: grid; grid-template-columns: repeat(var(--roster-columns), minmax(0, 1fr)); grid-auto-rows: 1fr; gap: var(--roster-gap); align-content: stretch; }
 .lp-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 12px 4px 10px; border: 1.5px solid transparent; border-radius: var(--lp-ctl); background: var(--cab-2); color: var(--cab-muted); font-size: 12.5px; line-height: 1.2; transition: border-color .12s, color .12s; }
 .lp-tile:hover { border-color: var(--cab-line); color: var(--cab-text); }
 .lp-roster:not([data-spinning]) .lp-tile[aria-checked="true"], .lp-tile[data-rolling] { border-color: var(--cab-brand); color: var(--cab-text); }
@@ -109,7 +110,9 @@
 .lp-start { align-self: flex-start; max-width: 100%; min-height: 44px; margin-top: 14px; padding: 0 20px; border-radius: var(--lp-ctl); background: var(--cab-text); color: var(--cab); font-weight: 600; transition: opacity .15s; }
 .lp-start:hover:not(:disabled) { opacity: .88; }
 .lp-start:disabled { cursor: progress; opacity: .7; }
-.lp-random { width: calc((100% + var(--roster-gap)) / var(--roster-columns) - var(--roster-gap)); margin: var(--roster-gap) 0 0 auto; }
+/* Random is an action, not a sample: one full-width row under the grid, whatever the column count. */
+.lp-random { flex-direction: row; gap: 10px; width: 100%; min-height: 44px; margin-top: var(--roster-gap); padding: 6px 12px; border-color: var(--cab-line); border-style: dashed; font-size: 13px; }
+.lp-random .lp-sp { width: 24px; height: 24px; }
 .lp-random[aria-disabled="true"] { cursor: progress; }
 .lp-roster[data-spinning] + .lp-random { border-color: var(--cab-brand); color: var(--cab-text); }
 .lp-roster[data-spinning] + .lp-random .lp-sp { color: var(--cab-brand); }
@@ -183,6 +186,8 @@
   .lp-select, .lp-versus { grid-template-columns: minmax(0, 1fr); }
   .lp-spot { order: -1; }
   .lp-roster-panel { --roster-columns: 7; }
+  /* The selected sample's Analyze button sits just above: keep Random beside it, not below the whole roster. */
+  .lp-random { order: -1; margin: 0 0 var(--roster-gap); }
   /* No tabs on small screens: every feature with its screenshot, one after another. */
   .lp-tour { display: block; }
   .lp-feat { display: block; margin-bottom: 32px; }

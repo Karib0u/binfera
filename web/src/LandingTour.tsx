@@ -4,15 +4,15 @@ const REPO = "https://github.com/Karib0u/binfera";
 
 const FEATURES = [
   { title: "Know what it is", image: "overview", alt: "The WannaCry overview: first look, file map and summary counts",
-    text: "A first look at packing, signature and behaviours, a map of the file, and capabilities grouped by ATT&CK tactic." },
+    text: "Offline malware family and library matching, a first look at packing and signatures, a map of the file, and capabilities grouped by ATT&CK tactic." },
   { title: "Read every function", image: "code", alt: "A decompiled function beside its control-flow graph, with the capabilities it matches",
-    text: "C, assembly, control flow, call graph and hex in panes you can drag, split and sync." },
+    text: "Typed C with named Windows constants and resolved APIs, plus assembly, listing, control flow, call graph and hex in synced panes, sorted by what matters first." },
   { title: "Work with your AI agent", badge: "Desktop app", image: "ai", alt: "The agent panel open beside a decompiled function in the desktop app",
-    text: "Run Claude Code or Codex beside the code. It reads the analysis through Binfera and saves names, comments and reports. Every run can be undone." },
+    text: "Run Claude Code, Codex, Mistral Vibe or any MCP agent beside the code. It reads the analysis through Binfera and saves names, comments and reports. Every run can be undone." },
   { title: "See what changed", image: "compare", alt: "Two builds compared, with a changed function shown as a diff",
     text: "Compare two builds, with the changes worth a look first, down to the instruction." },
   { title: "Follow the data", image: "data", alt: "WannaCry's strings, each linked to the functions that use it",
-    text: "Every string shows the functions using it. Open any bytes in hex beside the code, with header overlays and a data inspector." },
+    text: "Every string links to the functions using it, with library strings filtered out. Open any bytes in hex beside the code, or analyze embedded executables and overlays in one click." },
 ];
 
 /** What the product does: a feature list driving one large screenshot; on small screens, each feature above its own. */
@@ -37,8 +37,8 @@ export default function LandingTour() {
       </div>
 
       <div className="lp-also">
-        <div><h3>Whatever you're handed</h3><p>PE, ELF, Mach-O or raw shellcode, directly or inside zip and 7z. x86, x64, AArch64, ARM32 and MIPS32.</p></div>
-        <div><h3>Library code named</h3><p>FLIRT signatures and Function ID packs label what isn't worth reading.</p></div>
+        <div><h3>Whatever you're handed</h3><p>PE, ELF, Mach-O, .NET or raw shellcode, directly or inside zip and 7z. x86, x64, AArch64, ARM32 and MIPS32, on desktop, browser and mobile.</p></div>
+        <div><h3>Code origin and libraries</h3><p>Offline fingerprint packs, FLIRT and Function ID name library code and spot known malware families. Layer your own organization's packs locally.</p></div>
         <div><h3>Your work stays</h3><p>The desktop app keeps renames, comments and recent files, and browses whole folders of samples. <a href={`${REPO}/releases`} target="_blank" rel="noreferrer">Download</a></p></div>
         <div><h3>Function emulation</h3><p>From the command line or MCP, run a function on emulated memory. Sample code never executes on your CPU.</p></div>
         <div><h3>Fast first look</h3><p>A function list a median of 23 times sooner than Ghidra's headless analyzer, on PE, ELF and Mach-O files. <a href={`${REPO}/blob/main/docs/benchmarks.md`} target="_blank" rel="noreferrer">Caveats</a></p></div>

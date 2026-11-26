@@ -6,9 +6,9 @@ What Binfera looks like on a real sample. Every picture on this page is the Wann
 
 ## The overview
 
-Opening a file lands here: what it is, a first look at how it was built and packed, a map of the file, and every capability grouped by ATT&CK tactic. Findings flag what deserves a second look, such as WannaCry's 3.3 MB resource with an entropy of 8.0.
+Opening a file lands here: a code-origin verdict when a known malware family matches, a first look at matched libraries, packing and signatures, a map of the file, and every capability grouped by ATT&CK tactic. Findings appear beside capabilities when headers deserve a second look, such as WannaCry's 3.3 MB resource with an entropy of 8.0.
 
-![The WannaCry overview: first look, file map and capabilities](images/overview.webp)
+![The WannaCry overview: code origin, first look, file map and capabilities](images/overview.webp)
 
 ## Capabilities on the code
 
@@ -18,7 +18,7 @@ Each capability carries its ATT&CK and MBC ids and lists the functions that impl
 
 ## Decompiled C, assembly and the graph
 
-A function opens as decompiled C next to its control-flow graph, with the capabilities it matches above. Panes can show C, assembly, a listing, the graph, the call graph, hex, strings or imports, side by side or stacked. Both themes are built in.
+A function opens as typed C (with named Windows constants and resolved APIs) next to its control-flow graph, with the capabilities it matches above. The function list sorts by address, importance or bottom-up call depth, and filters by code origin or library status. Panes can show C, assembly, an IDA-style listing, the graph, the call graph, hex, strings or imports, side by side or stacked. Following an address to hex, strings, imports or the listing opens a side pane without disturbing your arrangement. Both themes are built in.
 
 ![WannaCry's service installer as decompiled C beside its control-flow graph](images/code.webp)
 
@@ -44,7 +44,7 @@ The hex view sits beside the code that reads the bytes. Here the function that l
 
 ## Strings, imports and the file itself
 
-The **Data** views list strings with the functions that use them, imports with their callers, and the file's headers, security flags and hashes.
+The **Data** views list strings with the functions that use them (plus origin filtering to hide library strings or focus on family strings), imports with their callers, and the file's headers, security flags, hashes and embedded payloads that you can open as a new analysis in one click.
 
 ![Referenced strings, each with the functions that use it](images/strings.webp)
 
