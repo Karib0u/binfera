@@ -237,7 +237,11 @@ try {
   assert.equal(await palette.getByRole("group", { name: "Recent" }).getByRole("option").locator("i").textContent(), "function");
   await page.keyboard.press("Escape");
   // Recent survives opening the file again.
+  // React commits the remount later, so wait for the old tree to go before pressing keys.
+  const oldNav = await page.locator(".nav").elementHandle();
   await mount("strings");
+  await oldNav.waitForElementState("hidden");
+  await page.locator(".nav").waitFor();
   await page.waitForFunction(() => Object.keys(localStorage).some((k) => k.startsWith("binfera.recent:")));
   await page.keyboard.press("Control+k");
   await palette.getByRole("group", { name: "Recent" }).getByRole("option", { name: /work/ }).waitFor();
