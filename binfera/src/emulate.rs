@@ -4,7 +4,7 @@ use crate::decompiler::{ctypes::Pack, BatchOptions, CallingConvention as C, Deco
 use crate::extract::decoder::Flow;
 use crate::extract::image::Architecture;
 use crate::extract::recovery::Analysis;
-use binfera_ghidra::{EmuStop, Session};
+use binfera_ghidra::{CodeRange, EmuStop, Session};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -116,6 +116,9 @@ pub struct CallSite {
     pub site: u64,
     /// False if the caller did not reach this site with the supplied initial state.
     pub reached: bool,
+    /// Ranges written by the call itself, after the caller reached the site. `result.writes` also
+    /// holds what the caller wrote on the way, such as the buffer it passes in.
+    pub call_writes: Vec<MemoryOutput>,
     pub result: Result,
 }
 #[derive(Debug, Serialize)]
@@ -469,7 +472,8 @@ impl Emulator {
         self.setup(req, entry)?;
         let mut run = Run::new(req.address);
         self.execute(entry, self.sentinel, None, req, &mut run)?;
-        self.finish(req, run)
+        let writes = self.native.emu_writes()?;
+        self.finish(req, run, writes)
     }
 
     /// Run each statically recovered direct call site with a fresh caller state. The caller
@@ -516,17 +520,25 @@ impl Emulator {
                 self.execute(caller, site, None, req, &mut run)?;
                 run.stop.kind == "returned" && run.stop.address == site
             };
+            let mut written = self.native.emu_writes()?;
+            let mut call_writes = Vec::new();
             if reached {
+                // The write log restarts at the site so the call's own output can be told apart.
+                self.native.emu_clear_writes()?;
                 // A recursive target reaches `next` in deeper frames first; only the frame that
                 // made this call, with the stack back at or above the site's, counts as returned.
                 let frame = self.native.emu_get_register(self.abi.sp)?;
                 self.execute(site, next, Some(frame), req, &mut run)?;
+                let call = self.native.emu_writes()?;
+                call_writes = self.read_ranges(&call, req.max_write_bytes)?;
+                written.extend(call);
             }
             out.push(CallSite {
                 caller,
                 site,
                 reached,
-                result: self.finish(req, run)?,
+                call_writes,
+                result: self.finish(req, run, merge_ranges(written))?,
             });
         }
         Ok(CallSites {
@@ -715,10 +727,15 @@ impl Emulator {
         }
     }
 
-    fn finish(&mut self, req: &Request, run: Run) -> std::result::Result<Result, Error> {
-        let mut remaining = req.max_write_bytes;
+    /// Reads written ranges, in order, until `budget` bytes have been returned.
+    fn read_ranges(
+        &mut self,
+        ranges: &[CodeRange],
+        budget: usize,
+    ) -> std::result::Result<Vec<MemoryOutput>, Error> {
+        let mut remaining = budget;
         let mut writes = Vec::new();
-        for range in self.native.emu_writes()? {
+        for range in ranges {
             let size = range.end - range.start;
             let count = size.min(remaining as u64) as u32;
             writes.push(MemoryOutput {
@@ -729,6 +746,16 @@ impl Emulator {
             });
             remaining -= count as usize;
         }
+        Ok(writes)
+    }
+
+    fn finish(
+        &mut self,
+        req: &Request,
+        run: Run,
+        written: Vec<CodeRange>,
+    ) -> std::result::Result<Result, Error> {
+        let writes = self.read_ranges(&written, req.max_write_bytes)?;
         let mut memory = Vec::new();
         for range in &req.capture {
             let data = self.native.emu_read(range.address, range.size)?;
@@ -767,6 +794,19 @@ impl Emulator {
         })
     }
 }
+/// Sorted union of half-open ranges; touching ranges merge, as the native write log does.
+fn merge_ranges(mut ranges: Vec<CodeRange>) -> Vec<CodeRange> {
+    ranges.sort_by_key(|r| (r.start, r.end));
+    let mut out: Vec<CodeRange> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match out.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => out.push(range),
+        }
+    }
+    out
+}
+
 impl From<EmuStop> for Stop {
     fn from(stop: EmuStop) -> Self {
         Self {

@@ -24,6 +24,12 @@ use tauri::{AppHandle, Manager, State};
 /// stderr kept for the error message, as in the browser worker.
 const STDERR_LINES: usize = 50;
 
+/// Emulation runs, bounded as `binfera mcp` bounds them: the request the engine reads on stdin,
+/// the whole run including opening the image, and the JSON it prints.
+const EMULATION_REQUEST_BYTES: usize = 8 * 1024 * 1024;
+const EMULATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+const EMULATION_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
 struct Inner {
     scratch: PathBuf,
     next: AtomicU64,
@@ -77,6 +83,9 @@ pub struct RunRequest {
     /// `args` can name them relative to it).
     #[serde(default)]
     files: HashMap<String, String>,
+    /// An emulation request for `--emulate-request`, written to the engine's stdin.
+    #[serde(default)]
+    stdin: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -173,6 +182,11 @@ const FLAGS: &[(&str, bool)] = &[
     ("--pair", true),
     ("--function-map", true),
     ("--pack", true),
+    // Isolated p-code emulation: imports are stubs and no host API runs (binfera/src/emulate.rs).
+    ("--emulate", true),
+    ("--emulate-request", false),
+    ("--emulate-call-sites", false),
+    ("--emulate-max-sites", true),
 ];
 
 fn is_hex(text: &str) -> bool {
@@ -187,6 +201,28 @@ fn is_hex(text: &str) -> bool {
 /// job count, hex addresses (or `A:B` pairs of them), and the names of the run's own `files`.
 fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(), String> {
     let bad = |arg: &str| Err(format!("argument `{arg}` is not allowed"));
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    // Emulation flags only make sense together, and never with another run's flags.
+    if has("--emulate") {
+        let allowed = [
+            "--emulate",
+            "--emulate-request",
+            "--emulate-call-sites",
+            "--emulate-max-sites",
+            "--format",
+            "--os",
+        ];
+        if !has("--emulate-request")
+            || args.first().is_some_and(|a| a != "{sample}")
+            || args
+                .iter()
+                .any(|a| a.starts_with("--") && !allowed.contains(&a.as_str()))
+        {
+            return Err("an emulation run takes only its request and format flags".into());
+        }
+    } else if let Some(flag) = args.iter().find(|a| a.starts_with("--emulate")) {
+        return bad(flag);
+    }
     let mut rest = args;
     if let Some(first) = rest.first() {
         if first == "fingerprint" || first == "diff" {
@@ -211,7 +247,8 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
                 "--rules" => value == "{rules}",
                 "--pack" => value == "{family_pack}" || overlay_index(value).is_some(),
                 "--jobs" => value.parse::<u32>().is_ok_and(|n| (1..=64).contains(&n)),
-                "--decompile-function" => is_hex(value),
+                "--decompile-function" | "--emulate" => is_hex(value),
+                "--emulate-max-sites" => value.parse::<u32>().is_ok_and(|n| (1..=128).contains(&n)),
                 "--format" => matches!(value.as_str(), "sc32" | "sc64"),
                 "--os" => matches!(value.as_str(), "windows" | "linux"),
                 "--pair" => value
@@ -229,6 +266,20 @@ fn validate_args(args: &[String], files: &HashMap<String, String>) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Only an emulation run reads stdin, and its request is bounded.
+fn validate_stdin(args: &[String], stdin: Option<&str>) -> Result<(), String> {
+    match stdin {
+        None => Ok(()),
+        Some(_) if !args.iter().any(|a| a == "--emulate-request") => {
+            Err("only an emulation run takes input".into())
+        }
+        Some(text) if text.len() > EMULATION_REQUEST_BYTES => {
+            Err("the emulation request exceeds 8 MiB".into())
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// The overlay a `{family_overlay:N}` placeholder names.
@@ -436,6 +487,7 @@ pub async fn run_engine(
     on_line: Channel<String>,
 ) -> Result<RunOutcome, String> {
     validate_args(&request.args, &request.files)?;
+    validate_stdin(&request.args, request.stdin.as_deref())?;
     let engine = state.inner().clone();
     let program = sidecar()?;
     let uses_rules = request.args.iter().any(|a| a.contains("{rules}"));
@@ -544,7 +596,11 @@ fn run_blocking(
         command
             .args(&args)
             .current_dir(&dir)
-            .stdin(Stdio::null())
+            .stdin(if request.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // Its own process group on Unix, so cancelling reaches the `--jobs` worker processes.
@@ -561,6 +617,14 @@ fn run_blocking(
         if inner.cancelled.lock().unwrap().contains(&request.id) {
             kill_tree(pid);
         }
+        // The request goes in from its own thread, so a full stdout pipe cannot stall both sides.
+        if let (Some(text), Some(mut stdin)) = (request.stdin.clone(), child.stdin.take()) {
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(text.as_bytes());
+            });
+        }
+        let emulation = request.args.iter().any(|a| a == "--emulate");
+        let watchdog = emulation.then(|| Watchdog::start(pid, EMULATION_DEADLINE));
 
         let stderr = child.stderr.take().ok_or("no stderr")?;
         let stderr_thread = std::thread::spawn(move || {
@@ -582,6 +646,7 @@ fn run_blocking(
         let mut stdout = BufReader::with_capacity(1 << 16, child.stdout.take().ok_or("no stdout")?);
         let mut buf = Vec::new();
         let mut sent_lines = 0u64;
+        let mut sent_bytes = 0usize;
         while stdout
             .read_until(b'\n', &mut buf)
             .map_err(|e| e.to_string())?
@@ -599,12 +664,23 @@ fn run_blocking(
                 break;
             }
             sent_lines += 1;
+            sent_bytes += buf.len();
             buf.clear();
+            if emulation && sent_bytes > EMULATION_OUTPUT_BYTES {
+                kill_tree(pid);
+                break;
+            }
         }
         // Drain so the child can exit if we stopped reading early.
         let _ = std::io::copy(&mut stdout, &mut std::io::sink());
         let status = child.wait().map_err(|e| e.to_string())?;
-        let stderr = stderr_thread.join().unwrap_or_default().join("\n");
+        let expired = watchdog.is_some_and(Watchdog::stop);
+        let mut stderr = stderr_thread.join().unwrap_or_default().join("\n");
+        if expired {
+            stderr = "Emulation took longer than two minutes and was stopped".into();
+        } else if emulation && sent_bytes > EMULATION_OUTPUT_BYTES {
+            stderr = "Emulation output exceeded 16 MiB and was stopped".into();
+        }
         // Only a run that read to the end and exited cleanly is worth keeping.
         if let Some(recording) = recording {
             let cancelled = inner.cancelled.lock().unwrap().contains(&request.id);
@@ -646,6 +722,35 @@ fn replay(file: std::fs::File, id: u64, inner: &Inner, on_line: &Channel<String>
         code: Some(0),
         stderr: String::new(),
         lines: sent,
+    }
+}
+
+/// Kills a run's process tree once its deadline passes, unless stopped first.
+struct Watchdog {
+    done: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<bool>,
+}
+
+impl Watchdog {
+    fn start(pid: u32, deadline: std::time::Duration) -> Watchdog {
+        let (done, wait) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            let expired = matches!(
+                wait.recv_timeout(deadline),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            );
+            if expired {
+                kill_tree(pid);
+            }
+            expired
+        });
+        Watchdog { done, thread }
+    }
+
+    /// Whether the deadline had passed.
+    fn stop(self) -> bool {
+        let _ = self.done.send(());
+        self.thread.join().unwrap_or(false)
     }
 }
 
@@ -829,6 +934,20 @@ mod tests {
             &["{sample}", "--json", "--rules", "{rules}"],
             &["fingerprint", "{sample}"],
             &["{sample}", "--decompile-function", "0x401000", "--json"],
+            &["{sample}", "--emulate", "0x401000", "--emulate-request"],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x2f",
+                "--emulate-request",
+                "--emulate-call-sites",
+                "--emulate-max-sites",
+                "64",
+                "--format",
+                "sc64",
+                "--os",
+                "windows",
+            ],
             &["{sample}", "--decompile-all", "--jobs", "8"],
             &[
                 "family",
@@ -883,6 +1002,26 @@ mod tests {
     }
 
     #[test]
+    fn only_emulation_reads_a_bounded_stdin() {
+        let emulate = args(&["{sample}", "--emulate", "0x10", "--emulate-request"]);
+        assert!(validate_stdin(&emulate, Some("{}")).is_ok());
+        assert!(validate_stdin(&emulate, None).is_ok());
+        assert!(validate_stdin(&args(&["{sample}", "--image-info"]), Some("{}")).is_err());
+        let large = "x".repeat(EMULATION_REQUEST_BYTES + 1);
+        assert!(validate_stdin(&emulate, Some(&large)).is_err());
+    }
+
+    #[test]
+    fn watchdog_reports_whether_it_fired() {
+        let quick = Watchdog::start(u32::MAX, std::time::Duration::from_secs(60));
+        assert!(!quick.stop());
+        // No such process group: the kill fails harmlessly, and the watchdog still reports it.
+        let late = Watchdog::start(u32::MAX, std::time::Duration::from_millis(1));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(late.stop());
+    }
+
+    #[test]
     fn refuses_everything_else() {
         let f = files(&["a.idx"]);
         for list in [
@@ -918,6 +1057,57 @@ mod tests {
                 "{sample}",
             ],
             &["family", "match", "{family_overlay:0}", "{sample}"],
+            &["{sample}", "--emulate", "401000", "--emulate-request"],
+            &["{sample}", "--emulate", "0x401000"],
+            &["{sample}", "--emulate-request"],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+                "--json",
+            ],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+                "--rules",
+                "{rules}",
+            ],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+                "--decompile-all",
+            ],
+            &[
+                "fingerprint",
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+            ],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+                "--emulate-call-sites",
+                "--emulate-max-sites",
+                "0",
+            ],
+            &[
+                "{sample}",
+                "--emulate",
+                "0x1",
+                "--emulate-request",
+                "--emulate-call-sites",
+                "--emulate-max-sites",
+                "129",
+            ],
+            &["{sample}", "--emulate", "0x1", "--emulate-max-steps", "5"],
         ] {
             assert!(validate_args(&args(list), &f).is_err(), "{list:?}");
         }

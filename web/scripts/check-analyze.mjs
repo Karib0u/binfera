@@ -193,3 +193,17 @@ assert.deepEqual(retried.asm, [[10, "c3", "ret"]]);
 assert.deepEqual(retried.calls, [20]);
 assert.deepEqual(retried.lines, [[10]]);
 console.log("Names, shard settlement, replacement records and explicit resource retry: passed");
+
+// Emulation: one engine run per request, with the request text for stdin, the sample, and the call-site count.
+const emulation = stagedUpdates.at(-1).emulate(0x2f, '{"address":47}', 32, new AbortController().signal);
+await setImmediate();
+const emulateRequest = requests.at(-1);
+assert.equal(emulateRequest.kind, "emulate");
+assert.equal(emulateRequest.address, 0x2f);
+assert.equal(emulateRequest.request, '{"address":47}');
+assert.equal(emulateRequest.callSites, 32);
+assert.equal(emulateRequest.sample.byteLength, 16);
+workers.at(-1).emit({ address: 47, total_sites: 0, truncated: false, sites: [] });
+workers.at(-1).resolve();
+assert.deepEqual(JSON.parse(await emulation), { address: 47, total_sites: 0, truncated: false, sites: [] });
+console.log("Emulation runs reach the engine with their request and call-site count: passed");

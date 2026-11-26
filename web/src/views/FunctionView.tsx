@@ -20,6 +20,7 @@ import { PackedNotice } from "./AnalysisStatus";
 import { FunctionWarnings } from "./FunctionWarnings";
 import { NATIVE } from "../engine/assets";
 import { StackFrame } from "./StackFrame";
+import { EmulatePanel } from "./EmulatePanel";
 import { instructionNotes } from "../annotations";
 import { codeVocabulary, isLocalName } from "../highlight";
 
@@ -77,7 +78,7 @@ function XrefGroup({ title, items, a, onGoto, pending }: { title: string; items?
   );
 }
 
-type MobileTab = "c" | "asm" | "graph" | "listing" | "refs";
+type MobileTab = "c" | "asm" | "graph" | "listing" | "refs" | "emu";
 
 export interface FnViewProps {
   a: Analysis; address: number; rules: CapaRule[];
@@ -124,6 +125,10 @@ export interface FnViewProps {
   onShowAsm?: (va: number) => void;
   /** Phone: opens the bytes at an address in the Hex view. */
   onHex?: (va: number) => void;
+  /** Shows file bytes in the Hex view, selected (the Emulate tab's output). */
+  onBytes?: (va: number, len: number) => void;
+  /** Opens a function at one of its instructions (an emulated call site). */
+  onSite?: (fn: number, at: number) => void;
   asmJump?: { va: number };
   /** The Listing, with the instructions of the selected C line marked. */
   listing: (marked: Set<number>) => React.ReactNode; callGraph: (onOpen: (ad: number) => void) => React.ReactNode;
@@ -140,7 +145,7 @@ export interface FnViewProps {
 /** The instruction last clicked in any ASM view, so sibling ASM panes can mirror it exactly. */
 let asmPick: number | null = null;
 
-export function FunctionView({ a, address, rules, origin, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, peekReq, peekSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, asmJump, shortcutsEnabled = true }: FnViewProps) {
+export function FunctionView({ a, address, rules, origin, resolve, onGoto, callers, callees, callersOf, calleesOf, apisOf, xrefsReady, strings, onString, strAt, textAt, mobile, onBack, cursor, onCursor, isData, onData, slot, onImport, onComment, onNotesChange, starred, onStar, onRename, onRenameAt, onXrefs, xrefReq, renameReq, listOpen, onToggleList, railOpen, onToggleRail, onToggleSplit, capsOf, onCode, layout, setLayout, listing, callGraph, listingReq, listingSeen, peekReq, peekSeen, strip, menuItems, onSearch, paneView, renderPane, locate, outside, onPaneNavigate, onShowAsm, onHex, onBytes, onSite, asmJump, shortcutsEnabled = true }: FnViewProps) {
   const notes = useNotes();
   const fnLabel = (ad: number, name?: string | null) => notes.label(ad, name ?? a.functions.get(ad)?.name ?? a.names.get(ad));
   const exportOf = (ad: number) => notes.exportOf(ad);
@@ -153,7 +158,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
   const [copied, setCopied] = useState(false);
   // The decompiler prints each statement on one line; the pane wraps it to its width.
   const [wrap, setWrap] = useState(true);
-  const [inspector, setInspector] = useState<"refs" | "stack">("refs");
+  const [inspector, setInspector] = useState<"refs" | "stack" | "emulate">("refs");
   const inlineStr = true; // strings a data label points at are written inline
   // Analyst names and export names replace the decompiler's in the body, and in what is copied.
   const fnDisplay = (t: string) => { const r = resolve(t); return r === undefined ? undefined : notes.renamed(r) ?? (t.startsWith("FUN_") ? exportOf(r) ?? notes.trustedOf(r)?.name : undefined); };
@@ -419,7 +424,14 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
     <div className="inspector-tabs" role="group" aria-label="Function details">
       <button aria-pressed={inspector === "refs"} onClick={() => setInspector("refs")}>References</button>
       <button aria-pressed={inspector === "stack"} onClick={() => setInspector("stack")}>Stack frame</button>
+      <button aria-pressed={inspector === "emulate"} onClick={() => setInspector("emulate")}>Emulate</button>
     </div>
+  );
+  // Keyed by address: each function keeps its own arguments and results.
+  const emulateContent = (
+    <EmulatePanel key={address} a={a} address={address} text={f?.text} callers={xrefsReady ? callers : undefined} label={(ad) => fnLabel(ad, a.functions.get(ad)?.name)} mobile={mobile}
+      onSite={(fn, at) => { if (onSite) onSite(fn, at); else { onGoto(fn); onCursor(at); } if (mobile) setMTab("asm"); }}
+      onBytes={onBytes} />
   );
   const contents: Partial<Record<CodeView, React.ReactNode>> = { c: cContent, asm: aContent, graph: graphContent, calls: callsContent, listing: listing(hlAddrs) };
   if (paneView) return (
@@ -515,7 +527,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
           ]} />
         </div>
         <div className="m-seg" role="tablist">
-          {([["c", "C"], ["asm", "Asm"], ["graph", "Flow"], ["listing", "Listing"], ["refs", "Refs"]] as const).map(([k, name]) => (
+          {([["c", "C"], ["asm", "Asm"], ["graph", "Flow"], ["listing", "Listing"], ["refs", "Refs"], ["emu", "Emulate"]] as const).map(([k, name]) => (
             <button key={k} role="tab" aria-selected={mTab === k} className={mTab === k ? "on" : ""} onClick={() => setMTab(k)}>
               {name}{k === "refs" && xrefsReady && refCount > 0 && <em>{refCount}</em>}
             </button>
@@ -529,6 +541,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
           {mTab === "graph" && <div className="cp-pane graph-pane">{graphContent}</div>}
           {mTab === "listing" && <div className="cp-pane graph-pane">{listing(hlAddrs)}</div>}
           {mTab === "refs" && <div className="cp-pane m-refs">{mobileRefs}</div>}
+          {mTab === "emu" && <div className="cp-pane m-emu">{emulateContent}</div>}
         </div>
         {tokenBar && (
           <div className="m-tokbar" role="toolbar" aria-label={"Actions for " + tokenBar.text}>
@@ -550,7 +563,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
     );
   }
 
-  const railSize = inspector === "stack" ? Math.max(railWidth, 300) : railWidth;
+  const railSize = inspector === "stack" ? Math.max(railWidth, 300) : inspector === "emulate" ? Math.max(railWidth, 340) : railWidth;
   // One match reads inline; several collapse into one trigger so the title keeps its room.
   const capsExpanded = rules.length > 1 && expandedCapsFor === address;
   return (
@@ -598,7 +611,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
               {inspectorTabs}
               <button className="inspector-close" onClick={onToggleRail} aria-label="Close function inspector">×</button>
             </div>
-            {inspector === "refs" ? refsContent : frameContent}
+            {inspector === "refs" ? refsContent : inspector === "stack" ? frameContent : emulateContent}
           </aside>
         )}
         {railOpen && <Splitter invert label="Resize the side panel" value={railSize} min={180} max={640} onChange={setRailWidth} style={{ right: railSize }} />}

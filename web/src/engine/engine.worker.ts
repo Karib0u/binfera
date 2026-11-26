@@ -1,6 +1,7 @@
 // Runs one binfera invocation (the Rust CLI compiled to WebAssembly with the Ghidra decompiler)
 // against an in-memory copy of the sample. stdout lines stream back as they are printed.
 import createBinfera from "../wasm/binfera.js";
+import { emulateArgs } from "./emulate";
 
 export interface RawCodeOptions {
   format: "sc32" | "sc64";
@@ -26,7 +27,9 @@ export type EngineRequest =
   | (Common & { kind: "fingerprint" })
   | (Common & { kind: "decompileOne"; address: number; resourceRetry?: boolean })
   /** A comparison over text files, such as fingerprints, mounted at the root. */
-  | (Common & { kind: "diff"; files: Record<string, string>; args: string[] });
+  | (Common & { kind: "diff"; files: Record<string, string>; args: string[] })
+  /** Isolated p-code emulation of one function; `request` is the JSON `--emulate-request` reads on stdin. */
+  | (Common & { kind: "emulate"; address: number; request: string; callSites?: number });
 
 export type EngineMessage =
   | { type: "line"; line: string }
@@ -53,10 +56,14 @@ export function packFileName(name: string | undefined): string {
 self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
   const req = ev.data;
   const stderr: string[] = [];
+  // Only an emulation reads stdin: its request, then end of input.
+  const input = req.kind === "emulate" ? new TextEncoder().encode(req.request) : new Uint8Array(0);
+  let read = 0;
   try {
     const mod = await createBinfera({
       print: (line: string) => post({ type: "line", line }),
       printErr: (line: string) => { if (stderr.length < 50) stderr.push(line); },
+      stdin: () => (read < input.length ? input[read++] : null),
       instantiateWasm: (imports, success) => {
         WebAssembly.instantiate(req.module, imports).then((instance) => success(instance, req.module));
         return {};
@@ -97,6 +104,8 @@ self.onmessage = async (ev: MessageEvent<EngineRequest>) => {
     } else if (req.kind === "decompileOne") {
       args = ["/sample.bin", "--decompile-function", `0x${req.address.toString(16)}`, "--json", "--max-instructions", "3500000"];
       if (req.resourceRetry) args.push("--resource-retry");
+    } else if (req.kind === "emulate") {
+      args = emulateArgs("/sample.bin", req.address, req.callSites);
     } else if (req.kind === "diff") {
       for (const [path, text] of Object.entries(req.files)) mod.FS.writeFile("/" + path, text);
       args = ["diff", ...req.args];

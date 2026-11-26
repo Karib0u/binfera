@@ -2,6 +2,7 @@
 // through the Tauri commands in src-tauri/src/engine.rs instead of a WebAssembly worker.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { EngineRequest } from "./engine.worker";
+import { emulateArgs } from "./emulate";
 
 /** binfera's exit status when code recovery refused the file as too large for its memory limit. */
 export const TOO_LARGE = 14;
@@ -12,7 +13,7 @@ export class EngineError extends Error {
 }
 
 interface Outcome { code: number | null; stderr: string; lines: number }
-interface Plan { args: string[]; files?: Record<string, string>; sample: boolean }
+interface Plan { args: string[]; files?: Record<string, string>; sample: boolean; stdin?: string }
 
 /**
  * The browser build's argument lists, minus its workarounds: no `--jobs 1` (the engine may use
@@ -33,6 +34,7 @@ function plan(req: EngineRequest): Plan {
       return { sample: true, args: ["{sample}", "--decompile-all", "--jobs", String(jobs)] };
     }
     // The text files live in the run's working directory, so their `/name` becomes `name`.
+    case "emulate": return { sample: true, args: emulateArgs("{sample}", req.address, req.callSites), stdin: req.request };
     case "diff": return { sample: false, files: req.files, args: ["diff", ...req.args.map((a) => (a.startsWith("/") ? a.slice(1) : a))] };
   }
 }
@@ -43,7 +45,7 @@ let nextRun = 1;
 export async function runEngine(req: EngineRequest, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   const abort = () => new DOMException("aborted", "AbortError");
   if (signal.aborted) throw abort();
-  const { args, files, sample } = plan(req);
+  const { args, files, sample, stdin } = plan(req);
   if (req.raw) args.push("--format", req.raw.format, "--os", req.raw.os);
   const id = nextRun++;
   let staged: number | null = null;
@@ -68,7 +70,7 @@ export async function runEngine(req: EngineRequest, onLine: (line: string) => vo
     };
     let outcome: Outcome;
     try {
-      outcome = await invoke<Outcome>("run_engine", { request: { id, sample: staged, args, files: files ?? {} }, onLine: channel });
+      outcome = await invoke<Outcome>("run_engine", { request: { id, sample: staged, args, files: files ?? {}, stdin }, onLine: channel });
     } catch (e) {
       if (signal.aborted) throw abort();
       throw new EngineError(String(e));

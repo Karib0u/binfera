@@ -16,6 +16,8 @@ type Event =
   | ({ type: "function" } & DecompiledFunction);
 
 const message = (e: unknown) => String((e as Error)?.message ?? e);
+/** An emulation run, from opening the image to its JSON, as `binfera mcp` bounds it. */
+const EMULATION_DEADLINE_MS = 120_000;
 
 /**
  * iPhones and iPads (iPadOS reports itself as a Mac with a touch screen) kill a tab that holds
@@ -149,6 +151,29 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     }
     functionsChanged = true;
     flush();
+  };
+  a.emulate = async (address, request, callSites, runSignal) => {
+    // One deadline over the engine's own: opening a large image takes a while before the run starts.
+    const run = new AbortController();
+    const stop = () => run.abort();
+    const timer = setTimeout(stop, EMULATION_DEADLINE_MS);
+    signal.addEventListener("abort", stop);
+    runSignal.addEventListener("abort", stop);
+    try {
+      const assets = await loadAssets(null, () => {}, false, winApiFor(a.image?.arch, a.image?.format));
+      if (run.signal.aborted) throw new DOMException("aborted", "AbortError");
+      let output = "";
+      await runEngine({ kind: "emulate", module: assets.module, sample: bytes.slice(0), data: assets.data("decompile"), address, request, callSites, raw },
+        (line) => { output += line; }, run.signal);
+      return output;
+    } catch (e) {
+      if (run.signal.aborted && !runSignal.aborted && !signal.aborted) throw new Error("Emulation took longer than two minutes and was stopped");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
+      runSignal.removeEventListener("abort", stop);
+    }
   };
   /** Matches against the packs, base first. Browser packs carry their bytes; native ones are paths the desktop side holds. */
   type PackHandle = { name: string; size: number; format?: string | null; bytes?: ArrayBuffer };
