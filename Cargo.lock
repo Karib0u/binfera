@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "binfera"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "binfera-cli"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "binfera",
  "binfera-mcp",
@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "binfera-ghidra"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "cc",
  "cxx",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "binfera-mcp"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "binfera",
  "binfera-project",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "binfera-project"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "binfera-python"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "binfera",
  "pyo3",
