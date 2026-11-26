@@ -3,7 +3,7 @@ export default function Wordmark() {
   return (
     <>
       <img className="mark" src="/mark.png" alt="" aria-hidden width="128" height="128" />
-      binfera
+      <span className="wordmark-name">binfera</span>
     </>
   );
 }
