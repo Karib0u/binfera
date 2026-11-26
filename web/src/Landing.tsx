@@ -133,7 +133,7 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
         <section className="lp-hero">
           <div>
             <h1>See what a <span className="lp-o">binary</span> does.</h1>
-            <p className="lp-lede">Decompiled C, capabilities and diffs for Windows, Linux and macOS executables, {desktop ? "right on this machine" : "right in your browser"}.</p>
+            <p className="lp-lede">Decompiled C, capabilities, code origin and binary diffs for Windows, Linux and macOS executables, {desktop ? "right on this machine" : "right in your browser"}.</p>
             <ul className="lp-trust">
               <li>{desktop ? "Nothing uploaded" : "Results stay in this browser. Nothing uploaded."}</li>
               {desktop ? <><li>Runs natively</li><li>Your notes are kept</li></> : <><li>No install</li><li>No account</li></>}
@@ -152,7 +152,7 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
                   <input className="sr-only" type="file" onClick={desktop ? (e) => { e.preventDefault(); void pickNative(); } : undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
                   <strong><span className="lp-mouse">Drop a file here</span><span className="lp-touch">Pick a file to analyze</span></strong>
                   <span className="lp-cta">{loading === "pick" ? "Opening…" : "Choose a file"}</span>
-                  <span className="lp-fmt">PE · ELF · Mach-O · shellcode · zip · 7z</span>
+                  <span className="lp-fmt">PE · ELF · Mach-O · .NET · shellcode · zip · 7z</span>
                 </label>
                 {desktop && (
                   <p className="lp-folder">

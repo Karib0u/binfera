@@ -250,7 +250,8 @@ function Inner({ a, onNew, onFile, onCompare, onShellcodeChange, onAnalyzeAgain,
     if (!a.done || typeof sel !== "number" || a.functions.has(sel) || a.order.includes(sel)) return;
     // The comparison's function starts can differ from the decompiler's: show the one holding the address.
     const holder = embedded && containment ? ownersOf(a, containment, sel)[0] : undefined;
-    if (holder !== undefined) { setCursor(sel); setLoc(locOf(holder)); } else setLoc(locOf("capa"));
+    if (holder !== undefined) { setCursor(sel); setLoc(locOf(holder)); }
+    else { if (lastFn.current === sel) lastFn.current = null; setLoc(locOf("capa")); }
   }, [a.done, sel]);
   const toggleRail = () => { if (compact) setCompactRail(!compactRail); else setRailPref(!railOpen); };
   const canBack = pos.i > 0, canForward = pos.i < pos.max;

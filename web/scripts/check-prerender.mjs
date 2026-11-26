@@ -26,7 +26,7 @@ try {
   for (const name of ["Know what it is", "Read every function", "See what changed", "Follow the data", "Function emulation", "Scripts and CI"]) {
     assert.equal(await staticPage.getByRole("heading", { name, exact: true }).count(), 1, name);
   }
-  assert.match(await staticPage.locator(".lp-lede").textContent(), /Decompiled C, capabilities and diffs/);
+  assert.match(await staticPage.locator(".lp-lede").textContent(), /Decompiled C, capabilities, code origin and binary diffs/);
   for (const [name, href] of [
     ["Docs", "https://docs.binfera.io/"],
     ["Quickstart", "https://docs.binfera.io/getting-started/"],
@@ -58,7 +58,9 @@ try {
     if (settings.colorScheme === "light") {
       await page.locator("#lp-analyze input[type=file]").setInputFiles(fileURLToPath(new URL("../public/demo.exe", import.meta.url)));
       await page.getByRole("button", { name: "Open file view for demo.exe", exact: true }).waitFor();
-      await page.locator("[data-ctx-fn]").first().waitFor({ timeout: 60000 });
+      await page.waitForFunction(() => document.querySelector(".sb-status")?.textContent?.startsWith("●"), null, { timeout: 60000 });
+      await page.getByRole("button", { name: "Code", exact: true }).click();
+      await page.locator("[data-ctx-fn]").first().waitFor({ timeout: 15000 });
       await page.getByRole("button", { name: "New", exact: true }).click();
       await page.getByRole("heading", { name: "See what a binary does.", exact: true }).waitFor();
     }
