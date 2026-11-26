@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { createImage } from "../../src/engine/image";
 import Workspace from "../../src/workspace/Workspace";
 import { locOf } from "../../src/workspace/location";
-import type { Analysis, DecompiledFunction } from "../../src/types";
+import type { Analysis, CapaRule, DecompiledFunction } from "../../src/types";
 import "../../src/styles.css";
 
 const noop = () => undefined;
@@ -45,11 +45,16 @@ const image = createImage(new Uint8Array(0x2000), {
   details: { structures: [], facts: [], anomalies: [], resources: [], versionInfo: [], signatures: [] },
 });
 
-Object.assign(window, { mountWorkbench: (sel: number | "capa" | "strings" | "file", layout = "c") => {
+/** Capability matches inside the one function, for the header's capability trigger. */
+const rule = (name: string): CapaRule => ({ name, namespace: "test", scope: "function", lib: false, attack: [], mbc: [], description: "", count: 1, addresses: [base], evidence: new Map() });
+const capa = (n: number) => ({ sample: { md5: "", sha256: "0".repeat(64) }, format: "pe", arch: "i386", os: "windows", baseAddress: base,
+  rules: ["Encrypt data using RC4", "Create a process", "Read a file"].slice(0, n).map(rule) }) as Analysis["capa"];
+
+Object.assign(window, { mountWorkbench: (sel: number | "capa" | "strings" | "file", layout = "c", caps = 0) => {
   const a: Analysis = {
     image, functions: new Map([[base, fn]]), order: [base], names: new Map(), strings: [],
     entry: base, fileName: "a".repeat(64) + ".exe", size: image.bytes.length, arch: "x86", packed: null, stringsTotal: 0,
-    capa: null, capaError: null, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: true, done: true,
+    capa: caps ? capa(caps) : null, capaError: null, family: null, familyError: null, pickFamilyPack: async () => undefined, decompileError: null, tooLarge: null, capaTooLarge: null, loading: null, settled: true, done: true,
   };
   const key = ++run;
   history.replaceState({ binfera: true, run: key, i: 0, ...locOf(sel), at: null }, "");

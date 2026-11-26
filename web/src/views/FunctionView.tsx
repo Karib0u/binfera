@@ -42,7 +42,6 @@ function DecompileNotice({ a, address }: { a: Analysis; address: number }) {
 export type { Layout };
 
 const PEEK_LINES = 14, PEEK_WIDTH = 480, PEEK_HEIGHT = 340;
-const INLINE_CAPABILITIES = 3;
 
 /** A function at a glance, shown while hovering a link to it, without leaving the place being read. */
 function FnPeek({ a, address, rect, caps, display }: { a: Analysis; address: number; rect: DOMRect; caps: string[]; display: (t: string) => string | undefined }) {
@@ -552,8 +551,8 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
   }
 
   const railSize = inspector === "stack" ? Math.max(railWidth, 300) : railWidth;
-  const remainingCaps = rules.length - INLINE_CAPABILITIES;
-  const capsExpanded = remainingCaps > 0 && expandedCapsFor === address;
+  // One match reads inline; several collapse into one trigger so the title keeps its room.
+  const capsExpanded = rules.length > 1 && expandedCapsFor === address;
   return (
     <div className={"cockpit" + (wrap ? " wrap" : "")}>
       <div className="cp-head">
@@ -565,13 +564,13 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
         <div className="cp-caps-inline">
           <OriginBadge origin={origin} />
           {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}
-          {!capsExpanded && rules.slice(0, INLINE_CAPABILITIES).map(capButton)}
+          {rules.length === 1 && capButton(rules[0])}
         </div>
-        {remainingCaps > 0 && (
-          <button type="button" className="cap" aria-expanded={capsExpanded}
-            aria-label={capsExpanded ? undefined : `+${remainingCaps} more capabilities`}
+        {rules.length > 1 && (
+          <button type="button" className="cap cap-more" aria-expanded={capsExpanded} aria-controls="cp-caps-list"
+            title={rules.map((r) => r.name).join("\n")}
             onClick={() => setExpandedCapsFor(capsExpanded ? null : address)}>
-            {capsExpanded ? "Show less" : `+${remainingCaps} more`}
+            {rules.length} capabilities <span aria-hidden>{capsExpanded ? "▴" : "▾"}</span>
           </button>
         )}
         <span className="cp-spacer" />
@@ -579,7 +578,7 @@ export function FunctionView({ a, address, rules, origin, resolve, onGoto, calle
         <button className={"icon-btn star-btn" + (starred ? " on" : "")} onClick={onStar} aria-pressed={starred} aria-label="Star this function" title="Star this function (s)">{starred ? "★" : "☆"}</button>
         <button className="icon-btn" onClick={onToggleRail} aria-pressed={railOpen} aria-label="Function inspector" title="Show or hide the function inspector (])"><PanelIcon side="right" /></button>
       </div>
-      {capsExpanded && <div className="cp-caps-expanded">{rules.map(capButton)}</div>}
+      {capsExpanded && <div className="cp-caps-expanded" id="cp-caps-list" role="group" aria-label="Capabilities matched in this function">{rules.map(capButton)}</div>}
       {/* The same height with or without matches, so the code does not move from function to function. */}
       {mobile && <div className="cp-caps">
         {exportOf(address) && <span className="cap export" title="Named by the file's export table">export {exportOf(address)}</span>}

@@ -51,7 +51,8 @@ try {
   assert.equal(got.size, 0x800);
 
   // Compare… starts a comparison with this file as one side.
-  await page.getByRole("button", { name: "Compare…" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Compare with…" }).click();
   assert.equal(await page.evaluate(() => window.compareAsked), 1);
   assert.deepEqual(errors, []);
   console.log("Stages: Analyze on embedded resources and overlays, and Compare… from an open file: passed");

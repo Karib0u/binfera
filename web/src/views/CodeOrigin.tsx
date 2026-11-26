@@ -8,6 +8,7 @@ import {
   type FunctionOriginKind,
 } from "../familyOrigin";
 import Sheet from "../Sheet";
+import { Modal } from "../dialog";
 import type { Analysis, FamilyPackInfo } from "../types";
 
 const num = (n: number) => n.toLocaleString("en-US");
@@ -141,14 +142,12 @@ export function PacksDialog({ a, mobile, onClose }: { a: Analysis; mobile: boole
   );
   if (mobile) return <Sheet title="Fingerprint packs" onClose={onClose}>{body}</Sheet>;
   return (
-    <div className="palette-back" onMouseDown={onClose} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }}>
-      <div className="keys packs-dialog" role="dialog" aria-modal="true" aria-labelledby="packs-title" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="keys-head">
-          <h2 id="packs-title">Fingerprint packs</h2>
-          <button className="ghost" autoFocus onClick={onClose}>Close</button>
-        </div>
-        {body}
+    <Modal className="keys packs-dialog" labelledBy="packs-title" onClose={onClose}>
+      <div className="keys-head">
+        <h2 id="packs-title">Fingerprint packs</h2>
+        <button className="ghost" onClick={onClose}>Close</button>
       </div>
-    </div>
+      {body}
+    </Modal>
   );
 }

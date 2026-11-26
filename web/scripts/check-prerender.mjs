@@ -61,7 +61,8 @@ try {
       await page.waitForFunction(() => document.querySelector(".sb-status")?.textContent?.startsWith("●"), null, { timeout: 60000 });
       await page.getByRole("button", { name: "Code", exact: true }).click();
       await page.locator("[data-ctx-fn]").first().waitFor({ timeout: 15000 });
-      await page.getByRole("button", { name: "New", exact: true }).click();
+      await page.getByRole("button", { name: "More actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Analyze another file", exact: true }).click();
       await page.getByRole("heading", { name: "See what a binary does.", exact: true }).waitFor();
     }
     assert.deepEqual(errors, []);
