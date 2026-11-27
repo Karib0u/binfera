@@ -10,6 +10,7 @@ const {
   isOpenerImportHash,
   sanitizeImportName,
   extractImportBytes,
+  parseFocusAddress,
   installOpenerImport,
 } = await import(moduleUrl(source));
 
@@ -109,6 +110,26 @@ function fakeWindow({ hash = "#import", hasOpener = true } = {}) {
   });
   assert.equal(received.length, 1);
   cleanup();
+}
+
+// Focus address: hex strings and numbers are parsed, junk is dropped.
+{
+  assert.equal(parseFocusAddress("0x401000"), 0x401000);
+  assert.equal(parseFocusAddress("401000"), 0x401000);
+  assert.equal(parseFocusAddress(4198400), 4198400);
+  assert.equal(parseFocusAddress("nope"), undefined);
+  assert.equal(parseFocusAddress(-1), undefined);
+  assert.equal(parseFocusAddress({}), undefined);
+
+  const f = fakeWindow();
+  const focus = [];
+  installOpenerImport({ win: f.win, onFile: (_file, address) => focus.push(address) });
+  f.dispatch({
+    source: f.opener,
+    origin: "https://filebus.local",
+    data: { type: "binfera:open", version: 1, name: "a.elf", bytes: new Uint8Array([1]).buffer, focusAddress: "0x1234" },
+  });
+  assert.deepEqual(focus, [0x1234]);
 }
 
 console.log("Opener postMessage handoff protocol: passed");

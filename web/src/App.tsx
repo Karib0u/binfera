@@ -93,7 +93,11 @@ export default function App() {
   // External tools (e.g. FileBus) open `#import` and transfer raw bytes directly over postMessage.
   useEffect(() => installOpenerImport({
     win: window,
-    onFile: (file) => { void startRef.current(file, undefined, true); },
+    onFile: (file, focusAddress) => {
+      // start() reads linked.current for where to land; a function address opens that function.
+      if (focusAddress !== undefined) linked.current = { sel: focusAddress };
+      void startRef.current(file, undefined, true);
+    },
     onClearHash: () => { history.replaceState(null, "", pageUrl()); },
   }), []);
 
