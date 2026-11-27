@@ -2,7 +2,7 @@
  * One-shot binary handoff from an opener tab (for example FileBus) via window.postMessage.
  *
  * When a tab opens Binfera at `#import`, Binfera announces readiness to `window.opener`
- * and accepts a single `{ type: "binfera:open", name, bytes }` message from that exact
+ * and accepts a single `{ type: "binfera:open", name, bytes, focusAddress? }` message from that exact
  * opener window. Bytes stay in browser memory and are never uploaded.
  */
 
@@ -44,6 +44,15 @@ export function sanitizeImportName(name: unknown): string {
   return leaf;
 }
 
+/** A function address sent as "0x401000", "401000" or a number; anything else is no address. */
+export function parseFocusAddress(raw: unknown): number | undefined {
+  if (typeof raw === "number") return Number.isSafeInteger(raw) && raw >= 0 ? raw : undefined;
+  if (typeof raw !== "string") return undefined;
+  const hex = raw.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-f]{1,13}$/i.test(hex)) return undefined;
+  return parseInt(hex, 16);
+}
+
 export function extractImportBytes(raw: unknown): Uint8Array<ArrayBuffer> | null {
   let view: Uint8Array;
   if (raw instanceof ArrayBuffer) {
@@ -65,7 +74,7 @@ export function installOpenerImport({
   onClearHash,
 }: {
   win: OpenerWindowLike;
-  onFile: (file: File) => void;
+  onFile: (file: File, focusAddress?: number) => void;
   onClearHash?: () => void;
 }): () => void {
   const opener = win.opener;
@@ -76,7 +85,7 @@ export function installOpenerImport({
     if (consumed || event.source !== opener) return;
     const payload = event.data;
     if (!payload || typeof payload !== "object") return;
-    const msg = payload as { type?: unknown; name?: unknown; bytes?: unknown };
+    const msg = payload as { type?: unknown; name?: unknown; bytes?: unknown; focusAddress?: unknown };
     if (msg.type !== "binfera:open") return;
     const bytes = extractImportBytes(msg.bytes);
     if (!bytes) return;
@@ -91,7 +100,7 @@ export function installOpenerImport({
       // Opener may have closed right after posting; still open the received bytes.
     }
     onClearHash?.();
-    onFile(new File([bytes], name));
+    onFile(new File([bytes], name), parseFocusAddress(msg.focusAddress));
   };
 
   win.addEventListener("message", onMessage);
