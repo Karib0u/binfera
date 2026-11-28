@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTheme } from "./theme";
 
 const REPO = "https://github.com/Karib0u/binfera";
 
@@ -18,6 +19,9 @@ const FEATURES = [
 /** What the product does: a feature list driving one large screenshot; on small screens, each feature above its own. */
 export default function LandingTour() {
   const [shown, setShown] = useState(0);
+  // Each screenshot exists in both themes, so the app in the picture matches the page around it.
+  const [theme] = useTheme();
+  const suffix = theme === "dark" ? "-dark" : "";
   return (
     <section className="lp-section" id="lp-features" aria-labelledby="lp-tour-title">
       <div className="lp-head">
@@ -31,7 +35,7 @@ export default function LandingTour() {
               <h3>{f.title}{f.badge && <em>{f.badge}</em>}</h3>
               <p>{f.text}</p>
             </button>
-            <figure><img src={`/landing/${f.image}.webp`} width="1600" height="903" loading="lazy" alt={f.alt} /></figure>
+            <figure><img src={`/landing/${f.image}${suffix}.webp`} width="1600" height="903" loading="lazy" alt={f.alt} /></figure>
           </div>
         ))}
       </div>

@@ -2,6 +2,21 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import worker from "./worker.js";
+
+// The dev server answers the Worker's API routes with the Worker's own code, so the landing page shows the real star count.
+const workerApi = {
+  name: "worker-api",
+  configureServer(server: { middlewares: { use: (path: string, fn: (req: unknown, res: { setHeader: (k: string, v: string) => void; statusCode: number; end: (b: string) => void }) => void) => void } }) {
+    server.middlewares.use("/api/", async (req, res) => {
+      const url = "http://localhost/api" + ((req as { url?: string }).url ?? "");
+      const reply = await worker.fetch(new Request(url), { ASSETS: { fetch: async () => new Response("not found", { status: 404 }) } }, null);
+      res.statusCode = reply.status;
+      reply.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+      res.end(await reply.text());
+    });
+  },
+};
 
 const repo = new URL("../", import.meta.url);
 
@@ -33,7 +48,7 @@ function buildCommit() {
 // WebAssembly-backed engine modules are replaced by their `.native` twins (which share their
 // exports) and the wasm module never enters the bundle.
 export default defineConfig(({ mode }) => ({
-  plugins: [react()],
+  plugins: [react(), workerApi],
   define: {
     __BINFERA_BUILD__: JSON.stringify({ version: buildVersion(mode), commit: buildCommit() }),
   },
