@@ -3,12 +3,12 @@
   "name": "binfera",
   "routes": [{ "pattern": "binfera.io", "custom_domain": true }],
   "compatibility_date": "2026-10-23",
-  // Analysis runs in the browser. Only hashed asset requests need Worker middleware.
+  // Analysis runs in the browser. Only hashed assets and the GitHub star count need the Worker.
   "main": "./worker.js",
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": ["/assets/*"]
+    "run_worker_first": ["/assets/*", "/api/*"]
   },
   "observability": { "enabled": true, "traces": { "enabled": true } }
 }

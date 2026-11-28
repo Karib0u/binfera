@@ -10,6 +10,9 @@ import RecentFiles from "./RecentFiles";
 import LandingSamples from "./LandingSamples";
 import LandingTour from "./LandingTour";
 import BuildVersion from "./BuildVersion";
+import GitHubStars from "./GitHubStars";
+import LandingReveal from "./LandingReveal";
+import { REVEAL } from "./revealSample";
 import { desktop } from "./project/client";
 import type { Folder, Recent } from "./project/types";
 import "./landing.css";
@@ -77,6 +80,12 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
   });
   const reopen = (r: Recent) => attempt("recent:" + r.sha256, async () => onFile(await desktop!.open(r)));
   const trySample = (s: DemoSample) => attempt(s.id, async () => onFile(await loadDemo(s), s));
+  // The hero shows one WannaCry function; this opens the sample on that function, in C beside assembly.
+  const openReveal = () => attempt("reveal", async () => {
+    const s = samples.find((d) => d.id === "wannacry") ?? (await listDemos()).find((d) => d.id === "wannacry");
+    if (!s) throw new Error("The WannaCry sample is unavailable.");
+    onFile(await loadDemo(s), s, { demo: s.id, sel: REVEAL.asm[0][0], layout: "c+asm" });
+  });
   // A small harmless program bundled with the site (see demo/), so people can try the tool without a binary.
   const tryHarmless = () => attempt("harmless", async () => {
     const res = await fetch(`${import.meta.env.BASE_URL}demo.exe`);
@@ -124,14 +133,14 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
           {!desktop && <button type="button" className="lp-navlink" onClick={() => document.getElementById("lp-features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>}
           {!desktop && <a className="lp-navlink" href="https://docs.binfera.io/">Docs</a>}
           {!desktop && <a className="lp-navlink" href={`${REPO}/releases`} target="_blank" rel="noreferrer">Download</a>}
-          <a className="lp-navlink" href={REPO} target="_blank" rel="noreferrer">GitHub</a>
+          <GitHubStars repo={REPO} />
           <ThemeToggle />
         </nav>
       </header>
 
       <main>
-        <section className="lp-hero">
-          <div>
+        <section className={"lp-hero" + (desktop ? "" : " lp-hero-web")}>
+          <div className="lp-hero-text">
             <h1>See what a <span className="lp-o">binary</span> does.</h1>
             <p className="lp-lede">Decompiled C, capabilities, code origin and binary diffs for Windows, Linux and macOS executables, {desktop ? "right on this machine" : "right in your browser"}.</p>
             <ul className="lp-trust">
@@ -140,7 +149,7 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
             </ul>
           </div>
 
-          <div>
+          <div className="lp-hero-work">
             <div className="lp-work">
               <div className="lp-tabs" role="tablist" aria-label="What to do">
                 <button type="button" role="tab" id="lp-tab-analyze" aria-controls="lp-analyze" aria-selected={!comparing} onClick={() => setComparing(false)}>Analyze a file</button>
@@ -189,6 +198,8 @@ export default function Landing({ onFile, compare, error, resume, link, onRaw, f
             )}
             {linkedAddress !== null && !error && <p className="fine lp-message">This link points to function 0x{linkedAddress.toString(16)}. Open the same file to return to it.</p>}
           </div>
+
+          {!desktop && <LandingReveal onOpen={openReveal} busy={loading === "reveal"} />}
         </section>
 
         <RecentFiles busy={loading !== null} onOpen={reopen} onLocate={(r) => pickNative(r.sha256)} onError={setNotice} />

@@ -4,6 +4,7 @@
 //   npm run capture-docs                 # every image and both videos
 //   npm run capture-docs -- code hex     # only these (names below); `--list` prints them
 //   npm run capture-docs -- --no-video   # stills only
+//   npm run capture-docs -- --landing    # the landing page's tour, light and dark, into web/public/landing
 //
 // Needs what `npm run dev` needs (the wasm module, rules.json and public/demos), plus `cwebp` and
 // `ffmpeg` on PATH. The agent shots use `vite --mode mock`, which replays a recorded Claude Code
@@ -23,7 +24,9 @@ const VIEWPORT = { width: 1440, height: 814 };
 
 const args = process.argv.slice(2);
 const wanted = args.filter((a) => !a.startsWith("--"));
-const noVideo = args.includes("--no-video");
+const landing = args.includes("--landing");
+const noVideo = args.includes("--no-video") || landing;
+const landingOut = fileURLToPath(new URL("../public/landing/", import.meta.url));
 
 for (const tool of ["cwebp", "ffmpeg"]) {
   if (spawnSync(tool, ["-version"]).error) throw new Error(`${tool} is not on PATH`);
@@ -248,6 +251,14 @@ if (args.includes("--list")) {
 }
 const pick = (list) => list.filter((s) => !wanted.length || wanted.includes(s.name));
 
+/** The landing tour's screenshots, named as LandingTour asks for them, from the docs shots above. Each comes
+ * in both themes so the page can show the one matching its own, at 1600px wide to keep the page light. */
+const LANDING = { overview: "overview", code: "code", ai: "ai", compare: "compare", data: "strings" };
+const landingShots = () => Object.entries(LANDING).flatMap(([name, from]) => {
+  const shot = shots.find((s) => s.name === from);
+  return [false, true].map((dark) => ({ ...shot, name: name + (dark ? "-dark" : ""), dark, out: landingOut, width: 1600 }));
+}).filter((s) => !wanted.length || wanted.some((w) => s.name.startsWith(w)));
+
 // ----- run -------------------------------------------------------------------------------------
 
 const servers = {};
@@ -264,7 +275,7 @@ async function serve(mode) {
 const temp = await mkdtemp(join(tmpdir(), "binfera-capture-"));
 const browser = await chromium.launch();
 try {
-  for (const shot of pick(shots)) {
+  for (const shot of landing ? landingShots() : pick(shots)) {
     const base = await serve(shot.mock ? "mock" : "development");
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: shot.dark ? "dark" : "light" });
     if (shot.wide) await context.addInitScript(WIDE_AGENT);
@@ -273,8 +284,8 @@ try {
       await shot.go(page, base);
       const png = join(temp, `${shot.name}.png`);
       await page.screenshot({ path: png });
-      const webp = join(out, `${shot.name}.webp`);
-      const r = spawnSync("cwebp", ["-quiet", "-q", "82", "-m", "6", png, "-o", webp]);
+      const webp = join(shot.out ?? out, `${shot.name}.webp`);
+      const r = spawnSync("cwebp", ["-quiet", "-q", "82", "-m", "6", ...(shot.width ? ["-resize", String(shot.width), "0"] : []), png, "-o", webp]);
       if (r.status !== 0) throw new Error(String(r.stderr));
       console.log(`${shot.name}.webp  ${shot.about}`);
     } catch (e) {
