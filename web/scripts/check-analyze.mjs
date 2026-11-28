@@ -45,8 +45,12 @@ const mocks = moduleUrl(`
   export const removeFamilyOverlay = () => {};
   export const extractStrings = () => ({ strings: [], total: 0 });
   export const summarizeCapa = json => json;
-  export const createImage = () => null;
-  export const loadAssets = async () => ({ module: {}, data: () => ({}), rules: {} });
+  export const createImage = (_bytes, info) => info;
+  export const loadAssets = async (arch) => ({
+    module: {},
+    data: kind => kind === "decompile" && arch ? { ["fid-" + arch + ".pack"]: new ArrayBuffer(1) } : {},
+    rules: {},
+  });
   export function runEngine(req, onLine) {
     requests.push(req);
     if (req.kind === "inspect") { onLine(JSON.stringify({ ...metadata, format: req.raw?.format ?? metadata.format })); return Promise.resolve(); }
@@ -152,6 +156,7 @@ console.log("Hex input is decoded for every worker; inferred Linux convention is
 
 // All shards must settle; a done record from an older engine also settles its shard.
 metadata.format = "pe";
+metadata.fidArch = "x86";
 const stageStart = workers.length, stagedUpdates = [];
 const stagedRun = analyze(new File([new Uint8Array(16)], "staged.bin"),
   a => stagedUpdates.push(a), new AbortController().signal);
@@ -203,7 +208,8 @@ assert.equal(emulateRequest.address, 0x2f);
 assert.equal(emulateRequest.request, '{"address":47}');
 assert.equal(emulateRequest.callSites, 32);
 assert.equal(emulateRequest.sample.byteLength, 16);
+assert.ok(emulateRequest.data["fid-x86.pack"], "PE emulation mounts the matching Function ID pack");
 workers.at(-1).emit({ address: 47, total_sites: 0, truncated: false, sites: [] });
 workers.at(-1).resolve();
 assert.deepEqual(JSON.parse(await emulation), { address: 47, total_sites: 0, truncated: false, sites: [] });
-console.log("Emulation runs reach the engine with their request and call-site count: passed");
+console.log("PE emulation reaches the engine with its request, call-site count and Function ID pack: passed");

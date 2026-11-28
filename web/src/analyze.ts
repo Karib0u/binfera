@@ -160,7 +160,7 @@ export async function analyze(file: File, onUpdate: (a: Analysis) => void, signa
     signal.addEventListener("abort", stop);
     runSignal.addEventListener("abort", stop);
     try {
-      const assets = await loadAssets(null, () => {}, false, winApiFor(a.image?.arch, a.image?.format));
+      const assets = await loadAssets(a.image?.fidArch ?? null, () => {}, false, winApiFor(a.image?.arch, a.image?.format));
       if (run.signal.aborted) throw new DOMException("aborted", "AbortError");
       let output = "";
       await runEngine({ kind: "emulate", module: assets.module, sample: bytes.slice(0), data: assets.data("decompile"), address, request, callSites, raw },
